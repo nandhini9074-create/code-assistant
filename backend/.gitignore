@@ -1,0 +1,139 @@
+# ==============================================================================
+# Code Explorer — .gitignore
+# ==============================================================================
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+parts/
+var/
+sdist/
+develop-eggs/
+.installed.cfg
+lib/
+lib64/
+wheels/
+share/python-wheels/
+MANIFEST
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env
+.envs/
+.venv*/
+pyvenv.cfg
+
+# ── Environment / Secrets ──────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets/
+
+# ── pytest / Coverage ─────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage/
+htmlcov/
+nosetests.xml
+pytest.ini
+*.cover
+*.py,cover
+
+# ── mypy ─────────────────────────────────────────────────────────────────────
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# ── Ruff ─────────────────────────────────────────────────────────────────────
+.ruff_cache/
+
+# ── pyright / pylance ─────────────────────────────────────────────────────────
+pyrightconfig.json
+.pyright/
+
+# ── Jupyter ───────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*.ipynb
+
+# ── Distribution / Packaging ──────────────────────────────────────────────────
+*.tar.gz
+*.zip
+!tests/**/*.zip
+
+# ── Alembic ───────────────────────────────────────────────────────────────────
+# Keep migration scripts; ignore only compiled artifacts
+migrations/__pycache__/
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+log/
+
+# ── Temp / Upload Files ───────────────────────────────────────────────────────
+tmp/
+temp/
+.tmp/
+uploads/
+/tmp/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ── IDEs ─────────────────────────────────────────────────────────────────────
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# ── Node (if any tooling is added later) ─────────────────────────────────────
+node_modules/
+
+# ── Docker (explicitly excluded per project spec) ─────────────────────────────
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# ── Local dev overrides ───────────────────────────────────────────────────────
+local_settings.py
+local.py
+
+# ── Celery beat schedule ──────────────────────────────────────────────────────
+celerybeat-schedule
+celerybeat-schedule.*
+celerybeat.pid
+
+# ── SQLite (local dev fallback) ───────────────────────────────────────────────
+*.sqlite3
+*.db
+
+# ── Type stubs auto-generated ─────────────────────────────────────────────────
+*.pyi
+
+# ── Profiling ─────────────────────────────────────────────────────────────────
+*.prof
