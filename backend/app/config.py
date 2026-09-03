@@ -21,7 +21,7 @@ from pydantic import Field, PostgresDsn, RedisDsn, field_validator, model_valida
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-# ── Sub-settings groups ────────────────────────────────────────────────────────
+# Sub-settings groups
 # Each group maps to a logical service.  They are composed into Settings below.
 
 
@@ -269,7 +269,7 @@ class SearchSettings(BaseSettings):
     )
 
 
-# ── Composite Settings ────────────────────────────────────────────────────────
+# Composite Settings
 
 class Settings(
     AppSettings,
@@ -331,7 +331,7 @@ class Settings(
         return self
 
 
-# ── Singleton accessor ─────────────────────────────────────────────────────────
+# Singleton accessor
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

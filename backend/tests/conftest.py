@@ -1,1 +1,1 @@
-﻿"""Shared pytest fixtures. Implemented in Module 16."""
+"""Shared pytest fixtures. Implemented in Module 16."""

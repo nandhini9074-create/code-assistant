@@ -1,1 +1,1 @@
-﻿"""Unit tests for evidence validator. Implemented in Module 16."""
+"""Unit tests for evidence validator. Implemented in Module 16."""

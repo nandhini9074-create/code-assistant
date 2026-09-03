@@ -28,7 +28,7 @@ from app.core.exceptions import (
 )
 
 
-# ── Webhook Signature Verification ────────────────────────────────────────────
+# Webhook Signature Verification
 
 def verify_github_signature(
     payload_body: bytes,
@@ -79,7 +79,7 @@ def verify_github_signature(
         )
 
 
-# ── ZIP Security Helpers ──────────────────────────────────────────────────────
+# ZIP Security Helpers
 
 def validate_zip_member_path(member_path: str) -> None:
     """
@@ -198,7 +198,7 @@ def safe_extract_path(base_dir: str, member_path: str) -> str:
     return target
 
 
-# ── Input Sanitization ────────────────────────────────────────────────────────
+# Input Sanitization
 
 # Pattern for a valid GitHub repository URL
 _GITHUB_REPO_URL_PATTERN = re.compile(

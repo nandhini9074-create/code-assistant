@@ -26,7 +26,7 @@ from app.core.logging import get_logger, set_request_id
 logger = get_logger(__name__)
 
 
-# ── Request ID + Timing Middleware ────────────────────────────────────────────
+# Request ID + Timing Middleware
 
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """
@@ -84,7 +84,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# ── Error Response Builder ─────────────────────────────────────────────────────
+# Error Response Builder
 
 def _build_error_response(
     *,
@@ -110,7 +110,7 @@ def _build_error_response(
     return JSONResponse(status_code=status_code, content=body)
 
 
-# ── Exception Handlers ────────────────────────────────────────────────────────
+# Exception Handlers
 
 async def code_explorer_exception_handler(
     request: Request,
@@ -169,7 +169,7 @@ async def unhandled_exception_handler(
     )
 
 
-# ── Registration Helper ───────────────────────────────────────────────────────
+# Registration Helper
 
 def register_middleware(app: FastAPI) -> None:
     """

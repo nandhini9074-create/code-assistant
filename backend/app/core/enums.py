@@ -6,7 +6,7 @@ Application-wide enumerations for Code Explorer.
 from enum import Enum
 
 
-# ── Intent ────────────────────────────────────────────────────────────────────
+# Intent
 
 class IntentType(str, Enum):
     """Supported user intent types for code analysis."""
@@ -17,7 +17,7 @@ class IntentType(str, Enum):
     REFACTOR = "REFACTOR"
 
 
-# ── Job ───────────────────────────────────────────────────────────────────────
+# Job
 
 class JobStatus(str, Enum):
     """Lifecycle states of an ingestion job."""
@@ -47,7 +47,7 @@ class JobStage(str, Enum):
     COMPLETED = "COMPLETED"
 
 
-# ── Ingestion ─────────────────────────────────────────────────────────────────
+# Ingestion
 
 class IngestionSource(str, Enum):
     """Source type of an ingestion request."""
@@ -58,7 +58,7 @@ class IngestionSource(str, Enum):
     REINDEX = "REINDEX"
 
 
-# ── Repository ────────────────────────────────────────────────────────────────
+# Repository
 
 class RepositoryStatus(str, Enum):
     """Lifecycle states of a registered repository."""
@@ -70,7 +70,7 @@ class RepositoryStatus(str, Enum):
     STALE = "STALE"            # Indexed but behind HEAD
 
 
-# ── File ──────────────────────────────────────────────────────────────────────
+# File
 
 class FileStatus(str, Enum):
     """Status of a file entry in the file registry."""
@@ -79,7 +79,7 @@ class FileStatus(str, Enum):
     DELETED = "DELETED"
 
 
-# ── Chunk ─────────────────────────────────────────────────────────────────────
+# Chunk
 
 class ChunkType(str, Enum):
     """Type of a code chunk produced by AST chunking."""
@@ -94,7 +94,7 @@ class ChunkType(str, Enum):
     OTHER = "other"
 
 
-# ── Language ──────────────────────────────────────────────────────────────────
+# Language
 
 class ProgrammingLanguage(str, Enum):
     """Supported programming languages for AST chunking."""
@@ -108,7 +108,7 @@ class ProgrammingLanguage(str, Enum):
     UNKNOWN = "unknown"
 
 
-# ── Webhook ───────────────────────────────────────────────────────────────────
+# Webhook
 
 class WebhookEventStatus(str, Enum):
     """Processing status of a received webhook event."""
@@ -127,7 +127,7 @@ class WebhookEventType(str, Enum):
     UNKNOWN = "unknown"
 
 
-# ── Search ────────────────────────────────────────────────────────────────────
+# Search
 
 class RetrievalStrategy(str, Enum):
     """Retrieval strategy used during search."""

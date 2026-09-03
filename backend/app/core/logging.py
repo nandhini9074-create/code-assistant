@@ -16,7 +16,7 @@ from uuid import uuid4
 
 import structlog
 
-# ── Context Variables (per-request, async-safe) ───────────────────────────────
+# Context Variables (per-request, async-safe)
 
 _request_id_var: ContextVar[str] = ContextVar("request_id", default="")
 _repo_id_var: ContextVar[str] = ContextVar("repo_id", default="")
@@ -62,7 +62,7 @@ def get_webhook_delivery_id() -> str:
     return _webhook_delivery_id_var.get()
 
 
-# ── Context Injector Processor ────────────────────────────────────────────────
+# Context Injector Processor
 
 def _inject_context(
     _logger: Any,
@@ -84,7 +84,7 @@ def _inject_context(
     return event_dict
 
 
-# ── Secret Scrubber ───────────────────────────────────────────────────────────
+# Secret Scrubber
 
 _SECRET_KEYS: frozenset[str] = frozenset(
     {
@@ -121,7 +121,7 @@ def _scrub_secrets(
     return event_dict
 
 
-# ── Setup ─────────────────────────────────────────────────────────────────────
+# Setup
 
 def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> None:
     """

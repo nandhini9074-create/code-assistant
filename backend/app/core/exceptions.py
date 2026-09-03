@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 
-# ── Base ──────────────────────────────────────────────────────────────────────
+# Base
 
 class CodeExplorerException(Exception):
     """
@@ -44,7 +44,7 @@ class CodeExplorerException(Exception):
         return f"{self.__class__.__name__}(code={self.code!r}, message={self.message!r})"
 
 
-# ── 400 Bad Request ───────────────────────────────────────────────────────────
+# 400 Bad Request
 
 class ValidationError(CodeExplorerException):
     """Input validation failed."""
@@ -95,7 +95,7 @@ class MalformedRequestError(ValidationError):
     code = "MALFORMED_REQUEST"
 
 
-# ── 401 Unauthorized ──────────────────────────────────────────────────────────
+# 401 Unauthorized
 
 class WebhookVerificationError(CodeExplorerException):
     """GitHub webhook HMAC-SHA256 signature verification failed."""
@@ -104,7 +104,7 @@ class WebhookVerificationError(CodeExplorerException):
     code = "WEBHOOK_VERIFICATION_FAILED"
 
 
-# ── 403 Forbidden ─────────────────────────────────────────────────────────────
+# 403 Forbidden
 
 class AccessDeniedError(CodeExplorerException):
     """The caller does not have permission to access this resource."""
@@ -113,7 +113,7 @@ class AccessDeniedError(CodeExplorerException):
     code = "ACCESS_DENIED"
 
 
-# ── 404 Not Found ─────────────────────────────────────────────────────────────
+# 404 Not Found
 
 class RepositoryNotFoundError(CodeExplorerException):
     """Repository not found in the registry."""
@@ -145,7 +145,7 @@ class FileNotFoundInRegistryError(CodeExplorerException):
     code = "FILE_NOT_IN_REGISTRY"
 
 
-# ── 409 Conflict ──────────────────────────────────────────────────────────────
+# 409 Conflict
 
 class RepositoryAlreadyExistsError(CodeExplorerException):
     """A repository with this URL is already registered."""
@@ -165,7 +165,7 @@ class DuplicateWebhookDeliveryError(CodeExplorerException):
         self.details = {"delivery_id": delivery_id}
 
 
-# ── 422 Unprocessable ─────────────────────────────────────────────────────────
+# 422 Unprocessable
 
 class IngestionError(CodeExplorerException):
     """Ingestion pipeline encountered an unrecoverable error."""
@@ -180,7 +180,7 @@ class ChunkingError(IngestionError):
     code = "CHUNKING_ERROR"
 
 
-# ── 429 Rate Limited ─────────────────────────────────────────────────────────
+# 429 Rate Limited
 
 class RateLimitError(CodeExplorerException):
     """External API rate limit hit (GitHub, Voyage, Qwen)."""
@@ -196,7 +196,7 @@ class RateLimitError(CodeExplorerException):
         self.details = {"service": service, "retry_after": retry_after}
 
 
-# ── 502 Bad Gateway (upstream failures) ──────────────────────────────────────
+# 502 Bad Gateway (upstream failures)
 
 class GitHubAPIError(CodeExplorerException):
     """GitHub API returned an unexpected error response."""
@@ -249,7 +249,7 @@ class LLMParseError(LLMError):
     code = "LLM_PARSE_ERROR"
 
 
-# ── 503 Service Unavailable ───────────────────────────────────────────────────
+# 503 Service Unavailable
 
 class QdrantError(CodeExplorerException):
     """Qdrant vector database is unreachable or returned an error."""
@@ -279,7 +279,7 @@ class CeleryError(CodeExplorerException):
     code = "CELERY_ERROR"
 
 
-# ── Search-specific ───────────────────────────────────────────────────────────
+# Search-specific
 
 class InsufficientEvidenceError(CodeExplorerException):
     """
@@ -308,7 +308,7 @@ class ValidationEvidenceError(CodeExplorerException):
     code = "HALLUCINATION_DETECTED"
 
 
-# ── Configuration ─────────────────────────────────────────────────────────────
+# Configuration
 
 class ConfigurationError(CodeExplorerException):
     """Required configuration is missing or invalid."""

@@ -6,7 +6,7 @@ No business logic — pure configuration values.
 
 from __future__ import annotations
 
-# ── File Size Limits ───────────────────────────────────────────────────────────
+# File Size Limits
 
 # Maximum size of a single file to fetch and process (bytes)
 MAX_FILE_SIZE_BYTES: int = 10 * 1024 * 1024  # 10 MB
@@ -21,7 +21,7 @@ MAX_ZIP_FILE_COUNT: int = 10_000
 MAX_ZIP_SINGLE_FILE_BYTES: int = 50 * 1024 * 1024  # 50 MB
 
 
-# ── Chunking ──────────────────────────────────────────────────────────────────
+# Chunking
 
 # Maximum tokens per chunk before sub-splitting
 CHUNK_MAX_TOKENS: int = 512
@@ -36,7 +36,7 @@ CHUNK_MIN_TOKENS: int = 10
 CHUNK_MAX_RAW_CODE_CHARS: int = 8_000
 
 
-# ── Embedding ─────────────────────────────────────────────────────────────────
+# Embedding
 
 # Default Voyage embedding batch size
 EMBEDDING_BATCH_SIZE: int = 128
@@ -54,7 +54,7 @@ EMBEDDING_RETRY_BASE_DELAY: float = 1.0
 EMBEDDING_RETRY_MAX_DELAY: float = 60.0
 
 
-# ── LLM ───────────────────────────────────────────────────────────────────────
+# LLM
 
 # Maximum tokens to send in one LLM context
 LLM_MAX_CONTEXT_TOKENS: int = 8_192
@@ -69,7 +69,7 @@ LLM_DEFAULT_TEMPERATURE: float = 0.1
 LLM_MAX_RETRIES: int = 3
 
 
-# ── Search / Retrieval ────────────────────────────────────────────────────────
+# Search / Retrieval
 
 # Number of candidate chunks returned from Qdrant per retrieval pass
 SEARCH_TOP_K: int = 20
@@ -93,7 +93,7 @@ CONFIDENCE_MEDIUM: float = 0.5
 CONFIDENCE_LOW: float = 0.3
 
 
-# ── GitHub API ────────────────────────────────────────────────────────────────
+# GitHub API
 
 GITHUB_API_BASE_URL: str = "https://api.github.com"
 
@@ -119,7 +119,7 @@ GITHUB_RATELIMIT_REMAINING_HEADER: str = "X-RateLimit-Remaining"
 GITHUB_RATELIMIT_RESET_HEADER: str = "X-RateLimit-Reset"
 
 
-# ── Webhook ───────────────────────────────────────────────────────────────────
+# Webhook
 
 # GitHub signature header
 GITHUB_SIGNATURE_HEADER: str = "X-Hub-Signature-256"
@@ -134,7 +134,7 @@ GITHUB_EVENT_HEADER: str = "X-GitHub-Event"
 GITHUB_SIGNATURE_PREFIX: str = "sha256="
 
 
-# ── Qdrant ────────────────────────────────────────────────────────────────────
+# Qdrant
 
 # Default collection name for all code chunk vectors
 QDRANT_CODE_COLLECTION: str = "code_chunks"
@@ -147,7 +147,7 @@ QDRANT_REPO_ID_FIELD: str = "repo_id"
 QDRANT_POINT_ID_NAMESPACE: str = "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
 
 
-# ── Redis / Cache ─────────────────────────────────────────────────────────────
+# Redis / Cache
 
 # Default TTL for cached embeddings (seconds)
 EMBEDDING_CACHE_TTL: int = 86_400  # 24 hours
@@ -165,7 +165,7 @@ IDEMPOTENCY_PREFIX: str = "idem:"
 IDEMPOTENCY_TTL: int = 86_400  # 24 hours
 
 
-# ── File Filtering ────────────────────────────────────────────────────────────
+# File Filtering
 
 # Directories to skip entirely during ingestion
 EXCLUDED_DIRECTORIES: frozenset[str] = frozenset(
@@ -283,7 +283,7 @@ TREE_SITTER_LANGUAGES: frozenset[str] = frozenset(
 )
 
 
-# ── Celery ────────────────────────────────────────────────────────────────────
+# Celery
 
 CELERY_INGESTION_QUEUE: str = "ingestion"
 CELERY_CLEANUP_QUEUE: str = "cleanup"
@@ -296,7 +296,7 @@ CELERY_INGESTION_MAX_RETRIES: int = 3
 CELERY_INGESTION_RETRY_COUNTDOWN: int = 60
 
 
-# ── API ───────────────────────────────────────────────────────────────────────
+# API
 
 # Maximum query length for search endpoint
 SEARCH_MAX_QUERY_LENGTH: int = 2_000
