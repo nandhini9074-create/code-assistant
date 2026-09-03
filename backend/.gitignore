@@ -2,7 +2,7 @@
 # Code Explorer — .gitignore
 # ==============================================================================
 
-# ── Python ────────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
@@ -23,7 +23,7 @@ wheels/
 share/python-wheels/
 MANIFEST
 
-# ── Virtual Environments ──────────────────────────────────────────────────────
+# Virtual Environments
 .venv/
 venv/
 env/
@@ -33,7 +33,7 @@ ENV/
 .venv*/
 pyvenv.cfg
 
-# ── Environment / Secrets ──────────────────────────────────────────────────────
+# Environment / Secrets
 .env
 .env.*
 !.env.example
@@ -41,7 +41,7 @@ pyvenv.cfg
 *.key
 secrets/
 
-# ── pytest / Coverage ─────────────────────────────────────────────────────────
+# pytest / Coverage
 .pytest_cache/
 .coverage
 .coverage.*
@@ -53,44 +53,44 @@ pytest.ini
 *.cover
 *.py,cover
 
-# ── mypy ─────────────────────────────────────────────────────────────────────
+# mypy
 .mypy_cache/
 .dmypy.json
 dmypy.json
 
-# ── Ruff ─────────────────────────────────────────────────────────────────────
+# Ruff
 .ruff_cache/
 
-# ── pyright / pylance ─────────────────────────────────────────────────────────
+# pyright / pylance
 pyrightconfig.json
 .pyright/
 
-# ── Jupyter ───────────────────────────────────────────────────────────────────
+# Jupyter
 .ipynb_checkpoints/
 *.ipynb
 
-# ── Distribution / Packaging ──────────────────────────────────────────────────
+# Distribution / Packaging
 *.tar.gz
 *.zip
 !tests/**/*.zip
 
-# ── Alembic ───────────────────────────────────────────────────────────────────
+# Alembic
 # Keep migration scripts; ignore only compiled artifacts
 migrations/__pycache__/
 
-# ── Logs ─────────────────────────────────────────────────────────────────────
+# Logs
 *.log
 logs/
 log/
 
-# ── Temp / Upload Files ───────────────────────────────────────────────────────
+# Temp / Upload Files
 tmp/
 temp/
 .tmp/
 uploads/
 /tmp/
 
-# ── OS ────────────────────────────────────────────────────────────────────────
+# OS
 .DS_Store
 .DS_Store?
 ._*
@@ -100,7 +100,7 @@ ehthumbs.db
 Thumbs.db
 desktop.ini
 
-# ── IDEs ─────────────────────────────────────────────────────────────────────
+# IDEs
 .idea/
 *.iml
 .vscode/
@@ -111,29 +111,29 @@ desktop.ini
 .classpath
 .settings/
 
-# ── Node (if any tooling is added later) ─────────────────────────────────────
+# Node (if any tooling is added later)
 node_modules/
 
-# ── Docker (explicitly excluded per project spec) ─────────────────────────────
+# Docker (explicitly excluded per project spec)
 Dockerfile
 docker-compose*.yml
 .dockerignore
 
-# ── Local dev overrides ───────────────────────────────────────────────────────
+# Local dev overrides
 local_settings.py
 local.py
 
-# ── Celery beat schedule ──────────────────────────────────────────────────────
+# Celery beat schedule
 celerybeat-schedule
 celerybeat-schedule.*
 celerybeat.pid
 
-# ── SQLite (local dev fallback) ───────────────────────────────────────────────
+# SQLite (local dev fallback)
 *.sqlite3
 *.db
 
-# ── Type stubs auto-generated ─────────────────────────────────────────────────
+# Type stubs auto-generated
 *.pyi
 
-# ── Profiling ─────────────────────────────────────────────────────────────────
+# Profiling
 *.prof

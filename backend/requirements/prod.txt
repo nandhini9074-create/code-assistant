@@ -5,10 +5,10 @@
 
 -r base.txt
 
-# ── Production ASGI Server ────────────────────────────────────────────────────
+# Production ASGI Server
 gunicorn>=22.0.0,<23.0.0           # Process manager for Uvicorn workers
 
-# ── Monitoring / Observability ────────────────────────────────────────────────
+# Monitoring / Observability
 prometheus-client>=0.20.0,<0.21.0  # Metrics exposition
 opentelemetry-api>=1.24.0          # Distributed tracing API
 opentelemetry-sdk>=1.24.0          # Distributed tracing SDK
@@ -16,5 +16,5 @@ opentelemetry-instrumentation-fastapi>=0.45b0
 opentelemetry-instrumentation-sqlalchemy>=0.45b0
 opentelemetry-instrumentation-redis>=0.45b0
 
-# ── Security ──────────────────────────────────────────────────────────────────
+# Security
 cryptography>=42.0.0               # HMAC and security primitives

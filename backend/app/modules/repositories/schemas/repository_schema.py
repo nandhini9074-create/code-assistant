@@ -14,6 +14,7 @@ class CreateRepositoryRequest(BaseSchema):
     """Request to register a new repository."""
     github_url: str = Field(..., description="Full GitHub URL (e.g., https://github.com/owner/repo)")
     branch: str | None = Field(default="main", description="Branch to index")
+    github_token: str | None = Field(default=None, description="Optional GitHub PAT to override global token")
 
 
 class RepositoryResponse(BaseSchema):

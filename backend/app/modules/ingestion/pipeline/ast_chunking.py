@@ -3,7 +3,9 @@ app/modules/ingestion/pipeline/ast_chunking.py
 Pipeline stage: AST Chunking.
 """
 
+from app.modules.embedding.chunking.ast_chunker import chunk_ast
 from app.modules.ingestion.domain.ingestion_domain import ChunkRecord, IngestionContext
+from app.shared.utils.file_utils import get_language_from_extension
 from app.shared.utils.hashing import sha256_text
 
 
@@ -14,15 +16,13 @@ class AstChunkingStage:
             if not file.is_new_or_modified or not file.content:
                 continue
                 
-            # Simplified line-based chunker for the stub
-            # In a real app, this uses tree-sitter to build AST chunks
             text = file.content.decode("utf-8", errors="ignore")
-            lines = text.split("\n")
+            language = get_language_from_extension(file.file_path)
             
-            # Very basic chunking (every 50 lines)
-            chunk_size = 50
-            for i in range(0, len(lines), chunk_size):
-                chunk_text = "\n".join(lines[i:i + chunk_size])
+            ast_chunks = chunk_ast(text, language)
+            
+            for chunk in ast_chunks:
+                chunk_text = str(chunk.get("content", ""))
                 if not chunk_text.strip():
                     continue
                     
@@ -33,9 +33,9 @@ class AstChunkingStage:
                         chunk_hash=chunk_hash,
                         content=chunk_text,
                         metadata={
-                            "start_line": i + 1,
-                            "end_line": min(i + chunk_size, len(lines)),
-                            "type": "module" # Stub
+                            "start_line": chunk.get("start_line", 1),
+                            "end_line": chunk.get("end_line", 1),
+                            "type": chunk.get("type", "unknown"),
                         }
                     )
                 )

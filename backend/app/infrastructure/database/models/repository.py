@@ -111,6 +111,12 @@ class Repository(Base, TimestampMixin):
         doc="Numeric GitHub repository ID (from GitHub API response).",
     )
 
+    github_token: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        doc="Optional per-repository GitHub PAT to override the global token.",
+    )
+
     # Relationships
 
     ingestion_jobs: Mapped[list["IngestionJob"]] = relationship(  # noqa: F821

@@ -14,7 +14,7 @@ license = { text = "MIT" }
 where = ["."]
 include = ["app*"]
 
-# ── Ruff (linter + formatter) ────────────────────────────────────────────────
+# Ruff (linter + formatter)
 [tool.ruff]
 target-version = "py311"
 line-length = 100
@@ -52,7 +52,7 @@ known-first-party = ["app"]
 quote-style = "double"
 indent-style = "space"
 
-# ── pytest ───────────────────────────────────────────────────────────────────
+# pytest
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
@@ -71,7 +71,7 @@ markers = [
   "slow: Slow-running tests",
 ]
 
-# ── mypy ─────────────────────────────────────────────────────────────────────
+# mypy
 [tool.mypy]
 python_version = "3.11"
 strict = false

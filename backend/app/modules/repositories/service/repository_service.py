@@ -11,6 +11,7 @@ from app.core.enums import RepositoryStatus
 from app.core.exceptions import RepositoryAlreadyExistsError, RepositoryNotFoundError
 from app.infrastructure.database.models.repository import Repository
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
+from app.modules.repositories.schemas.repository_schema import CreateRepositoryRequest
 from app.modules.repositories.validators.github_url_validator import validate_and_parse_github_url
 from app.shared.types.repo_types import RepoId
 
@@ -21,11 +22,11 @@ class RepositoryService:
     def __init__(self, repo: RepositoryRepository) -> None:
         self.repo = repo
 
-    async def register_repository(self, github_url: str, default_branch: str = "main") -> Repository:
+    async def register_repository(self, request: CreateRepositoryRequest) -> Repository:
         """
         Validate URL, check for duplicates, and register a new repository.
         """
-        owner, name = validate_and_parse_github_url(github_url)
+        owner, name = validate_and_parse_github_url(request.github_url)
         full_name = f"{owner}/{name}"
         
         existing = await self.repo.get_by_full_name(full_name)
@@ -38,8 +39,9 @@ class RepositoryService:
             name=name,
             owner=owner,
             full_name=full_name,
-            github_url=github_url,
-            default_branch=default_branch,
+            github_url=request.github_url,
+            default_branch=request.branch or "main",
+            github_token=request.github_token,
             status=RepositoryStatus.PENDING.value,
             qdrant_collection=f"repo_{owner}_{name}".lower().replace("-", "_"),
         )

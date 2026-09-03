@@ -13,6 +13,7 @@ async def fetch_blob_content(
     owner: str,
     repo: str,
     file_sha: str,
+    github_token: str | None = None,
 ) -> bytes:
     """
     Fetch the raw content of a file blob from GitHub.
@@ -22,6 +23,7 @@ async def fetch_blob_content(
         owner: GitHub repository owner.
         repo: GitHub repository name.
         file_sha: The SHA of the Git blob.
+        github_token: Optional per-repo GitHub PAT.
         
     Returns:
         The raw bytes of the file content.
@@ -32,7 +34,8 @@ async def fetch_blob_content(
     response = await client.request(
         "GET", 
         endpoint, 
-        custom_headers={"Accept": GITHUB_ACCEPT_RAW}
+        custom_headers={"Accept": GITHUB_ACCEPT_RAW},
+        github_token=github_token
     )
     
     return response.content

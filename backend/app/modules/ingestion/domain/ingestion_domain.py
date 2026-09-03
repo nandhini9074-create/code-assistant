@@ -53,3 +53,4 @@ class IngestionContext:
     files: list[FileRecord] = field(default_factory=list)
     deleted_files: list[str] = field(default_factory=list)
     extracted_zip_path: str | None = None
+    github_token: str | None = None

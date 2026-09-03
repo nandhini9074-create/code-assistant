@@ -48,7 +48,7 @@ class RepositoryFetchStage:
                 )
 
     async def _fetch_from_github(self, context: IngestionContext, owner: str, repo: str) -> None:
-        tree = await fetch_repository_tree(owner, repo, context.commit_sha)
+        tree = await fetch_repository_tree(owner, repo, context.commit_sha, context.github_token)
         for item in tree:
             if item.get("type") == "blob":
                 context.files.append(

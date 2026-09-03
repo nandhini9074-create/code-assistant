@@ -3,37 +3,37 @@
 # Install: pip install -r requirements/base.txt
 # ==============================================================================
 
-# ── Web Framework ──────────────────────────────────────────────────────────────
+# Web Framework
 fastapi>=0.111.0,<0.112.0
 uvicorn[standard]>=0.29.0,<0.30.0
 
-# ── Pydantic & Settings ────────────────────────────────────────────────────────
+# Pydantic & Settings
 pydantic>=2.7.0,<3.0.0
 pydantic-settings>=2.3.0,<3.0.0
 
-# ── PostgreSQL / SQLAlchemy ────────────────────────────────────────────────────
+# PostgreSQL / SQLAlchemy
 sqlalchemy[asyncio]>=2.0.30,<3.0.0
 asyncpg>=0.29.0,<0.30.0            # Async PostgreSQL driver
 alembic>=1.13.0,<2.0.0
 
-# ── Qdrant ────────────────────────────────────────────────────────────────────
+# Qdrant
 qdrant-client[fastembed]>=1.9.0,<2.0.0
 
-# ── Redis / Celery ────────────────────────────────────────────────────────────
+# Redis / Celery
 redis[hiredis]>=5.0.0,<6.0.0
 celery[redis]>=5.4.0,<6.0.0
 
-# ── Voyage Embedding API ──────────────────────────────────────────────────────
+# Voyage Embedding API
 voyageai>=0.2.3,<0.3.0
 
-# ── Qwen LLM (OpenAI-compatible API client) ───────────────────────────────────
+# Qwen LLM (OpenAI-compatible API client)
 openai>=1.30.0,<2.0.0              # Used to call Qwen via DashScope-compatible endpoint
 
-# ── HTTP Client ───────────────────────────────────────────────────────────────
+# HTTP Client
 httpx>=0.27.0,<0.28.0
 tenacity>=8.3.0,<9.0.0             # Retry / exponential backoff
 
-# ── Tree-sitter (AST Chunking) ────────────────────────────────────────────────
+# Tree-sitter (AST Chunking)
 tree-sitter>=0.22.0,<0.24.0
 tree-sitter-python>=0.21.0
 tree-sitter-javascript>=0.21.0
@@ -42,10 +42,10 @@ tree-sitter-java>=0.21.0
 tree-sitter-go>=0.21.0
 tree-sitter-rust>=0.21.0
 
-# ── Tokenization (token-aware chunk splitting) ────────────────────────────────
+# Tokenization (token-aware chunk splitting)
 tiktoken>=0.7.0,<0.8.0
 
-# ── Utilities ─────────────────────────────────────────────────────────────────
+# Utilities
 python-multipart>=0.0.9            # File upload support for FastAPI
 python-dotenv>=1.0.0               # .env loading
 structlog>=24.1.0                  # Structured logging

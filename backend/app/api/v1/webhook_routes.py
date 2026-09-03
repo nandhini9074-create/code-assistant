@@ -8,11 +8,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
 
 from app.core.exceptions import WebhookVerificationError
+from app.core.logging import get_logger
 from app.dependencies import get_webhook_service
 from app.infrastructure.github.webhook_verifier import verify_webhook_payload
 from app.modules.webhooks.schemas.webhook_schema import WebhookEventResponse
 from app.modules.webhooks.service.webhook_service import WebhookService
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
@@ -28,6 +30,7 @@ async def github_webhook(
     Receive GitHub push webhooks.
     Verifies HMAC-SHA256 signature, checks idempotency, and enqueues ingestion.
     """
+    logger.info("received_github_webhook", event_type=x_github_event, delivery_id=x_github_delivery)
     raw_body = await request.body()
 
     # HMAC signature verification

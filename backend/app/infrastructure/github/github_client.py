@@ -60,6 +60,7 @@ class GitHubClient:
         endpoint: str,
         *,
         custom_headers: dict[str, str] | None = None,
+        github_token: str | None = None,
         **kwargs: Any,
     ) -> httpx.Response:
         """
@@ -70,6 +71,9 @@ class GitHubClient:
         req_headers = kwargs.pop("headers", {})
         if custom_headers:
             req_headers.update(custom_headers)
+            
+        if github_token:
+            req_headers["Authorization"] = f"Bearer {github_token}"
             
         for attempt in range(1, GITHUB_MAX_RETRIES + 1):
             try:

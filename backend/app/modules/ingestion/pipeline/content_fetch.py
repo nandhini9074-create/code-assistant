@@ -35,7 +35,7 @@ class ContentFetchStage:
                     file.content = b""
             else:
                 try:
-                    content_bytes = await fetch_blob_content(repo.owner, repo.name, file.blob_sha)
+                    content_bytes = await fetch_blob_content(repo.owner, repo.name, file.blob_sha, context.github_token)
                     file.content = content_bytes
                     file.size = len(file.content)
                 except Exception:

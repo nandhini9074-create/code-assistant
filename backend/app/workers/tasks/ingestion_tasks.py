@@ -8,8 +8,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from asgiref.sync import async_to_sync
-
 from app.core.enums import IngestionSource
 from app.core.logging import get_logger
 from app.infrastructure.database.session import get_db
@@ -80,11 +78,17 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
         )
         
         ingestion_source = IngestionSource(source)
+        
+        # Fetch the repo to get the per-repository token if it exists
+        repo = await repo_repo.get_by_id(repo_id)
+        github_token = repo.github_token if repo else None
+        
         result = await service.run_pipeline(
             job_id=job_id,
             repo_id=repo_id,
             source=ingestion_source,
             commit_sha=commit_sha or "",
+            github_token=github_token,
         )
         
         return {
@@ -124,10 +128,10 @@ def ingest_repository_task(
     )
     
     try:
-        # Execute the async ingestion flow in an event loop using `async_to_sync`
+        # Execute the async ingestion flow in an event loop using asyncio.run
         # In a real environment, you'd want to handle the event loop carefully
         # if Celery worker is running in a threading/gevent model.
-        return async_to_sync(_run_ingestion)(job_id, repo_id, source, commit_sha)
+        return asyncio.run(_run_ingestion(job_id, repo_id, source, commit_sha))
     except Exception as exc:
         logger.error("ingestion_task_failed", job_id=job_id, exc_info=exc)
         raise self.retry(exc=exc)

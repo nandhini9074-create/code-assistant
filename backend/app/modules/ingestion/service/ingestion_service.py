@@ -61,6 +61,7 @@ class IngestionService:
         source: IngestionSource,
         commit_sha: str,
         extracted_zip_path: str | None = None,
+        github_token: str | None = None,
     ) -> PipelineResult:
         """Executes the ingestion pipeline."""
         context = IngestionContext(
@@ -69,6 +70,7 @@ class IngestionService:
             source=source,
             commit_sha=commit_sha,
             extracted_zip_path=extracted_zip_path,
+            github_token=github_token,
         )
         
         try:

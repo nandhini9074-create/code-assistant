@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import IngestionSource, JobStatus
 from app.core.exceptions import RepositoryNotFoundError
+from app.core.logging import get_logger
 from app.dependencies import get_repository_repo, get_ingestion_job_repo
 from app.infrastructure.database.models.ingestion_job import IngestionJob
 from app.infrastructure.database.session import get_db
@@ -20,6 +21,7 @@ from app.modules.ingestion.schemas.ingestion_schema import IngestRepositoryReque
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
 from app.workers.tasks.ingestion_tasks import ingest_repository_task
 
+logger = get_logger(__name__)
 router = APIRouter(prefix="/ingestion", tags=["Ingestion"])
 
 
@@ -30,6 +32,7 @@ async def trigger_ingestion(
     job_repo: IngestionJobRepository = Depends(get_ingestion_job_repo),
 ) -> IngestionJobResponse:
     """Trigger a repository ingestion job."""
+    logger.info("received_trigger_ingestion_request", repo_id=str(request.repo_id), commit_sha=request.commit_sha)
     repo = await repo_repo.get_by_id(str(request.repo_id))
     if not repo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
@@ -65,6 +68,7 @@ async def reindex_repository(
     job_repo: IngestionJobRepository = Depends(get_ingestion_job_repo),
 ) -> IngestionJobResponse:
     """Force a full reindex of a registered repository."""
+    logger.info("received_reindex_repository_request", repo_id=str(repo_id))
     repo = await repo_repo.get_by_id(str(repo_id))
     if not repo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
