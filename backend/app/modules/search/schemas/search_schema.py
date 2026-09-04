@@ -12,8 +12,10 @@ from app.shared.schemas.base import BaseSchema
 
 class SearchRequest(BaseSchema):
     """Request to perform a code search."""
-    repo_id: str
+    repo_name: str
+    feature: str | None = None
     query: str = Field(..., min_length=3, max_length=1000)
+    intent_hint: str | None = None
 
 
 class EvidenceItem(BaseSchema):

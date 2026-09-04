@@ -32,7 +32,7 @@ class WebhookValidator:
         # Get all repos to find one matching this name and branch
         # In a real system, we'd query by owner/name/branch.
         # Here we just iterate to find a matching active repo.
-        repos = await self.repo_repo.get_all()
+        repos = await self.repo_repo.list_all()
         target_repo = None
         for repo in repos:
             if f"{repo.owner}/{repo.name}" == repo_name and repo.default_branch == branch:

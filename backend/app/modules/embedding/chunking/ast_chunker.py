@@ -109,18 +109,18 @@ def chunk_ast(
         List of chunks containing content and metadata.
     """
     if not language:
+        logger.debug("ast_chunker_fallback_to_text", reason="no_language_detected")
         return chunk_text(content)
         
     parser = _get_language_parser(language)
     if not parser:
+        logger.debug("ast_chunker_fallback_to_text", reason="tree_sitter_parser_unavailable", language=language)
         return chunk_text(content)
         
     try:
         content_bytes = content.encode("utf-8")
         tree = parser.parse(content_bytes)
         
-        # Define which nodes we want to extract based on language
-        # This can be expanded significantly per language
         target_nodes = {
             "function_definition", 
             "class_definition", 
@@ -134,10 +134,12 @@ def chunk_ast(
         
         # If we couldn't find any structural chunks, fallback to text
         if not chunks:
+            logger.debug("ast_chunker_no_nodes_found_fallback_to_text", language=language)
             return chunk_text(content)
             
+        logger.debug("ast_chunking_success", language=language, chunks_count=len(chunks))
         return chunks
         
     except Exception as exc:
-        logger.warning("ast_chunking_failed", language=language, exc_info=exc)
+        logger.warning("ast_chunking_failed_fallback_to_text", language=language, error=str(exc))
         return chunk_text(content)

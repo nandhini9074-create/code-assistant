@@ -5,10 +5,15 @@ Manages Qdrant collections and payload indices for Code Explorer.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from qdrant_client.http import models as qmodels
 
 from app.core.logging import get_logger
 from app.infrastructure.qdrant.client import get_qdrant_client
+
+if TYPE_CHECKING:
+    from qdrant_client import AsyncQdrantClient
 
 logger = get_logger(__name__)
 

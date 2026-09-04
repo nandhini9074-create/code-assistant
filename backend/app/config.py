@@ -106,9 +106,6 @@ class QdrantSettings(BaseSettings):
         alias="QDRANT_URL",
     )
     qdrant_api_key: str | None = Field(default=None, alias="QDRANT_API_KEY")
-    qdrant_collection_name: str = Field(
-        default="code_chunks", alias="QDRANT_COLLECTION_NAME"
-    )
     qdrant_timeout: float = Field(default=30.0, alias="QDRANT_TIMEOUT")
 
 

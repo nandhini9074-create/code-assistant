@@ -59,6 +59,13 @@ class VoyageProvider:
             "input_type": input_type,
         }
 
+        logger.info(
+            "voyage_api_call_started",
+            batch_size=len(texts),
+            model=self.settings.voyage_model,
+            input_type=input_type,
+        )
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -71,8 +78,12 @@ class VoyageProvider:
                 response.raise_for_status()
                 data = response.json()
                 
-                # The response data["data"] is a list of objects with an "embedding" field
                 embeddings = [item["embedding"] for item in data["data"]]
+                logger.info(
+                    "voyage_api_call_success",
+                    received_embeddings=len(embeddings),
+                    model=self.settings.voyage_model,
+                )
                 return embeddings
                 
         except httpx.RequestError as exc:

@@ -5,7 +5,7 @@ Service for processing GitHub webhooks.
 
 from typing import Any
 
-from app.core.enums import IngestionSource, JobStatus
+from app.core.enums import TriggerSource, JobStatus
 from app.core.exceptions import DuplicateWebhookDeliveryError, ValidationError
 from app.core.logging import get_logger
 from app.infrastructure.database.models.ingestion_job import IngestionJob
@@ -49,30 +49,46 @@ class WebhookService:
         if not commit_sha:
             return WebhookEventResponse(status="ignored", message="No head_commit found")
 
-        # 5. Create ingestion job
+        # 5. Extract file diff from commits
+        webhook_diff: dict[str, list[str]] = {"added": [], "modified": [], "deleted": []}
+        for commit in payload.get("commits", []):
+            webhook_diff["added"].extend(commit.get("added", []))
+            webhook_diff["modified"].extend(commit.get("modified", []))
+            webhook_diff["deleted"].extend(commit.get("removed", []))
+            
+        webhook_diff["added"] = list(set(webhook_diff["added"]))
+        webhook_diff["modified"] = list(set(webhook_diff["modified"]))
+        webhook_diff["deleted"] = list(set(webhook_diff["deleted"]))
+
+        # 6. Create ingestion job
         job = IngestionJob(
             repo_id=repo.id,
-            source=IngestionSource.WEBHOOK,
-            status=JobStatus.PENDING,
+            job_type="incremental",
+            trigger_source=TriggerSource.WEBHOOK.value,
+            status=JobStatus.QUEUED.value,
             commit_sha=commit_sha,
         )
         job = await self.job_repo.create(job)
         
-        # 6. Submit Celery task
+        # 7. Submit Celery task
         # Using string representation of UUID for Celery
         ingest_repository_task.delay(
             job_id=str(job.id),
             repo_id=str(repo.id),
-            source=IngestionSource.WEBHOOK.value,
+            source=TriggerSource.WEBHOOK.value,
             commit_sha=commit_sha,
+            webhook_diff=webhook_diff,
         )
         
         # 7. Store webhook event record
         webhook_event = WebhookEvent(
             delivery_id=delivery_id,
             event_type=event_type,
-            repository_id=repo.id,
-            payload_json=payload,
+            repo_id=repo.id,
+            signature_valid=True,
+            payload_raw=payload,
+            processed=False,
+            ingestion_job_id=job.id,
         )
         # await self.webhook_event_repo.create(webhook_event)
         

@@ -3,6 +3,7 @@ app/modules/jobs/service/job_service.py
 Service for the jobs module.
 """
 
+from app.core.enums import JobStatus
 from app.core.exceptions import JobNotFoundError
 from app.modules.jobs.repository.job_repository import JobRepository
 from app.modules.jobs.schemas.job_schema import JobStatusResponse
@@ -22,7 +23,7 @@ class JobService:
             
         return JobStatusResponse(
             id=str(job.id),
-            status=job.status,
+            status=JobStatus(job.status),
             stage=job.current_stage,
             processed_files_count=job.processed_files_count,
             indexed_chunks_count=job.indexed_chunks_count,
@@ -39,7 +40,7 @@ class JobService:
         return [
             JobStatusResponse(
                 id=str(job.id),
-                status=job.status,
+                status=JobStatus(job.status),
                 stage=job.current_stage,
                 processed_files_count=job.processed_files_count,
                 indexed_chunks_count=job.indexed_chunks_count,
@@ -50,3 +51,27 @@ class JobService:
             )
             for job in jobs
         ]
+
+    async def cancel_job(self, job_id: str) -> None:
+        """Cancel an in-flight job."""
+        from app.core.enums import JobStatus
+        
+        job = await self.job_repo.get_job(job_id)
+        if not job:
+            raise JobNotFoundError(job_id)
+            
+        if job.status not in (JobStatus.QUEUED.value, JobStatus.RUNNING.value):
+            return
+            
+        # Revoke the celery task
+        if job.celery_task_id:
+            try:
+                from app.workers.celery_app import celery_app
+                celery_app.control.revoke(job.celery_task_id, terminate=True)
+            except Exception as e:
+                from app.core.logging import get_logger
+                logger = get_logger(__name__)
+                logger.error(f"Failed to revoke celery task for job {job_id}: {e}")
+                
+        # Update status
+        await self.job_repo.update_status(job_id, JobStatus.CANCELLED.value)

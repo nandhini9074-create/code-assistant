@@ -9,6 +9,7 @@ Never logs secrets, API keys, or tokens.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from contextvars import ContextVar
 from typing import Any
@@ -135,6 +136,13 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
     """
     level = getattr(logging, log_level.upper(), logging.INFO)
 
+    # Ensure stdout handles UTF-8 on Windows
+    if hasattr(sys.stdout, "reconfigure"):
+        try:
+            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
+
     # Standard library logging handler
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
@@ -143,6 +151,7 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
         level=level,
         handlers=[handler],
         format="%(message)s",
+        force=True,
     )
 
     # Silence noisy third-party loggers
@@ -165,8 +174,9 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
         # Production: JSON output (parseable by log aggregators)
         renderer: Any = structlog.processors.JSONRenderer()
     else:
-        # Development: colorized human-readable output
-        renderer = structlog.dev.ConsoleRenderer(colors=True)
+        # Development: colorized human-readable output (colors disabled if sys.platform is win32 without vt100)
+        use_colors = sys.platform != "win32" or "WT_SESSION" in os.environ or "TERM" in os.environ
+        renderer = structlog.dev.ConsoleRenderer(colors=use_colors)
 
     structlog.configure(
         processors=[
@@ -195,4 +205,6 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
         logger = get_logger(__name__)
         logger.info("file_processed", file_path="src/main.py", duration_ms=42)
     """
+    if not structlog.is_configured():
+        configure_logging()
     return structlog.get_logger(name)

@@ -24,6 +24,7 @@ async def init_redis() -> None:
     """
     Initialize the global async Redis client.
     Call once at application startup.
+    If Redis is unreachable, logs a warning and allows the app to start without cache.
     """
     global _redis_client
     if _redis_client is not None:
@@ -33,18 +34,22 @@ async def init_redis() -> None:
     logger.info("redis_init", url=settings.redis_url.split("@")[-1])  # mask passwords if any
 
     try:
-        _redis_client = Redis.from_url(
+        client = Redis.from_url(
             settings.redis_url,
             decode_responses=True,  # Return strings instead of bytes
+            socket_connect_timeout=2.0,
         )
-        
         # Ping to verify connection
-        await _redis_client.ping()
+        await client.ping()
+        _redis_client = client
         logger.info("redis_ready")
     except Exception as exc:
         _redis_client = None
-        logger.error("redis_init_error", exc_info=exc)
-        raise RedisError(f"Failed to connect to Redis: {exc}") from exc
+        logger.warning(
+            "redis_unavailable_continuing_without_cache",
+            error=str(exc),
+            hint="Running in no-cache mode. Start Redis to enable caching and distributed locks.",
+        )
 
 
 async def close_redis() -> None:
@@ -54,17 +59,18 @@ async def close_redis() -> None:
     """
     global _redis_client
     if _redis_client is not None:
-        await _redis_client.aclose()
+        try:
+            await _redis_client.close()
+        except Exception:
+            pass
         _redis_client = None
         logger.info("redis_closed")
 
 
-def get_redis_client() -> Redis:
+def get_redis_client() -> Redis | None:
     """
-    Get the initialized global Redis client.
+    Get the initialized global Redis client (None if Redis is unavailable).
     """
-    if _redis_client is None:
-        raise RedisError("Redis client not initialized. Call init_redis() first.")
     return _redis_client
 
 
@@ -75,6 +81,8 @@ async def set_cache(key: str, value: Any, ttl_seconds: int | None = None) -> Non
     Set a value in the cache, optionally serialized as JSON.
     """
     client = get_redis_client()
+    if client is None:
+        return
     
     if not isinstance(value, str):
         value = json.dumps(value)
@@ -93,6 +101,8 @@ async def get_cache(key: str, as_json: bool = False) -> Any | None:
     Get a value from the cache.
     """
     client = get_redis_client()
+    if client is None:
+        return None
     try:
         value = await client.get(key)
         if value and as_json:
@@ -106,17 +116,20 @@ async def get_cache(key: str, as_json: bool = False) -> Any | None:
 async def acquire_lock(key: str, ttl_seconds: int = 60) -> bool:
     """
     Attempt to acquire a distributed lock.
-    Returns True if acquired, False otherwise.
+    Returns True if acquired (or if Redis is unavailable in local dev), False otherwise.
     Used for webhook idempotency and race condition prevention.
     """
     client = get_redis_client()
+    if client is None:
+        # In local dev without Redis, allow operation to proceed
+        return True
     try:
         # SETNX equivalent (set if not exists)
         acquired = await client.set(key, "1", ex=ttl_seconds, nx=True)
         return bool(acquired)
     except Exception as exc:
         logger.error("redis_lock_failed", key=key, exc_info=exc)
-        return False
+        return True
 
 
 async def release_lock(key: str) -> None:
@@ -124,6 +137,8 @@ async def release_lock(key: str) -> None:
     Release a distributed lock.
     """
     client = get_redis_client()
+    if client is None:
+        return
     try:
         await client.delete(key)
     except Exception as exc:

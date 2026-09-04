@@ -3,9 +3,11 @@ app/modules/jobs/repository/job_repository.py
 Repository for jobs module.
 """
 
+from typing import cast
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.infrastructure.database.models.ingestion_job import IngestionJob
@@ -44,3 +46,19 @@ class JobRepository:
             .offset(offset)
         )
         return list(result.scalars().all())
+
+    async def update_status(self, job_id: str, status: str) -> bool:
+        """Update job status."""
+        try:
+            uuid_obj = UUID(job_id)
+        except ValueError:
+            return False
+            
+        stmt = (
+            update(IngestionJob)
+            .where(IngestionJob.id == uuid_obj)
+            .values(status=status)
+        )
+        result = await self.session.execute(stmt)
+        await self.session.commit()
+        return cast(CursorResult[None], result).rowcount > 0

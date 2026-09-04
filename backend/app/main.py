@@ -23,7 +23,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     Manage application lifecycle events (startup and shutdown).
     Initializes and cleans up connections for database, Qdrant, and Redis.
     """
-    configure_logging(json_logs=True)
+    settings = get_settings()
+    configure_logging(json_logs=settings.json_logs, log_level=settings.log_level)
     logger.info("app_startup")
     
     # Initialize infrastructure connections

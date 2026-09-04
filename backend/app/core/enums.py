@@ -22,11 +22,19 @@ class IntentType(str, Enum):
 class JobStatus(str, Enum):
     """Lifecycle states of an ingestion job."""
 
-    QUEUED = "QUEUED"
-    RUNNING = "RUNNING"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-    CANCELLED = "CANCELLED"
+    PENDING = "pending"
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    PARTIAL = "partial"
+    
+class JobType(str, Enum):
+    """Type of ingestion job."""
+    
+    FULL = "full"
+    INCREMENTAL = "incremental"
 
 
 class JobStage(str, Enum):
@@ -49,13 +57,12 @@ class JobStage(str, Enum):
 
 # Ingestion
 
-class IngestionSource(str, Enum):
+class TriggerSource(str, Enum):
     """Source type of an ingestion request."""
 
-    GITHUB_URL = "GITHUB_URL"
-    ZIP_UPLOAD = "ZIP_UPLOAD"
-    WEBHOOK = "WEBHOOK"
-    REINDEX = "REINDEX"
+    GITHUB_URL = "github_url"
+    ZIP_UPLOAD = "zip_upload"
+    WEBHOOK = "webhook"
 
 
 # Repository
@@ -81,16 +88,13 @@ class FileStatus(str, Enum):
 
 # Chunk
 
-class ChunkType(str, Enum):
+class SymbolType(str, Enum):
     """Type of a code chunk produced by AST chunking."""
 
     FUNCTION = "function"
-    METHOD = "method"
     CLASS = "class"
-    INTERFACE = "interface"
+    METHOD = "method"
     MODULE = "module"
-    DECLARATION = "declaration"
-    IMPORT = "import"
     OTHER = "other"
 
 

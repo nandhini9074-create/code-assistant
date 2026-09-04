@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from app.core.enums import IngestionSource
+from app.core.enums import TriggerSource
 from app.core.logging import get_logger
 from app.infrastructure.database.session import get_db
 from app.infrastructure.github.blobs_client import fetch_blob_content
@@ -28,7 +28,7 @@ from app.modules.ingestion.pipeline import (
     VectorUpsertStage,
 )
 from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
-from app.modules.ingestion.repository.file_registry_repo import FileRegistryRepository
+from app.modules.ingestion.repository.file_hash_repo import FileHashRepository
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
 from app.modules.ingestion.service.ingestion_service import IngestionService
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
@@ -37,15 +37,16 @@ from app.workers.celery_app import celery_app
 logger = get_logger(__name__)
 
 
-async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str | None) -> dict[str, Any]:
+async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str | None, full_reindex: bool = False, webhook_diff: dict[str, list[str]] | None = None) -> dict[str, Any]:
     # Set up dependencies manually since we are outside FastAPI request context
     # In a real application, you'd use a DI container or proper factory function
-    from app.infrastructure.database.session import async_session_maker
+    from app.infrastructure.database.session import get_session_factory
+    session_factory = get_session_factory()
     
-    async with async_session_maker() as session:
+    async with session_factory() as session:
         repo_repo = RepositoryRepository(session)
         job_repo = IngestionJobRepository(session)
-        file_repo = FileRegistryRepository(session)
+        file_repo = FileHashRepository(session)
         chunk_repo = ChunkRegistryRepository(session)
         
         # Instantiate stages
@@ -77,18 +78,21 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
             checkpoint_stage,
         )
         
-        ingestion_source = IngestionSource(source)
+        ingestion_source = TriggerSource(source)
         
         # Fetch the repo to get the per-repository token if it exists
         repo = await repo_repo.get_by_id(repo_id)
-        github_token = repo.github_token if repo else None
+        github_token = repo.access_token_ref if repo else None
         
         result = await service.run_pipeline(
             job_id=job_id,
             repo_id=repo_id,
+            repo_name=repo.repo_name if repo else "unknown",
             source=ingestion_source,
             commit_sha=commit_sha or "",
             github_token=github_token,
+            full_reindex=full_reindex,
+            webhook_diff=webhook_diff,
         )
         
         return {
@@ -115,6 +119,8 @@ def ingest_repository_task(
     repo_id: str,
     source: str,
     commit_sha: str | None = None,
+    full_reindex: bool = False,
+    webhook_diff: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Background task to ingest a GitHub repository.
@@ -128,10 +134,22 @@ def ingest_repository_task(
     )
     
     try:
-        # Execute the async ingestion flow in an event loop using asyncio.run
-        # In a real environment, you'd want to handle the event loop carefully
-        # if Celery worker is running in a threading/gevent model.
-        return asyncio.run(_run_ingestion(job_id, repo_id, source, commit_sha))
+        # Check if an event loop is already running (e.g. Celery eager mode inside FastAPI process)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    _run_ingestion(job_id, repo_id, source, commit_sha, full_reindex, webhook_diff),
+                )
+                return future.result()
+        else:
+            return asyncio.run(_run_ingestion(job_id, repo_id, source, commit_sha, full_reindex, webhook_diff))
     except Exception as exc:
         logger.error("ingestion_task_failed", job_id=job_id, exc_info=exc)
         raise self.retry(exc=exc)

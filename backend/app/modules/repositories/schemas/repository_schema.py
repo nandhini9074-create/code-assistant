@@ -12,9 +12,15 @@ from app.shared.types.repo_types import RepoId
 
 class CreateRepositoryRequest(BaseSchema):
     """Request to register a new repository."""
-    github_url: str = Field(..., description="Full GitHub URL (e.g., https://github.com/owner/repo)")
+    repo_url: str = Field(..., description="Full GitHub URL (e.g., https://github.com/owner/repo)")
     branch: str | None = Field(default="main", description="Branch to index")
-    github_token: str | None = Field(default=None, description="Optional GitHub PAT to override global token")
+    pat_token: str | None = Field(default=None, description="Optional GitHub PAT to override global token")
+
+
+class UpdateRepositoryRequest(BaseSchema):
+    """Request to update a repository."""
+    branch: str | None = Field(default=None, description="Branch to index")
+    pat_token: str | None = Field(default=None, description="Optional GitHub PAT to override global token")
 
 
 class RepositoryResponse(BaseSchema):

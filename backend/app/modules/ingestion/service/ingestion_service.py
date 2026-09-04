@@ -3,7 +3,8 @@ app/modules/ingestion/service/ingestion_service.py
 Service that orchestrates the ingestion pipeline.
 """
 
-from app.core.enums import IngestionSource
+from app.core.enums import TriggerSource
+from app.core.logging import get_logger
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext, PipelineResult
 from app.modules.ingestion.pipeline import (
     AstChunkingStage,
@@ -20,9 +21,11 @@ from app.modules.ingestion.pipeline import (
     VectorUpsertStage,
 )
 
+logger = get_logger(__name__)
+
 
 class IngestionService:
-    """Orchestrates the 11-stage ingestion pipeline."""
+    """Orchestrates the 12-stage ingestion pipeline."""
     
     def __init__(
         self,
@@ -58,32 +61,62 @@ class IngestionService:
         self,
         job_id: str,
         repo_id: str,
-        source: IngestionSource,
+        repo_name: str,
+        source: TriggerSource,
         commit_sha: str,
         extracted_zip_path: str | None = None,
         github_token: str | None = None,
+        full_reindex: bool = False,
+        webhook_diff: dict[str, list[str]] | None = None,
     ) -> PipelineResult:
         """Executes the ingestion pipeline."""
+        logger.info(
+            "pipeline_started",
+            job_id=job_id,
+            repo_id=repo_id,
+            repo_name=repo_name,
+            source=source.value if hasattr(source, "value") else str(source),
+            commit_sha=commit_sha,
+            full_reindex=full_reindex,
+        )
         context = IngestionContext(
             job_id=job_id,
             repo_id=repo_id,
+            repo_name=repo_name,
             source=source,
             commit_sha=commit_sha,
             extracted_zip_path=extracted_zip_path,
             github_token=github_token,
+            full_reindex=full_reindex,
+            webhook_diff=webhook_diff,
         )
         
         try:
-            for stage in self.stages:
+            total_stages = len(self.stages)
+            for idx, stage in enumerate(self.stages, 1):
+                stage_name = stage.__class__.__name__
+                logger.info("pipeline_stage_executing", stage_number=f"{idx}/{total_stages}", stage_name=stage_name, job_id=job_id)
                 await stage.execute(context)
+                logger.info("pipeline_stage_completed", stage_number=f"{idx}/{total_stages}", stage_name=stage_name, job_id=job_id)
                 
+            processed_files = len(context.files)
+            indexed_chunks = sum(len(f.chunks) for f in context.files)
+            logger.info(
+                "pipeline_completed_successfully",
+                job_id=job_id,
+                repo_name=repo_name,
+                processed_files=processed_files,
+                indexed_chunks=indexed_chunks,
+                deleted_files=len(context.deleted_files),
+            )
             return PipelineResult(
                 success=True,
                 job_id=job_id,
-                processed_files_count=len(context.files),
-                indexed_chunks_count=sum(len(f.chunks) for f in context.files),
+                processed_files_count=processed_files,
+                indexed_chunks_count=indexed_chunks,
             )
         except Exception as exc:
+            logger.error("pipeline_execution_failed", job_id=job_id, error=str(exc), exc_info=exc)
             return PipelineResult(
                 success=False,
                 job_id=job_id,

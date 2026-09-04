@@ -7,15 +7,13 @@ from __future__ import annotations
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 
-from app.core.enums import IngestionSource, JobStatus
+from app.core.enums import TriggerSource, JobStatus
 from app.core.exceptions import RepositoryNotFoundError
 from app.core.logging import get_logger
 from app.dependencies import get_repository_repo, get_ingestion_job_repo
 from app.infrastructure.database.models.ingestion_job import IngestionJob
-from app.infrastructure.database.session import get_db
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
 from app.modules.ingestion.schemas.ingestion_schema import IngestRepositoryRequest, IngestionJobResponse
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
@@ -38,18 +36,18 @@ async def trigger_ingestion(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
 
     job = IngestionJob(
-        repository_id=repo.id,
-        source=IngestionSource.GITHUB_URL.value,
-        status=JobStatus.PENDING.value,
-        commit_sha=request.commit_sha,
+        repo_id=repo.id,
+        job_type="full",
+        trigger_source=TriggerSource.GITHUB_URL.value,
+        status=JobStatus.QUEUED.value,
+        commit_sha=request.commit_sha or "",
     )
     job = await job_repo.create(job)
 
-    # Enqueue Celery task
     ingest_repository_task.delay(
         job_id=str(job.id),
         repo_id=str(repo.id),
-        source=IngestionSource.GITHUB_URL.value,
+        source=TriggerSource.GITHUB_URL.value,
         commit_sha=request.commit_sha,
     )
 
@@ -64,26 +62,30 @@ async def trigger_ingestion(
 @router.post("/{repo_id}/reindex", response_model=IngestionJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def reindex_repository(
     repo_id: uuid.UUID,
+    full: bool = False,
     repo_repo: RepositoryRepository = Depends(get_repository_repo),
     job_repo: IngestionJobRepository = Depends(get_ingestion_job_repo),
 ) -> IngestionJobResponse:
-    """Force a full reindex of a registered repository."""
+    """Force a reindex of a registered repository."""
     logger.info("received_reindex_repository_request", repo_id=str(repo_id))
     repo = await repo_repo.get_by_id(str(repo_id))
     if not repo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
 
     job = IngestionJob(
-        repository_id=repo.id,
-        source=IngestionSource.GITHUB_URL.value,
-        status=JobStatus.PENDING.value,
+        repo_id=repo.id,
+        job_type="full" if full else "incremental",
+        trigger_source=TriggerSource.GITHUB_URL.value,
+        status=JobStatus.QUEUED.value,
+        commit_sha="",
     )
     job = await job_repo.create(job)
 
     ingest_repository_task.delay(
         job_id=str(job.id),
         repo_id=str(repo.id),
-        source=IngestionSource.GITHUB_URL.value,
+        source=TriggerSource.GITHUB_URL.value,
+        full_reindex=full,
     )
 
     return IngestionJobResponse(
@@ -92,3 +94,35 @@ async def reindex_repository(
         status=job.status,
         message="Reindex job queued.",
     )
+
+
+@router.delete("/{repo_id}/index", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
+async def delete_index(
+    repo_id: uuid.UUID,
+    repo_repo: RepositoryRepository = Depends(get_repository_repo),
+) -> Response:
+    """Wipe the Qdrant collection and chunk registry rows without deregistering the repo."""
+    repo = await repo_repo.get_by_id(str(repo_id))
+    if not repo:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
+        
+    try:
+        from app.infrastructure.qdrant.client import get_qdrant_client
+        client = get_qdrant_client()
+        await client.delete_collection(repo.qdrant_collection_name)
+    except Exception as e:
+        logger.warning("failed_to_drop_qdrant_collection", repo_id=str(repo_id), error=str(e))
+
+    # Wipe chunk registry rows (cascade not triggered since repo isn't deleted)
+    from app.infrastructure.database.session import get_session_factory
+    from sqlalchemy import delete
+    from app.infrastructure.database.models.chunk_registry import ChunkRegistry
+    from app.infrastructure.database.models.file_hash import FileHash
+    
+    session_factory = get_session_factory()
+    async with session_factory() as session:
+        await session.execute(delete(ChunkRegistry).where(ChunkRegistry.repo_id == repo.id))
+        await session.execute(delete(FileHash).where(FileHash.repo_id == repo.id))
+        await session.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -5,7 +5,10 @@ Service for interacting with the Embedding layer.
 
 from __future__ import annotations
 
+from app.core.logging import get_logger
 from app.modules.embedding.providers.voyage_provider import VoyageProvider
+
+logger = get_logger(__name__)
 
 # Singleton provider instance
 _provider: VoyageProvider | None = None
@@ -35,5 +38,12 @@ async def generate_embeddings(
     Returns:
         List of embedding vectors.
     """
+    if not texts:
+        logger.debug("generate_embeddings_called_with_empty_list")
+        return []
+        
+    logger.info("generating_embeddings_started", count=len(texts), input_type=input_type)
     provider = get_embedding_provider()
-    return await provider.generate_embeddings(texts=texts, input_type=input_type)
+    embeddings = await provider.generate_embeddings(texts=texts, input_type=input_type)
+    logger.info("generating_embeddings_completed", count=len(embeddings))
+    return embeddings
