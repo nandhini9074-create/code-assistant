@@ -65,6 +65,14 @@ class TriggerSource(str, Enum):
     WEBHOOK = "webhook"
 
 
+class FileFetchStatus(str, Enum):
+    """Status of fetching content for a file."""
+
+    PENDING = "pending"
+    SUCCESS = "success"
+    FAILED = "failed"
+
+
 # Repository
 
 class RepositoryStatus(str, Enum):

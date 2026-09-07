@@ -6,7 +6,7 @@ Domain models for the ingestion pipeline.
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.core.enums import TriggerSource
+from app.core.enums import FileFetchStatus, TriggerSource
 
 
 @dataclass
@@ -37,6 +37,8 @@ class FileRecord:
     chunks: list[ChunkRecord] = field(default_factory=list)
     is_new_or_modified: bool = True
     size: int = 0
+    fetch_status: FileFetchStatus = FileFetchStatus.PENDING
+    fetch_error: str | None = None
 
 
 @dataclass
@@ -46,6 +48,7 @@ class PipelineResult:
     job_id: str
     processed_files_count: int = 0
     indexed_chunks_count: int = 0
+    failed_files_count: int = 0
     error_message: str | None = None
 
 
@@ -59,6 +62,7 @@ class IngestionContext:
     commit_sha: str
     files: list[FileRecord] = field(default_factory=list)
     deleted_files: list[str] = field(default_factory=list)
+    failed_files: list[str] = field(default_factory=list)
     extracted_zip_path: str | None = None
     github_token: str | None = None
     full_reindex: bool = False

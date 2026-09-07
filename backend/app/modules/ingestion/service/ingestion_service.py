@@ -99,21 +99,24 @@ class IngestionService:
                 await stage.execute(context)
                 logger.info("pipeline_stage_completed", stage_number=f"{idx}/{total_stages}", stage_name=stage_name, job_id=job_id)
                 
-            processed_files = len(context.files)
+            failed_files_count = len(context.failed_files)
+            successful_files = sum(1 for f in context.files if f.fetch_status == "success" or f.fetch_status.value == "success") if context.files else 0
             indexed_chunks = sum(len(f.chunks) for f in context.files)
             logger.info(
                 "pipeline_completed_successfully",
                 job_id=job_id,
                 repo_name=repo_name,
-                processed_files=processed_files,
+                processed_files=successful_files,
+                failed_files=failed_files_count,
                 indexed_chunks=indexed_chunks,
                 deleted_files=len(context.deleted_files),
             )
             return PipelineResult(
                 success=True,
                 job_id=job_id,
-                processed_files_count=processed_files,
+                processed_files_count=successful_files,
                 indexed_chunks_count=indexed_chunks,
+                failed_files_count=failed_files_count,
             )
         except Exception as exc:
             logger.error("pipeline_execution_failed", job_id=job_id, error=str(exc), exc_info=exc)

@@ -179,7 +179,7 @@ class GitHubSettings(BaseSettings):
 
 
 class EmbeddingSettings(BaseSettings):
-    """Voyage AI embedding settings."""
+    """Jina AI embedding settings."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -188,14 +188,17 @@ class EmbeddingSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    voyage_api_key: str | None = Field(default=None, alias="VOYAGE_API_KEY")
-    voyage_embedding_model: str = Field(
-        default="voyage-code-3", alias="VOYAGE_EMBEDDING_MODEL"
+    jina_api_key: str | None = Field(default=None, alias="JINA_API_KEY")
+    jina_api_url: str = Field(
+        default="https://api.jina.ai/v1/embeddings", alias="JINA_API_URL"
     )
-    voyage_embedding_batch_size: int = Field(
-        default=128, alias="VOYAGE_EMBEDDING_BATCH_SIZE"
+    jina_embedding_model: str = Field(
+        default="jina-embeddings-v3", alias="JINA_EMBEDDING_MODEL"
     )
-    voyage_max_retries: int = Field(default=3, alias="VOYAGE_MAX_RETRIES")
+    jina_embedding_batch_size: int = Field(
+        default=32, alias="JINA_EMBEDDING_BATCH_SIZE"
+    )
+    jina_max_retries: int = Field(default=3, alias="JINA_MAX_RETRIES")
     embedding_dimension: int = Field(
         default=1024, alias="EMBEDDING_DIMENSION"
     )
@@ -313,9 +316,9 @@ class Settings(
                 warnings.warn(
                     "GITHUB_TOKEN is not set in production", stacklevel=2
                 )
-            if not self.voyage_api_key:
+            if not self.jina_api_key:
                 warnings.warn(
-                    "VOYAGE_API_KEY is not set in production", stacklevel=2
+                    "JINA_API_KEY is not set in production", stacklevel=2
                 )
             if not self.qwen_api_key:
                 warnings.warn(

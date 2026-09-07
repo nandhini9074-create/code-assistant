@@ -230,10 +230,29 @@ class GitHubRateLimitError(GitHubAPIError, RateLimitError):
 
 
 class EmbeddingError(CodeExplorerException):
-    """Voyage embedding API returned an error or timed out."""
+    """Jina embedding API returned an error or timed out."""
 
     http_status = 502
     code = "EMBEDDING_ERROR"
+
+
+class EmbeddingAuthenticationError(EmbeddingError):
+    """Jina API authentication failed (401 Unauthorized / Invalid API Key)."""
+
+    http_status = 401
+    code = "EMBEDDING_AUTHENTICATION_ERROR"
+
+
+class EmbeddingGenerationError(EmbeddingError):
+    """Embedding generation failed or returned mismatched output counts."""
+
+    code = "EMBEDDING_GENERATION_ERROR"
+
+
+class EmbeddingDimensionMismatchError(EmbeddingError):
+    """Embedding vector dimension does not match configured collection dimension."""
+
+    code = "EMBEDDING_DIMENSION_MISMATCH"
 
 
 class LLMError(CodeExplorerException):

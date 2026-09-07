@@ -96,7 +96,7 @@ _SECRET_KEYS: frozenset[str] = frozenset(
         "passwd",
         "authorization",
         "github_token",
-        "voyage_api_key",
+        "jina_api_key",
         "qwen_api_key",
         "webhook_secret",
         "app_secret_key",

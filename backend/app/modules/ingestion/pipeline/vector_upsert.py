@@ -50,6 +50,18 @@ class VectorUpsertStage:
                 chunk.point_id = generate_point_id(context.repo_id, file.file_path, chunk.chunk_hash)
                 
                 if chunk.embedding:
+                    if len(chunk.embedding) != 1024:
+                        logger.error(
+                            "stage_10_vector_dimension_mismatch",
+                            chunk_hash=chunk.chunk_hash,
+                            dimension=len(chunk.embedding),
+                            expected=1024,
+                        )
+                        raise ValueError(
+                            f"Vector dimension mismatch for chunk {chunk.chunk_hash}: "
+                            f"expected 1024, got {len(chunk.embedding)}"
+                        )
+
                     points.append(qmodels.PointStruct(
                         id=chunk.point_id,
                         vector=chunk.embedding,

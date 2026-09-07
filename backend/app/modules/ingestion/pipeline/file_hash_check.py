@@ -3,7 +3,7 @@ app/modules/ingestion/pipeline/file_hash_check.py
 Pipeline stage: File hash check.
 """
 
-from app.core.enums import FileStatus
+from app.core.enums import FileFetchStatus, FileStatus
 from app.core.logging import get_logger
 from app.infrastructure.database.models.file_hash import FileHash
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
@@ -27,14 +27,24 @@ class FileHashCheckStage:
         seen_paths = set()
         new_modified_count = 0
         skipped_count = 0
+        failed_count = 0
         
         for file in context.files:
-            if not file.content:
+            # 1. Handle fetch failures explicitly
+            if file.fetch_status == FileFetchStatus.FAILED:
                 file.is_new_or_modified = False
-                skipped_count += 1
+                context.failed_files.append(file.file_path)
+                failed_count += 1
+                logger.warning(
+                    "stage_5_hash_check_skipped_fetch_failed_file",
+                    file_path=file.file_path,
+                    error=file.fetch_error,
+                )
                 continue
-                
-            file.file_hash = sha256_content(file.content)
+
+            # 2. Compute hash (handles non-empty as well as valid empty b"" files)
+            content_bytes = file.content if file.content is not None else b""
+            file.file_hash = sha256_content(content_bytes)
             seen_paths.add(file.file_path)
             
             existing = active_paths.get(file.file_path)
@@ -68,5 +78,6 @@ class FileHashCheckStage:
             "stage_5_hash_check_completed",
             new_or_modified=new_modified_count,
             skipped=skipped_count,
+            fetch_failed=failed_count,
             deleted_detected=len(context.deleted_files),
         )

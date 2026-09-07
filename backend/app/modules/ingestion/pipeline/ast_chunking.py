@@ -26,7 +26,7 @@ class AstChunkingStage:
             text = file.content.decode("utf-8", errors="ignore")
             language = get_language_from_extension(file.file_path)
             
-            ast_chunks = chunk_ast(text, language)
+            ast_chunks = chunk_ast(text, language, file_path=file.file_path)
             file_chunk_count = 0
             
             for chunk in ast_chunks:
@@ -35,18 +35,23 @@ class AstChunkingStage:
                     continue
                     
                 chunk_hash = sha256_text(chunk_text)
+                func_name = chunk.get("function_name")
+                cls_name = chunk.get("class_name")
+                doc_str = chunk.get("docstring")
+                chunk_meta = chunk.get("metadata", {})
+
                 file.chunks.append(
                     ChunkRecord(
                         file_path=file.file_path,
                         chunk_hash=chunk_hash,
                         chunk_type=str(chunk.get("type", "unknown")),
-                        function_name=chunk.get("function_name") if "function_name" in chunk else None,
-                        class_name=chunk.get("class_name") if "class_name" in chunk else None,
+                        function_name=str(func_name) if func_name is not None else None,
+                        class_name=str(cls_name) if cls_name is not None else None,
                         start_line=int(chunk.get("start_line", 1)),
                         end_line=int(chunk.get("end_line", 1)),
                         code=chunk_text,
-                        docstring=chunk.get("docstring") if "docstring" in chunk else None,
-                        metadata={}
+                        docstring=str(doc_str) if doc_str is not None else None,
+                        metadata=dict(chunk_meta) if isinstance(chunk_meta, dict) else {},
                     )
                 )
                 file_chunk_count += 1

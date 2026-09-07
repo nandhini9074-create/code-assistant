@@ -6,7 +6,7 @@ Pipeline stage: Fetch file content.
 import os
 import uuid
 
-from app.core.enums import TriggerSource
+from app.core.enums import FileFetchStatus, TriggerSource
 from app.core.logging import get_logger
 from app.infrastructure.github.blobs_client import fetch_blob_content
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
@@ -40,10 +40,14 @@ class ContentFetchStage:
                     with open(full_path, "rb") as f:
                         file.content = f.read()
                         file.size = len(file.content)
+                    file.fetch_status = FileFetchStatus.SUCCESS
+                    file.fetch_error = None
                     success_count += 1
                 except Exception as exc:
                     logger.warning("stage_4_local_file_read_failed", file_path=file.file_path, error=str(exc))
                     file.content = b""
+                    file.fetch_status = FileFetchStatus.FAILED
+                    file.fetch_error = str(exc)
                     error_count += 1
             else:
                 try:
@@ -53,10 +57,14 @@ class ContentFetchStage:
                     content_bytes = await fetch_blob_content(owner, repo_slug, file.blob_sha, context.github_token)
                     file.content = content_bytes
                     file.size = len(file.content)
+                    file.fetch_status = FileFetchStatus.SUCCESS
+                    file.fetch_error = None
                     success_count += 1
                 except Exception as exc:
                     logger.warning("stage_4_github_blob_fetch_failed", file_path=file.file_path, blob_sha=file.blob_sha, error=str(exc))
                     file.content = b""
+                    file.fetch_status = FileFetchStatus.FAILED
+                    file.fetch_error = str(exc)
                     error_count += 1
 
         logger.info("stage_4_content_fetch_completed", total=len(context.files), success=success_count, failed=error_count)

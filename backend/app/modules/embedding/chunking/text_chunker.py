@@ -1,16 +1,13 @@
-"""
-app/modules/embedding/chunking/text_chunker.py
-Fallback line-based chunker for plain text or unsupported languages.
-"""
-
-from __future__ import annotations
+from typing import Any
 
 
 def chunk_text(
     content: str,
-    max_chunk_size: int = 1500,
+    max_chunk_size: int = 500,
     overlap_size: int = 150,
-) -> list[dict[str, str | int]]:
+    metadata: dict[str, Any] | None = None,
+    language: str | None = None,
+) -> list[dict[str, Any]]:
     """
     Split text into chunks of lines, trying to respect max_chunk_size characters.
     
@@ -18,12 +15,20 @@ def chunk_text(
         content: The raw text content.
         max_chunk_size: Maximum characters per chunk (approximate).
         overlap_size: Overlap characters between chunks.
+        metadata: Optional base metadata dictionary to attach to each chunk.
+        language: Detected programming or markup language.
         
     Returns:
         A list of dictionaries representing the chunks.
     """
-    if not content.strip():
+    if not content or not content.strip():
         return []
+
+    base_meta = dict(metadata) if metadata is not None else {}
+    if language and "language" not in base_meta:
+        base_meta["language"] = language
+    if "chunking_strategy" not in base_meta:
+        base_meta["chunking_strategy"] = "text_fallback"
 
     lines = content.splitlines(keepends=True)
     chunks = []
@@ -38,12 +43,17 @@ def chunk_text(
         # If adding this line exceeds the max size and we already have content
         if current_chunk_size + line_len > max_chunk_size and current_chunk_lines:
             chunk_content = "".join(current_chunk_lines)
-            chunks.append({
+            chunk_dict = {
                 "content": chunk_content,
                 "start_line": current_start_line,
                 "end_line": i - 1,
                 "type": "text",
-            })
+                "function_name": None,
+                "class_name": None,
+                "docstring": None,
+                "metadata": dict(base_meta),
+            }
+            chunks.append(chunk_dict)
             
             # Start new chunk with overlap if possible
             # Backtrack to find overlap lines
@@ -63,11 +73,16 @@ def chunk_text(
         current_chunk_size += line_len
         
     if current_chunk_lines:
-        chunks.append({
+        chunk_dict = {
             "content": "".join(current_chunk_lines),
             "start_line": current_start_line,
             "end_line": len(lines),
             "type": "text",
-        })
+            "function_name": None,
+            "class_name": None,
+            "docstring": None,
+            "metadata": dict(base_meta),
+        }
+        chunks.append(chunk_dict)
         
     return chunks

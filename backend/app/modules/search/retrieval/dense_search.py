@@ -1,6 +1,6 @@
 """
 app/modules/search/retrieval/dense_search.py
-Dense vector search using Voyage embeddings and Qdrant.
+Dense vector search using Jina embeddings and Qdrant.
 """
 
 from app.infrastructure.qdrant.vector_repository import search_vectors
