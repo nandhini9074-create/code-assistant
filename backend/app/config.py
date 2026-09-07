@@ -205,7 +205,7 @@ class EmbeddingSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    """Qwen LLM settings (OpenAI-compatible DashScope endpoint)."""
+    """Groq LLM settings using Groq's OpenAI-compatible API."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -214,16 +214,35 @@ class LLMSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    qwen_api_key: str | None = Field(default=None, alias="QWEN_API_KEY")
-    qwen_model: str = Field(default="qwen-plus", alias="QWEN_MODEL")
-    qwen_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        alias="QWEN_BASE_URL",
+    groq_api_key: str | None = Field(
+        default=None,
+        alias="GROQ_API_KEY",
     )
-    qwen_max_tokens: int = Field(default=4096, alias="QWEN_MAX_TOKENS")
-    qwen_temperature: float = Field(default=0.1, alias="QWEN_TEMPERATURE")
-    qwen_max_retries: int = Field(default=3, alias="QWEN_MAX_RETRIES")
-    qwen_timeout_seconds: int = Field(default=60, alias="QWEN_TIMEOUT_SECONDS")
+    groq_model: str = Field(
+        default="qwen/qwen3-32b",
+        alias="GROQ_MODEL",
+    )
+    groq_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        alias="GROQ_BASE_URL",
+    )
+    groq_max_tokens: int = Field(
+        default=4096,
+        alias="GROQ_MAX_TOKENS",
+    )
+    groq_temperature: float = Field(
+        default=0.1,
+        alias="GROQ_TEMPERATURE",
+    )
+    groq_max_retries: int = Field(
+        default=3,
+        alias="GROQ_MAX_RETRIES",
+    )
+    groq_timeout_seconds: int = Field(
+        default=60,
+        alias="GROQ_TIMEOUT_SECONDS",
+    )
+
 
 
 class IngestionSettings(BaseSettings):

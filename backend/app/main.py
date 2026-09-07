@@ -1,3 +1,4 @@
+
 """
 app/main.py
 Main entry point for the FastAPI application.
@@ -13,6 +14,7 @@ from app.api.v1 import api_router
 from app.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import register_middleware
+from app.infrastructure.database.session import init_db, close_db
 
 logger = get_logger(__name__)
 
@@ -20,35 +22,25 @@ logger = get_logger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
-    Manage application lifecycle events (startup and shutdown).
-    Initializes and cleans up connections for database, Qdrant, and Redis.
+    Manage application lifecycle events.
+
+    Initializes PostgreSQL on application startup and
+    closes the database connection on application shutdown.
     """
     configure_logging(json_logs=True)
     logger.info("app_startup")
-    
-    # Initialize infrastructure connections
-    from app.infrastructure.cache.redis_client import init_redis
-    from app.infrastructure.database.session import init_db
-    from app.infrastructure.qdrant.client import init_qdrant
-    
-    await init_redis()
+
+    # Initialize PostgreSQL database engine and session factory.
     await init_db()
-    await init_qdrant()
-    
+
     logger.info("app_ready")
-    
-    yield
-    
-    logger.info("app_shutdown")
-    
-    # Cleanup infrastructure connections
-    from app.infrastructure.cache.redis_client import close_redis
-    from app.infrastructure.database.session import close_db
-    from app.infrastructure.qdrant.client import close_qdrant
-    
-    await close_redis()
-    await close_db()
-    await close_qdrant()
+
+    try:
+        yield
+    finally:
+        # Close PostgreSQL connections on application shutdown.
+        await close_db()
+        logger.info("app_shutdown")
 
 
 def create_app() -> FastAPI:
@@ -74,7 +66,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Register custom request context/logging middleware and exception handlers
     register_middleware(app)
 
@@ -86,7 +78,10 @@ def create_app() -> FastAPI:
         """
         Basic health check endpoint for load balancers.
         """
-        return {"status": "ok", "environment": settings.app_env}
+        return {
+            "status": "ok",
+            "environment": settings.app_env,
+        }
 
     return app
 

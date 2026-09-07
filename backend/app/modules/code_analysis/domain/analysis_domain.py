@@ -11,6 +11,7 @@ from typing import Any
 class ValidationResult:
     """Result of validating an LLM response against evidence."""
     is_valid: bool
+    status: str = "passed"
     errors: list[str] = field(default_factory=list)
 
 

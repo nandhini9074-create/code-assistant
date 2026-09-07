@@ -7,7 +7,6 @@ from enum import Enum
 
 
 # Intent
-
 class IntentType(str, Enum):
     """Supported user intent types for code analysis."""
 
