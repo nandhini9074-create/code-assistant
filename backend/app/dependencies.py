@@ -105,64 +105,136 @@ def get_code_analysis_service(
     )
 
 
-def get_search_service(
-    repo_repo: RepositoryRepository = Depends(get_repository_repo),
-    llm_service=Depends(get_llm_service),
-    code_analysis_service=Depends(get_code_analysis_service),
-):
-    from app.modules.search.pipeline.action_analysis import ActionAnalysisStage
-    from app.modules.search.pipeline.code_analysis import CodeAnalysisStage
-    from app.modules.search.pipeline.code_identification import CodeIdentificationStage
-    from app.modules.search.pipeline.code_retrieval import CodeRetrievalStage
-    from app.modules.search.pipeline.collection_selection import CollectionSelectionStage
-    from app.modules.search.pipeline.context_builder import ContextBuilderStage
-    from app.modules.search.pipeline.evidence_validation import EvidenceValidationStage
-    from app.modules.search.pipeline.final_triage import FinalTriageStage
-    from app.modules.search.pipeline.intent_classification import IntentClassificationStage
-    from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingStage
-    from app.modules.search.pipeline.repository_identification import RepositoryIdentificationStage
-    from app.modules.search.pipeline.request_validation import RequestValidationStage
-    from app.modules.search.pipeline.response_generation import ResponseGenerationStage
-    from app.modules.search.retrieval.dense_search import DenseSearch
-    from app.modules.search.retrieval.hybrid_search import HybridSearch
-    from app.modules.search.retrieval.reranker import Reranker
-    from app.modules.search.retrieval.result_merger import ResultMerger
-    from app.modules.search.retrieval.sparse_search import SparseSearch
-    from app.modules.search.service.search_service import SearchService
-
-    val_stage = RequestValidationStage()
-    intent_stage = IntentClassificationStage(llm_service)
-    query_prep_stage = QueryPreprocessingStage(llm_service)
-    repo_ident_stage = RepositoryIdentificationStage(repo_repo)
-    coll_sel_stage = CollectionSelectionStage()
-
-    dense = DenseSearch()
-    sparse = SparseSearch()
-    merger = ResultMerger()
-    reranker = Reranker()
-    hybrid = HybridSearch(dense=dense, sparse=sparse, merger=merger, reranker=reranker)
-    code_ret_stage = CodeRetrievalStage(hybrid)
-
-    code_ident_stage = CodeIdentificationStage(llm_service, code_ret_stage=code_ret_stage)
-    ctx_build_stage = ContextBuilderStage()
-    code_analysis_stage = CodeAnalysisStage(code_analysis_service)
-    ev_val_stage = EvidenceValidationStage(code_analysis_service)
-    action_analysis_stage = ActionAnalysisStage()
-    final_triage_stage = FinalTriageStage()
-    resp_gen_stage = ResponseGenerationStage(llm_service)
-
-    return SearchService(
-        val_stage=val_stage,
-        intent_stage=intent_stage,
-        query_prep_stage=query_prep_stage,
-        repo_ident_stage=repo_ident_stage,
-        coll_sel_stage=coll_sel_stage,
-        code_ret_stage=code_ret_stage,
-        code_ident_stage=code_ident_stage,
-        ctx_build_stage=ctx_build_stage,
-        code_analysis_stage=code_analysis_stage,
-        ev_val_stage=ev_val_stage,
-        action_analysis_stage=action_analysis_stage,
-        final_triage_stage=final_triage_stage,
-        resp_gen_stage=resp_gen_stage,
+def get_search_service( 
+    repo_repo: RepositoryRepository = Depends(get_repository_repo), 
+    llm_service=Depends(get_llm_service), 
+    code_analysis_service=Depends(get_code_analysis_service), 
+): 
+    from app.modules.search.pipeline.action_analysis import ActionAnalysisStage 
+    from app.modules.search.pipeline.code_analysis import CodeAnalysisStage 
+    from app.modules.search.pipeline.code_identification import CodeIdentificationStage 
+    from app.modules.search.pipeline.code_retrieval import CodeRetrievalStage 
+    from app.modules.search.pipeline.collection_selection import CollectionSelectionStage 
+    from app.modules.search.pipeline.context_builder import ContextBuilderStage 
+    from app.modules.search.pipeline.evidence_validation import EvidenceValidationStage 
+    from app.modules.search.pipeline.final_triage import FinalTriageStage 
+    from app.modules.search.pipeline.intent_classification import IntentClassificationStage 
+    from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingStage 
+    from app.modules.search.pipeline.repository_identification import RepositoryIdentificationStage 
+    from app.modules.search.pipeline.request_validation import RequestValidationStage 
+    from app.modules.search.pipeline.response_generation import ResponseGenerationStage 
+ 
+    from app.modules.search.retrieval.dense_search import DenseSearch 
+    from app.modules.search.retrieval.hybrid_search import HybridSearch 
+    from app.modules.search.retrieval.reranker import Reranker 
+    from app.modules.search.retrieval.result_merger import ResultMerger 
+    from app.modules.search.retrieval.sparse_search import SparseSearch 
+ 
+    from app.modules.search.service.search_service import SearchService 
+ 
+    # --------------------------------------------------------------- 
+    # Step 1: Request validation 
+    # --------------------------------------------------------------- 
+    val_stage = RequestValidationStage() 
+ 
+    # --------------------------------------------------------------- 
+    # Step 2: Intent classification 
+    # --------------------------------------------------------------- 
+    intent_stage = IntentClassificationStage(llm_service) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 3: Query preprocessing 
+    # --------------------------------------------------------------- 
+    query_prep_stage = QueryPreprocessingStage(llm_service) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 4: Repository identification 
+    # --------------------------------------------------------------- 
+    repo_ident_stage = RepositoryIdentificationStage(repo_repo) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 5: Collection selection 
+    # --------------------------------------------------------------- 
+    coll_sel_stage = CollectionSelectionStage() 
+ 
+    # --------------------------------------------------------------- 
+    # Step 6: Hybrid code retrieval 
+    # --------------------------------------------------------------- 
+    dense = DenseSearch() 
+    sparse = SparseSearch() 
+    merger = ResultMerger() 
+    reranker = Reranker() 
+ 
+    hybrid = HybridSearch( 
+        dense=dense, 
+        sparse=sparse, 
+        merger=merger, 
+        reranker=reranker, 
+    ) 
+ 
+    code_ret_stage = CodeRetrievalStage(hybrid) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 7: Code/function identification 
+    # --------------------------------------------------------------- 
+    code_ident_stage = CodeIdentificationStage( 
+        llm_service, 
+        code_ret_stage=code_ret_stage, 
+    ) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 8: Context building 
+    # --------------------------------------------------------------- 
+    ctx_build_stage = ContextBuilderStage() 
+ 
+    # --------------------------------------------------------------- 
+    # Step 9: Code analysis 
+    # --------------------------------------------------------------- 
+    code_analysis_stage = CodeAnalysisStage( 
+        code_analysis_service 
+    ) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 10: Evidence validation 
+    # --------------------------------------------------------------- 
+    ev_val_stage = EvidenceValidationStage( 
+        code_analysis_service 
+    ) 
+ 
+    # --------------------------------------------------------------- 
+    # Step 11: Action/change analysis 
+    # --------------------------------------------------------------- 
+    action_analysis_stage = ActionAnalysisStage() 
+ 
+    # --------------------------------------------------------------- 
+    # Step 12: Final triage 
+    # --------------------------------------------------------------- 
+    final_triage_stage = FinalTriageStage() 
+ 
+    # --------------------------------------------------------------- 
+    # Step 13: Response generation 
+    # 
+    # IMPORTANT: 
+    # ResponseGenerationStage is only an assembly/presentation 
+    # stage. It does NOT accept llm_service. 
+    # --------------------------------------------------------------- 
+    resp_gen_stage = ResponseGenerationStage() 
+ 
+    # --------------------------------------------------------------- 
+    # Build SearchService 
+    # --------------------------------------------------------------- 
+    return SearchService( 
+        val_stage=val_stage, 
+        intent_stage=intent_stage, 
+        query_prep_stage=query_prep_stage, 
+        repo_ident_stage=repo_ident_stage, 
+        coll_sel_stage=coll_sel_stage, 
+        code_ret_stage=code_ret_stage, 
+        code_ident_stage=code_ident_stage, 
+        ctx_build_stage=ctx_build_stage, 
+        code_analysis_stage=code_analysis_stage, 
+        ev_val_stage=ev_val_stage, 
+        action_analysis_stage=action_analysis_stage, 
+        final_triage_stage=final_triage_stage, 
+        resp_gen_stage=resp_gen_stage, 
     )

@@ -89,7 +89,7 @@ class SparseSearch:
                 )
             ],
             should=should_conditions,
-            min_should=1,
+            min_should=qmodels.MinShould(min_count=1, conditions=should_conditions),
         )
 
         try:
@@ -116,7 +116,7 @@ class SparseSearch:
         for point in points or []:
             payload = point.payload or {}
 
-            content = payload.get("content", "")
+            content = payload.get("content") or payload.get("code") or ""
 
             if not isinstance(content, str):
                 content = str(content)
@@ -127,7 +127,7 @@ class SparseSearch:
                         "chunk_hash",
                         str(point.id),
                     ),
-                    file_path=payload.get("file_path", ""),
+                    file_path=payload.get("file_path", "") or payload.get("source", ""),
                     content=content,
                     score=_term_overlap_score(
                         content,
@@ -165,7 +165,11 @@ class SparseSearch:
         repository code search than generic keywords.
         """
 
-        raw_terms = context.identifiers + context.keywords
+        raw_terms = (context.identifiers or []) + (context.keywords or [])
+
+        # Fallback to query words if no structured terms were extracted
+        if not raw_terms and context.query:
+            raw_terms = [w.strip() for w in context.query.split() if len(w.strip()) > 2]
 
         terms: list[str] = []
         seen: set[str] = set()

@@ -318,9 +318,11 @@ class LLMService:
                     "end_line",
                     "?",
                 )
-                code = chunk.get(
-                    "raw_code",
-                    "",
+                code = (
+                    chunk.get("raw_code")
+                    or chunk.get("content")
+                    or chunk.get("code")
+                    or ""
                 )
 
                 context_parts.append(
@@ -334,6 +336,20 @@ class LLMService:
                 context_parts.append(
                     f"Snippet {index}:\n"
                     f"```\n{chunk}\n```"
+                )
+
+            elif hasattr(chunk, "content"):
+                file_path = getattr(chunk, "file_path", "unknown") or "unknown"
+                metadata = getattr(chunk, "metadata", {}) or {}
+                start_line = metadata.get("start_line", "?")
+                end_line = metadata.get("end_line", "?")
+                code = getattr(chunk, "content", "") or ""
+
+                context_parts.append(
+                    f"Snippet {index}: "
+                    f"{file_path} "
+                    f"(Lines {start_line}-{end_line})\n"
+                    f"```\n{code}\n```"
                 )
 
         if not context_parts:
@@ -496,15 +512,18 @@ class LLMService:
         elements: Any = response
 
         if isinstance(response, dict):
-            for key in (
-                "items",
-                "elements",
-                "results",
-                "code_elements",
-            ):
-                if isinstance(response.get(key), list):
-                    elements = response[key]
-                    break
+            if "name" in response:
+                elements = [response]
+            else:
+                for key in (
+                    "items",
+                    "elements",
+                    "results",
+                    "code_elements",
+                ):
+                    if isinstance(response.get(key), list):
+                        elements = response[key]
+                        break
 
         if not isinstance(elements, list):
             return []

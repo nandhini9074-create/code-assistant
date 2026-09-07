@@ -65,3 +65,17 @@ async def _create_indices(client: "AsyncQdrantClient", collection_name: str) -> 
         field_name="file_path",
         field_schema=qmodels.PayloadSchemaType.KEYWORD,
     )
+
+    # Index content for lexical full-text search
+    await client.create_payload_index(
+        collection_name=collection_name,
+        field_name="content",
+        field_schema=qmodels.TextIndexParams(
+            type=qmodels.TextIndexType.TEXT,
+            tokenizer=qmodels.TokenizerType.WORD,
+            min_token_len=2,
+            max_token_len=20,
+            lowercase=True,
+        ),
+    )
+

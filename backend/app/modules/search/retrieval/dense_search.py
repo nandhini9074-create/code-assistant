@@ -1,4 +1,3 @@
-
 """
 app/modules/search/retrieval/dense_search.py
 
@@ -34,18 +33,56 @@ class DenseSearch:
         retrieval remains isolated to the requested repository.
         """
 
+        # ---------------------------------------------------------
+        # 1. Validate search limit
+        # ---------------------------------------------------------
         if limit <= 0:
             return []
 
+        # ---------------------------------------------------------
+        # 2. Validate Qdrant collection
+        # ---------------------------------------------------------
         if not context.qdrant_collection:
+            print("DENSE SEARCH: Missing Qdrant collection")
             return []
 
+        # ---------------------------------------------------------
+        # 3. Validate repository ID
+        # ---------------------------------------------------------
         if not context.repo_id:
+            print("DENSE SEARCH: Missing repository ID")
             return []
 
+        # ---------------------------------------------------------
+        # 4. Validate query embedding
+        # ---------------------------------------------------------
         if not context.query_vector:
+            print("DENSE SEARCH: Query vector is missing or empty")
             return []
 
+        # ---------------------------------------------------------
+        # 5. DEBUG: Verify query embedding exists
+        # ---------------------------------------------------------
+        print("\n========== DENSE SEARCH DEBUG ==========")
+
+        print("QDRANT COLLECTION:", context.qdrant_collection)
+        print("REPOSITORY ID:", context.repo_id)
+
+        print("QUERY VECTOR TYPE:", type(context.query_vector))
+        print("QUERY VECTOR DIMENSION:", len(context.query_vector))
+
+        print(
+            "QUERY VECTOR FIRST 5 VALUES:",
+            context.query_vector[:5],
+        )
+
+        print("QUERY VECTOR EMPTY:", not bool(context.query_vector))
+
+        print("========================================\n")
+
+        # ---------------------------------------------------------
+        # 6. Search Qdrant using the query embedding
+        # ---------------------------------------------------------
         scored_points = await search_vectors(
             collection_name=context.qdrant_collection,
             query_vector=context.query_vector,
@@ -53,6 +90,9 @@ class DenseSearch:
             repo_id=context.repo_id,
         )
 
+        # ---------------------------------------------------------
+        # 7. Convert Qdrant points into RetrievedChunk objects
+        # ---------------------------------------------------------
         chunks: list[RetrievedChunk] = []
 
         for point in scored_points or []:
@@ -68,5 +108,11 @@ class DenseSearch:
                 )
             )
 
-        return chunks
+        # ---------------------------------------------------------
+        # 8. DEBUG: Retrieval result count
+        # ---------------------------------------------------------
+        print(
+            f"DENSE SEARCH: Retrieved {len(chunks)} chunks from Qdrant"
+        )
 
+        return chunks

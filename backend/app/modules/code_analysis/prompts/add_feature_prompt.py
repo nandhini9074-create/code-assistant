@@ -9,9 +9,10 @@ Analyze the provided code context and the user's request.
 Return a JSON object with:
 - "existing_implementation": Brief description of current state.
 - "required_changes": List of steps to implement the feature.
-- "affected_files": List of files that need to be modified.
+- "affected_files": List of files that need to be modified. Only list files present in the provided Context header (e.g. File: <filepath>). Do not invent non-existent file names.
 - "risks": Any potential side effects or risks.
 """
+
 
 ADD_FEATURE_USER_PROMPT = """
 Context:

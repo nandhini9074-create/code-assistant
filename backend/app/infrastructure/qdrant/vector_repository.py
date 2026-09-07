@@ -59,13 +59,14 @@ async def search_vectors(
     score_threshold: float | None = None,
 ) -> list[qmodels.ScoredPoint]:
     """
-    Search for similar vectors in Qdrant.
+    Search for similar vectors in Qdrant using the current Qdrant query API.
     """
+
     client = get_qdrant_client()
-    
+
     # Build filter conditions
     must_conditions = []
-    
+
     if repo_id:
         must_conditions.append(
             qmodels.FieldCondition(
@@ -73,7 +74,7 @@ async def search_vectors(
                 match=qmodels.MatchValue(value=repo_id),
             )
         )
-        
+
     if file_path:
         must_conditions.append(
             qmodels.FieldCondition(
@@ -81,22 +82,29 @@ async def search_vectors(
                 match=qmodels.MatchValue(value=file_path),
             )
         )
-        
+
     query_filter = None
     if must_conditions:
         query_filter = qmodels.Filter(must=must_conditions)
 
     try:
-        return await client.search(
+        response = await client.query_points(
             collection_name=collection_name,
-            query_vector=query_vector,
+            query=query_vector,
             query_filter=query_filter,
             limit=limit,
             score_threshold=score_threshold,
             with_payload=True,
         )
+
+        return response.points
+
     except Exception as exc:
-        logger.error("qdrant_search_failed", collection=collection_name, exc_info=exc)
+        logger.error(
+            "qdrant_search_failed",
+            collection=collection_name,
+            exc_info=exc,
+        )
         raise
 
 

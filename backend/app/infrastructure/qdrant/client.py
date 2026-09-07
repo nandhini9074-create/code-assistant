@@ -2,20 +2,13 @@
 app/infrastructure/qdrant/client.py
 Async Qdrant client lifecycle management for Code Explorer.
 """
-
 from __future__ import annotations
-
 from qdrant_client import AsyncQdrantClient
-
 from app.core.exceptions import QdrantError
 from app.core.logging import get_logger
-
 logger = get_logger(__name__)
-
 # Module-level singleton
 _qdrant_client: AsyncQdrantClient | None = None
-
-
 async def init_qdrant() -> None:
     """
     Initialize the global Qdrant client.
@@ -45,8 +38,6 @@ async def init_qdrant() -> None:
         _qdrant_client = None
         logger.error("qdrant_init_error", exc_info=exc)
         raise QdrantError(f"Failed to connect to Qdrant: {exc}") from exc
-
-
 async def close_qdrant() -> None:
     """
     Close the Qdrant client connection.
@@ -58,8 +49,6 @@ async def close_qdrant() -> None:
         await _qdrant_client.close()
         _qdrant_client = None
         logger.info("qdrant_closed")
-
-
 def get_qdrant_client() -> AsyncQdrantClient:
     """
     Get the global Qdrant client instance.

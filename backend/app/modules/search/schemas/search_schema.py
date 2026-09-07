@@ -66,9 +66,9 @@ class SearchResponse(BaseSchema):
 
     ai_triage: dict[str, Any] | None = None
 
-    ai_suggestion: dict[str, Any] | None = None
+    ai_suggestion: dict[str, Any] | str | None = None
 
-    diff_or_change: str | None = None
+    diff_or_change: dict[str, Any] | str | None = None
 
     validation: dict[str, Any] = Field(default_factory=dict)
 

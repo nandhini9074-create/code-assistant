@@ -1,4 +1,3 @@
-
 """
 app/modules/search/retrieval/hybrid_search.py
 
@@ -38,50 +37,99 @@ class HybridSearch:
         context: SearchContext,
         limit: int = 20,
     ) -> list[RetrievedChunk]:
-        """
-        Perform hybrid retrieval.
 
-        Retrieval flow:
+        print("\n========== HYBRID SEARCH START ==========")
+        print("REPO ID:", context.repo_id)
+        print("COLLECTION:", context.qdrant_collection)
+        print("QUERY VECTOR EXISTS:", bool(context.query_vector))
+        print(
+            "QUERY VECTOR DIMENSION:",
+            len(context.query_vector)
+            if context.query_vector
+            else 0,
+        )
 
-            DenseSearch
-                 +
-            SparseSearch
-                 ↓
-            ResultMerger / RRF
-                 ↓
-            Reranker
-                 ↓
-            RetrievedChunk[]
-        """
+        # ---------------------------------------------------------
+        # Early exit
+        # ---------------------------------------------------------
 
         if context.early_exit:
+            print("HYBRID SEARCH: EARLY EXIT ALREADY SET")
             return []
 
         if limit <= 0:
+            print("HYBRID SEARCH: INVALID LIMIT")
             return []
+
+        # ---------------------------------------------------------
+        # Dense retrieval
+        # ---------------------------------------------------------
+
+        print("HYBRID SEARCH: CALLING DENSE SEARCH")
 
         dense_candidates = await self.dense.search(
             context,
             limit=limit,
         )
 
+        print(
+            "HYBRID SEARCH: DENSE RESULTS:",
+            len(dense_candidates),
+        )
+
+        # ---------------------------------------------------------
+        # Sparse retrieval
+        # ---------------------------------------------------------
+
+        print("HYBRID SEARCH: CALLING SPARSE SEARCH")
+
         sparse_candidates = await self.sparse.search(
             context,
             limit=limit,
         )
 
-        # Both retrieval branches may legitimately return no results.
-        # The merger decides how to combine the available candidates.
+        print(
+            "HYBRID SEARCH: SPARSE RESULTS:",
+            len(sparse_candidates),
+        )
+
+        # ---------------------------------------------------------
+        # Merge
+        # ---------------------------------------------------------
+
+        print("HYBRID SEARCH: MERGING RESULTS")
+
         merged_candidates = self.merger.merge(
             dense_candidates,
             sparse_candidates,
         )
 
+        print(
+            "HYBRID SEARCH: MERGED RESULTS:",
+            len(merged_candidates),
+        )
+
         if not merged_candidates:
+            print("HYBRID SEARCH: NO MERGED RESULTS")
             return []
 
-        return self.reranker.rerank(
+        # ---------------------------------------------------------
+        # Reranking
+        # ---------------------------------------------------------
+
+        print("HYBRID SEARCH: CALLING RERANKER")
+
+        results = self.reranker.rerank(
             context,
             merged_candidates,
             top_k=limit,
         )
+
+        print(
+            "HYBRID SEARCH: RERANKED RESULTS:",
+            len(results),
+        )
+
+        print("========== HYBRID SEARCH END ==========\n")
+
+        return results

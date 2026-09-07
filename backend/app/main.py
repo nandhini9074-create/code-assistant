@@ -15,6 +15,8 @@ from app.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import register_middleware
 from app.infrastructure.database.session import init_db, close_db
+from app.infrastructure.qdrant.client import init_qdrant, close_qdrant
+
 
 logger = get_logger(__name__)
 
@@ -23,24 +25,54 @@ logger = get_logger(__name__)
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """
     Manage application lifecycle events.
-
-    Initializes PostgreSQL on application startup and
-    closes the database connection on application shutdown.
     """
-    configure_logging(json_logs=True)
-    logger.info("app_startup")
 
-    # Initialize PostgreSQL database engine and session factory.
+    # Configure logging FIRST
+    configure_logging(
+        json_logs=False,
+        log_level="INFO",
+    )
+
+    logger.info(
+        "app_startup",
+        message="Application startup initiated",
+    )
+
+    # Initialize PostgreSQL
     await init_db()
 
-    logger.info("app_ready")
+    logger.info(
+        "database_ready",
+        message="PostgreSQL initialized successfully",
+    )
+
+    # Initialize Qdrant
+    await init_qdrant()
+
+    logger.info(
+        "qdrant_ready",
+        message="Qdrant initialized successfully",
+    )
+
+    logger.info(
+        "app_ready",
+        message="Application startup completed",
+    )
 
     try:
         yield
+
     finally:
-        # Close PostgreSQL connections on application shutdown.
+        await close_qdrant()
+
         await close_db()
-        logger.info("app_shutdown")
+
+        logger.info(
+            "app_shutdown",
+            message="Application shutdown completed",
+        )
+
+
 
 
 def create_app() -> FastAPI:
@@ -88,3 +120,4 @@ def create_app() -> FastAPI:
 
 # Create the global app instance for Uvicorn
 app = create_app()
+

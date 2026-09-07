@@ -75,7 +75,7 @@ class DatabaseSettings(BaseSettings):
     )
 
     database_url: str = Field(
-        default="postgresql+asyncpg://postgres:postgres@localhost:5432/code_explorer",
+        default="postgresql+asyncpg://postgres:12345@localhost:5433/code_assistant",
         alias="DATABASE_URL",
         description="Async PostgreSQL DSN (postgresql+asyncpg://...)",
     )
