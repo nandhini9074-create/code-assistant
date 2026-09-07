@@ -64,7 +64,7 @@ def get_ingestion_service(
     from app.modules.ingestion.repository.file_hash_repo import FileHashRepository
     from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
     from app.modules.ingestion.pipeline.request_validation import RequestValidationStage
-    from app.modules.ingestion.pipeline.repo_fetch import RepositoryFetchStage
+    from app.modules.ingestion.pipeline.repository_fetch import RepositoryFetchStage
     from app.modules.ingestion.pipeline.file_filter import FileFilterStage
     from app.modules.ingestion.pipeline.content_fetch import ContentFetchStage
     from app.modules.ingestion.pipeline.file_hash_check import FileHashCheckStage

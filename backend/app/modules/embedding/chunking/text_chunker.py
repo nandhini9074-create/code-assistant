@@ -3,7 +3,7 @@ from typing import Any
 
 def chunk_text(
     content: str,
-    max_chunk_size: int = 500,
+    max_chunk_size: int = 1500,
     overlap_size: int = 150,
     metadata: dict[str, Any] | None = None,
     language: str | None = None,

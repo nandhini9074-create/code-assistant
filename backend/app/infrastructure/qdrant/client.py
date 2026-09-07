@@ -31,20 +31,33 @@ async def init_qdrant() -> None:
 
     logger.info("qdrant_init", url=settings.qdrant_url)
 
-    try:
-        _qdrant_client = AsyncQdrantClient(
-            url=settings.qdrant_url,
-            api_key=settings.qdrant_api_key,
-            timeout=settings.qdrant_timeout,
-        )
-        
-        # Verify connection
-        await _qdrant_client.get_collections()
-        logger.info("qdrant_ready")
-    except Exception as exc:
-        _qdrant_client = None
-        logger.error("qdrant_init_error", exc_info=exc)
-        raise QdrantError(f"Failed to connect to Qdrant: {exc}") from exc
+    client = AsyncQdrantClient(
+        url=settings.qdrant_url,
+        api_key=settings.qdrant_api_key,
+        timeout=settings.qdrant_timeout,
+    )
+    
+    # Verify connection with retries for temporary DNS/network glitches
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
+        try:
+            await client.get_collections()
+            _qdrant_client = client
+            logger.info("qdrant_ready")
+            return
+        except Exception as exc:
+            logger.warning(
+                "qdrant_init_attempt_failed",
+                attempt=attempt,
+                max_attempts=max_attempts,
+                error=str(exc),
+            )
+            if attempt == max_attempts:
+                _qdrant_client = None
+                logger.error("qdrant_init_error", exc_info=exc)
+                raise QdrantError(f"Failed to connect to Qdrant: {exc}") from exc
+            import asyncio
+            await asyncio.sleep(1.5)
 
 
 async def close_qdrant() -> None:
