@@ -38,7 +38,7 @@ async def reindex_repository(
     """
 
     # 1. Check that the repository exists
-    repo = await repo_repo.get_by_id(str(repo_id))
+    repo = await repo_repo.get_by_name(repo_name)
 
     if not repo:
         raise HTTPException(

@@ -1,20 +1,23 @@
-
 """
 app/modules/search/pipeline/response_generation.py
 
 Pipeline stage: Response Generation (Step 13 / Final Stage).
 
-Assembles the final structured SearchResponse from the information produced
+Assembles the final compact SearchResponse from information produced
 by the previous pipeline stages.
 
-Step 13 is an assembly/presentation stage. It must not perform new retrieval,
-analysis, validation, or repository modifications.
+Step 13 is an assembly/presentation stage. It must not perform new
+retrieval, analysis, validation, or repository modifications.
 """
 
 from __future__ import annotations
 
+import ast
+import json
+from typing import Any
+
 from app.modules.search.domain.search_domain import SearchContext
-from app.modules.search.schemas.search_schema import EvidenceItem, SearchResponse
+from app.modules.search.schemas.search_schema import SearchResponse
 
 
 class ResponseGenerationStage:
@@ -28,7 +31,7 @@ class ResponseGenerationStage:
     }
 
     async def execute(self, context: SearchContext) -> None:
-        """Build and store the final SearchResponse."""
+        """Build and store the final compact SearchResponse."""
 
         intent_str = context.intent.value if context.intent else "unknown"
 
@@ -36,7 +39,6 @@ class ResponseGenerationStage:
             "id": context.repo_id,
             "owner": context.repo_owner,
             "name": context.repo_name,
-            "collection": context.qdrant_collection,
         }
 
         target_info = {
@@ -45,201 +47,310 @@ class ResponseGenerationStage:
                 if context.primary_chunk
                 else None
             ),
-            "symbol": context.target_symbol,
-            "primary_chunk_hash": (
-                context.primary_chunk.chunk_hash
-                if context.primary_chunk
-                else None
-            ),
+            "symbol": self._resolve_target_symbol(context),
         }
 
-        validation_payload = {
-            "validated": context.validated,
-            "validation_status": (
-                context.validation_status
-                or ("passed" if context.validated else "pending")
-            ),
-            "validation_errors": list(context.validation_errors),
-            "retries": context.validation_retries,
-        }
-
-        evidence_items = self._build_evidence(context)
-
-        # ---------------------------------------------------------------
-        # Early exits
-        # ---------------------------------------------------------------
+        # ---------------------------------------------------------
+        # EARLY EXIT
+        # ---------------------------------------------------------
         if context.early_exit in self._EARLY_EXITS:
             context.final_response = self._build_early_exit_response(
                 context=context,
                 intent_str=intent_str,
                 repo_info=repo_info,
                 target_info=target_info,
-                validation_payload=validation_payload,
-                evidence_items=evidence_items,
             )
             return
 
-        # ---------------------------------------------------------------
-        # Normal flow
-        # ---------------------------------------------------------------
-        diff_or_change = None
-        if context.action_analysis:
-            diff_or_change = context.action_analysis.get("diff_or_change")
+        # ---------------------------------------------------------
+        # NORMAL RESPONSE
+        # ---------------------------------------------------------
+        requirement = None
+        suggestion: Any = None
+        confidence = None
 
-        analysis_payload = dict(context.analysis_result or {})
-
-        # Preserve the actual Step 10 validation result.
-        analysis_payload["validated"] = context.validated
-        analysis_payload["validation_status"] = (
-            context.validation_status
-            or ("passed" if context.validated else "pending")
-        )
-
-        if context.validation_errors:
-            analysis_payload["validation_errors"] = list(
-                context.validation_errors
+        # ---------------------------------------------------------
+        # STEP 12 - TRIAGE RESULT
+        # ---------------------------------------------------------
+        if context.triage_result:
+            requirement = (
+                context.triage_result.get("issue_summary")
+                or context.triage_result.get("requirement")
             )
 
-        # Step 12 is the final triage/safety assessment.
-        # Do not invent a new recommendation here.
-        ai_suggestion = self._build_ai_suggestion(context)
+            suggestion = (
+                context.triage_result.get("ai_suggestion")
+                or context.triage_result.get("recommended_change")
+                or context.triage_result.get("recommendation")
+            )
 
+            confidence = context.triage_result.get("confidence")
+
+        # ---------------------------------------------------------
+        # STEP 9 - CODE ANALYSIS RESULT
+        # ---------------------------------------------------------
+        if context.analysis_result:
+            if requirement is None:
+                requirement = (
+                    context.analysis_result.get("requirement")
+                    or context.analysis_result.get("issue_summary")
+                )
+
+            if suggestion is None:
+                suggestion = (
+                    context.analysis_result.get("suggestion")
+                    or context.analysis_result.get("recommended_change")
+                    or context.analysis_result.get("recommendation")
+                )
+
+            if confidence is None:
+                confidence = context.analysis_result.get("confidence")
+
+        # ---------------------------------------------------------
+        # IMPORTANT:
+        # Triage may convert a dictionary into a Python string such as:
+        #
+        # "{'description': '...', 'implementation_steps': [...]}"
+        #
+        # Convert it back into a real JSON-compatible object.
+        # ---------------------------------------------------------
+        suggestion = self._normalize_suggestion(suggestion)
+
+        # ---------------------------------------------------------
+        # BUILD FINAL RESPONSE
+        # ---------------------------------------------------------
         context.final_response = SearchResponse(
             intent=intent_str,
             repository=repo_info,
             target=target_info,
+            requirement=requirement,
+            suggestion=suggestion,
+            confidence=confidence,
             code_context=context.code_snippets,
-            ai_triage=context.triage_result,
-            ai_suggestion=ai_suggestion,
-            diff_or_change=diff_or_change,
-            validation=validation_payload,
-            analysis=analysis_payload,
-            evidence=evidence_items,
             early_exit=None,
         )
 
-    def _build_evidence(
-        self,
-        context: SearchContext,
-    ) -> list[EvidenceItem]:
-        """Convert retrieved chunks into response evidence."""
-
-        evidence_items: list[EvidenceItem] = []
-
-        for chunk in context.retrieved_chunks:
-            snippet = chunk.content[:200]
-
-            if len(chunk.content) > 200:
-                snippet += "..."
-
-            evidence_items.append(
-                EvidenceItem(
-                    file_path=chunk.file_path,
-                    snippet=snippet,
-                    score=round(chunk.score, 4),
-                )
-            )
-
-        return evidence_items
-
-    def _build_ai_suggestion(
-        self,
-        context: SearchContext,
-    ):
-        """
-        Select the final suggestion without performing additional analysis.
-
-        Step 12 is the preferred source because it combines the validated
-        analysis with confidence and safety information.
-        """
-
-        if context.triage_result:
-            suggestion = context.triage_result.get("ai_suggestion")
-
-            if suggestion is not None:
-                return suggestion
-
-            recommendation = context.triage_result.get("recommendation")
-
-            if recommendation is not None:
-                return recommendation
-
-        return context.analysis_result
+    # =============================================================
+    # EARLY EXIT RESPONSE
+    # =============================================================
 
     def _build_early_exit_response(
         self,
         context: SearchContext,
         intent_str: str,
-        repo_info: dict,
-        target_info: dict,
-        validation_payload: dict,
-        evidence_items: list[EvidenceItem],
+        repo_info: dict[str, Any],
+        target_info: dict[str, Any],
     ) -> SearchResponse:
-        """Build a safe response when the pipeline exits early."""
+        """Build the final response when the pipeline exits early."""
 
-        early_exit_code = context.early_exit
+        requirement = None
+        suggestion: Any = None
+        confidence = None
 
-        message = (
-            context.early_exit_message
-            or "Search could not be completed."
-        )
-
-        # Validation has not necessarily failed for A/B/C.
-        # Those exits mean the pipeline stopped before completion.
-        validation = dict(validation_payload)
-
-        if early_exit_code != "EARLY_EXIT_D":
-            validation["validated"] = False
-            validation["validation_status"] = "skipped"
-
-        analysis_payload = dict(context.analysis_result or {})
-
-        analysis_payload.update(
-            {
-                "validated": validation["validated"],
-                "validation_status": validation["validation_status"],
-            }
-        )
-
-        if context.validation_errors:
-            analysis_payload["validation_errors"] = list(
-                context.validation_errors
+        if context.triage_result:
+            requirement = (
+                context.triage_result.get("issue_summary")
+                or context.triage_result.get("requirement")
             )
 
-        analysis_payload["early_exit"] = early_exit_code
-        analysis_payload["message"] = message
-
-        if early_exit_code == "EARLY_EXIT_D":
-            analysis_payload["warning"] = (
-                "Proposed changes failed validation against repository "
-                "evidence and should not be applied automatically."
+            suggestion = (
+                context.triage_result.get("ai_suggestion")
+                or context.triage_result.get("recommended_change")
+                or context.triage_result.get("recommendation")
             )
 
-        diff_or_change = None
+            confidence = context.triage_result.get("confidence")
 
-        if context.action_analysis:
-            diff_or_change = context.action_analysis.get(
-                "diff_or_change"
-            )
+        if context.analysis_result:
+            if requirement is None:
+                requirement = (
+                    context.analysis_result.get("requirement")
+                    or context.analysis_result.get("issue_summary")
+                )
+
+            if suggestion is None:
+                suggestion = (
+                    context.analysis_result.get("suggestion")
+                    or context.analysis_result.get("recommended_change")
+                    or context.analysis_result.get("recommendation")
+                )
+
+            if confidence is None:
+                confidence = context.analysis_result.get("confidence")
+
+        suggestion = self._normalize_suggestion(suggestion)
 
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
             target=target_info,
+            requirement=requirement,
+            suggestion=suggestion,
+            confidence=confidence,
             code_context=context.code_snippets,
-            ai_triage=context.triage_result,
-            ai_suggestion=(
-                context.triage_result
-                if context.triage_result
-                else context.analysis_result
-            ),
-            diff_or_change=diff_or_change,
-            validation=validation,
-            analysis=analysis_payload,
-            evidence=evidence_items,
-            early_exit={
-                "code": early_exit_code,
-                "message": message,
-            },
+            early_exit=context.early_exit,
         )
 
+    # =============================================================
+    # SUGGESTION NORMALIZATION
+    # =============================================================
+
+    @staticmethod
+    def _normalize_suggestion(suggestion: Any) -> Any:
+        """
+        Convert stringified dictionaries/lists into real Python
+        dictionaries/lists before constructing SearchResponse.
+
+        Handles:
+            1. Already structured dict/list
+            2. Valid JSON strings
+            3. Python repr strings containing single quotes
+            4. Empty strings
+            5. Invalid strings
+
+        Example input:
+
+            "{'description': 'Add EmailService',
+              'implementation_steps': ['Step 1', 'Step 2']}"
+
+        Becomes:
+
+            {
+                "description": "Add EmailService",
+                "implementation_steps": [
+                    "Step 1",
+                    "Step 2"
+                ]
+            }
+        """
+
+        # Already structured.
+        if isinstance(suggestion, (dict, list)):
+            return suggestion
+
+        # Nothing to normalize.
+        if suggestion is None:
+            return None
+
+        if not isinstance(suggestion, str):
+            return suggestion
+
+        value = suggestion.strip()
+
+        if not value:
+            return None
+
+        # ---------------------------------------------------------
+        # First try strict JSON.
+        # ---------------------------------------------------------
+        try:
+            parsed = json.loads(value)
+
+            if isinstance(parsed, (dict, list)):
+                return parsed
+
+        except (json.JSONDecodeError, TypeError, ValueError):
+            pass
+
+        # ---------------------------------------------------------
+        # Then handle Python dictionary representation.
+        #
+        # Example:
+        # "{'description': '...', 'implementation_steps': [...]}"
+        # ---------------------------------------------------------
+        try:
+            parsed = ast.literal_eval(value)
+
+            if isinstance(parsed, (dict, list)):
+                return parsed
+
+        except (ValueError, SyntaxError, TypeError):
+            pass
+
+        # ---------------------------------------------------------
+        # If it cannot safely be parsed, preserve the original
+        # string rather than crashing the response pipeline.
+        # ---------------------------------------------------------
+        return suggestion
+
+    # =============================================================
+    # TARGET SYMBOL
+    # =============================================================
+
+    @staticmethod
+    def _resolve_target_symbol(context: SearchContext) -> str | None:
+        """
+        Resolve the most useful target symbol.
+
+        Prefer the symbol selected by the analysis pipeline.
+
+        If target_symbol accidentally contains only a filename
+        such as:
+
+            payout-transaction.service.ts
+
+        use the primary chunk's class/function information instead.
+        """
+
+        target_symbol = context.target_symbol
+
+        primary_chunk = context.primary_chunk
+
+        # ---------------------------------------------------------
+        # If target_symbol is already a meaningful symbol, keep it.
+        # ---------------------------------------------------------
+        if target_symbol:
+            normalized = target_symbol.strip()
+
+            if (
+                normalized
+                and primary_chunk
+                and normalized != primary_chunk.file_path
+            ):
+                return normalized
+
+            if normalized and not normalized.lower().endswith(
+                (
+                    ".ts",
+                    ".tsx",
+                    ".js",
+                    ".jsx",
+                    ".py",
+                    ".java",
+                    ".go",
+                    ".rs",
+                    ".cpp",
+                    ".c",
+                    ".cs",
+                )
+            ):
+                return normalized
+
+        # ---------------------------------------------------------
+        # Prefer class name.
+        # ---------------------------------------------------------
+        if primary_chunk:
+            class_name = getattr(primary_chunk, "class_name", None)
+
+            if class_name:
+                class_name = str(class_name).strip()
+
+                if class_name:
+                    return class_name
+
+        # ---------------------------------------------------------
+        # Fall back to function/method name.
+        # ---------------------------------------------------------
+        if primary_chunk:
+            function_name = getattr(primary_chunk, "function_name", None)
+
+            if function_name:
+                function_name = str(function_name).strip()
+
+                if function_name:
+                    return function_name
+
+        # ---------------------------------------------------------
+        # Last fallback.
+        # ---------------------------------------------------------
+        return target_symbol

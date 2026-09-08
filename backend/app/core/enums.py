@@ -10,6 +10,7 @@ from enum import Enum
 class IntentType(str, Enum):
     """Supported user intent types for code analysis."""
 
+    RETRIEVE = "RETRIEVE"
     ADD_FEATURE = "ADD_FEATURE"
     FIX_BUG = "FIX_BUG"
     OPTIMIZE = "OPTIMIZE"

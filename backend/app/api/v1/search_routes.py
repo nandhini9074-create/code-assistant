@@ -47,7 +47,7 @@ async def understand_query(
     Does not access the repository, database, Qdrant, or retrieval pipeline.
     """
     result = await query_service.understand(
-        repo_id=request.repo_id,
+        repo_name=request.repo_name,
         query=request.query,
     )
 
@@ -70,7 +70,7 @@ async def search_repository(
     Runs the complete retrieval + LLM analysis pipeline.
     """
     result = await search_service.run_pipeline(
-        repo_id=request.repo_id,
+        repo_name=request.repo_name,
         query=request.query,
     )
 

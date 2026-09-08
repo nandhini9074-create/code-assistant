@@ -23,8 +23,9 @@ _SCHEMA = {
         "bottleneck": {"type": "string"},
         "expensive_ops": {"type": "string"},
         "proposed_optimization": {"type": "string"},
+        "proposed_change": {"type": "string"},
     },
-    "required": ["bottleneck", "expensive_ops", "proposed_optimization"],
+    "required": ["bottleneck", "expensive_ops", "proposed_optimization", "proposed_change"],
 }
 
 

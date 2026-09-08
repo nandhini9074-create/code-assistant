@@ -38,6 +38,22 @@ class RepositoryRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_name(self, name: str) -> Repository | None:
+        """Get repository by its short name (e.g. 'Language-Translator').
+
+        Performs a case-insensitive match against the ``name`` column.
+        If multiple repositories share the same name the first result is
+        returned (ordered by creation date descending).
+        """
+        stmt = (
+            select(Repository)
+            .where(Repository.name.ilike(name))
+            .order_by(Repository.created_at.desc())
+            .limit(1)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def list_all(self, limit: int = 100, offset: int = 0) -> Sequence[Repository]:
         """List repositories."""
         stmt = select(Repository).limit(limit).offset(offset).order_by(Repository.created_at.desc())

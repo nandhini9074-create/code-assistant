@@ -26,7 +26,7 @@ async def semantic_search(
     search_service = SearchService(db=db)
 
     result = await search_service.run_pipeline(
-        repo_id=str(repo_id),
+        repo_name=str(repo_name),
         query=payload.query,
     )
 

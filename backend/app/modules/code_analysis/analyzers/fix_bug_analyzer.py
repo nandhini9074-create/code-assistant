@@ -24,8 +24,9 @@ _SCHEMA = {
         "problematic_code": {"type": "string"},
         "likely_cause": {"type": "string"},
         "proposed_fix": {"type": "string"},
+        "proposed_change": {"type": "string"},
     },
-    "required": ["current_behavior", "problematic_code", "likely_cause", "proposed_fix"],
+    "required": ["current_behavior", "problematic_code", "likely_cause", "proposed_fix", "proposed_change"],
 }
 
 

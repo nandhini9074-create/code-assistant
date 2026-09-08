@@ -15,7 +15,7 @@ from app.shared.schemas.base import BaseSchema
 class SearchRequest(BaseSchema):
     """Request containing the repository and user's query."""
 
-    repo_id: str
+    repo_name: str
     query: str = Field(..., min_length=3, max_length=1000)
 
 
@@ -54,7 +54,7 @@ class EvidenceItem(BaseSchema):
 
 
 class SearchResponse(BaseSchema):
-    """Complete 13-stage structured response for Code Explorer / RepoLens."""
+    """Compact public response for Code Explorer / RepoLens."""
 
     intent: str
 
@@ -62,19 +62,13 @@ class SearchResponse(BaseSchema):
 
     target: dict[str, Any] | None = None
 
+    requirement: str | None = None
+
+    suggestion: str | None = None
+
+    confidence: str | None = None
+
     code_context: list[dict[str, Any]] = Field(default_factory=list)
-
-    ai_triage: dict[str, Any] | None = None
-
-    ai_suggestion: dict[str, Any] | str | None = None
-
-    diff_or_change: dict[str, Any] | str | None = None
-
-    validation: dict[str, Any] = Field(default_factory=dict)
-
-    analysis: dict[str, Any] = Field(default_factory=dict)
-
-    evidence: list[EvidenceItem] = Field(default_factory=list)
 
     early_exit: dict[str, Any] | None = None
 

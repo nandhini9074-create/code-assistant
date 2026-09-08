@@ -23,8 +23,9 @@ _SCHEMA = {
         "code_smell": {"type": "string"},
         "duplication": {"type": "string"},
         "safe_refactoring_plan": {"type": "string"},
+        "proposed_change": {"type": "string"},
     },
-    "required": ["code_smell", "duplication", "safe_refactoring_plan"],
+    "required": ["code_smell", "duplication", "safe_refactoring_plan", "proposed_change"],
 }
 
 

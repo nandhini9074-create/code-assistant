@@ -79,17 +79,26 @@ class ContextBuilderStage:
                 and chunk.chunk_hash == context.primary_chunk.chunk_hash
             )
 
+            repo = chunk.metadata.get("repo_name") or context.repo_name
             start_line = chunk.metadata.get("start_line")
             end_line = chunk.metadata.get("end_line")
+            func_name = chunk.metadata.get("function_name")
+            class_name = chunk.metadata.get("class_name")
+            chunk_type = chunk.metadata.get("chunk_type")
 
             snippet = {
+                "repository": repo,
                 "file_path": chunk.file_path,
+                "function_name": func_name,
+                "class_name": class_name,
+                "chunk_type": chunk_type,
+                "start_line": start_line,
+                "end_line": end_line,
                 "content": truncated_content,
+                "source_code": truncated_content,
                 "score": round(chunk.score, 4),
                 "is_primary": is_primary,
                 "chunk_hash": chunk.chunk_hash,
-                "start_line": start_line,
-                "end_line": end_line,
                 "language": chunk.metadata.get("language"),
             }
 
@@ -98,21 +107,20 @@ class ContextBuilderStage:
             # ---------------------------------------------------------
             primary_marker = "[PRIMARY] " if is_primary else ""
 
-            header = (
-                f"--- {primary_marker}"
-                f"File: {chunk.file_path}"
-            )
-
-            # Do not rely on truthiness here because line 0 is a
-            # technically valid value.
+            details = []
+            if repo:
+                details.append(f"Repository: {repo}")
+            details.append(f"File: {chunk.file_path}")
+            if class_name:
+                details.append(f"Class: {class_name}")
+            if func_name:
+                details.append(f"Function: {func_name}")
+            if chunk_type:
+                details.append(f"Chunk Type: {chunk_type}")
             if start_line is not None and end_line is not None:
-                header += (
-                    f" (lines {start_line}–{end_line})"
-                )
+                details.append(f"Lines: {start_line}–{end_line}")
 
-            header += (
-                f" | score={snippet['score']} ---"
-            )
+            header = f"--- {primary_marker}" + " | ".join(details) + f" | score={snippet['score']} ---"
 
             block = (
                 f"{header}\n"
@@ -132,6 +140,8 @@ class ContextBuilderStage:
 
         context.code_snippets = snippets
         context.llm_context = "\n".join(parts)
+
+        print(f"FINAL CONTEXT CHUNKS: {len(context.code_snippets)}")
 
         logger.info(
             "context_built",

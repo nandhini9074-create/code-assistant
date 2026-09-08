@@ -107,6 +107,7 @@ def _determine_action_type(
         IntentType.FIX_BUG: "BUG_REMEDIATION",
         IntentType.OPTIMIZE: "PERFORMANCE_OPTIMIZATION",
         IntentType.REFACTOR: "CODE_REFACTORING",
+        IntentType.RETRIEVE: "CODE_RETRIEVAL",
     }
 
     return action_types.get(
@@ -119,8 +120,19 @@ def _extract_proposed_change(
     analysis: dict[str, Any],
     intent: IntentType | None,
 ) -> str:
-    """Extract the proposed modification from intent-specific analysis."""
+    """Extract the proposed modification from intent-specific analysis.
 
+    Prefers the top-level ``proposed_change`` key (actual code produced by
+    the LLM) over older intent-specific fields so the suggestion always
+    contains concrete code rather than a natural-language description.
+    """
+
+    # Primary preference: actual code returned by any analyzer.
+    if analysis.get("proposed_change"):
+        return str(analysis["proposed_change"]).strip()
+
+    # Intent-specific fallbacks (natural-language fields retained for
+    # backward compatibility).
     if intent == IntentType.ADD_FEATURE:
         changes = analysis.get("required_changes")
 
@@ -158,7 +170,17 @@ def _extract_proposed_change(
             or "Apply the proposed refactoring."
         )
 
+    if intent == IntentType.RETRIEVE:
+        return str(
+            analysis.get("answer")
+            or analysis.get("proposed_change")
+            or analysis.get("suggestion")
+            or analysis.get("current_behavior")
+            or "Retrieved repository code."
+        ).strip()
+
     return "Modify the identified code based on the available evidence."
+
 
 
 def _build_affected_target(

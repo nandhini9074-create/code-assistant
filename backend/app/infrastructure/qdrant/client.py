@@ -15,6 +15,7 @@ async def init_qdrant() -> None:
     Call once at application startup.
     """
     global _qdrant_client
+    
 
     if _qdrant_client is not None:
         return

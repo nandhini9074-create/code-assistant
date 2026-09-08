@@ -2,20 +2,32 @@
 """
 app/modules/search/pipeline/code_retrieval.py
 
-Pipeline stage: Code Retrieval (Step 6).
+Pipeline stage: Code Retrieval.
 
-Generates a query embedding using the configured embedding provider
-and performs hybrid dense + sparse retrieval.
+Generates a query embedding and performs hybrid retrieval against
+Qdrant.
 
-If no usable query embedding can be generated, Early Exit B is set.
+The current search architecture uses multiple Qdrant collections,
+where each repository has its own collection.
 
-If retrieval returns no chunks, Early Exit B is also set.
+For GLOBAL SEARCH:
+
+    context.qdrant_collection = None
+
+This is a valid search mode.
+
+When qdrant_collection is None, HybridSearch / DenseSearch /
+SparseSearch search across all Qdrant collections.
+
+PostgreSQL repository identification is not used during retrieval.
 """
 
 from __future__ import annotations
 
 from app.core.logging import get_logger
-from app.modules.embedding.service.embedding_service import generate_embeddings
+from app.modules.embedding.service.embedding_service import (
+    generate_embeddings,
+)
 from app.modules.search.domain.search_domain import SearchContext
 from app.modules.search.retrieval.hybrid_search import HybridSearch
 
@@ -36,7 +48,7 @@ class CodeRetrievalStage:
 
         logger.info(
             "code_retrieval_started",
-            repo_id=context.repo_id,
+            repo_name=context.repo_name,
             query=context.query,
             collection=context.qdrant_collection,
             limit=limit,
@@ -44,7 +56,7 @@ class CodeRetrievalStage:
         )
 
         print("\n========== CODE RETRIEVAL START ==========")
-        print("REPO ID:", context.repo_id)
+        print("REPOSITORY:", context.repo_name)
         print("QUERY:", context.query)
         print("COLLECTION:", context.qdrant_collection)
         print("LIMIT:", limit)
@@ -58,19 +70,82 @@ class CodeRetrievalStage:
 
             logger.info(
                 "code_retrieval_skipped",
-                repo_id=context.repo_id,
+                repo_name=context.repo_name,
                 reason=context.early_exit,
             )
 
             print("CODE RETRIEVAL: SKIPPED")
             print("REASON:", context.early_exit)
+
             return
+
+        # =========================================================
+        # VALIDATE REPOSITORY NAME
+        # =========================================================
+
+        if not context.repo_name:
+
+            logger.error(
+                "code_retrieval_missing_repo_name",
+            )
+
+            context.early_exit = "EARLY_EXIT_A"
+            context.early_exit_message = (
+                "Repository name is required for code retrieval."
+            )
+
+            return
+
+        # =========================================================
+        # QDRANT COLLECTION MODE
+        # =========================================================
+        #
+        # IMPORTANT:
+        #
+        # context.qdrant_collection == None is NOT an error.
+        #
+        # It means GLOBAL SEARCH across all Qdrant collections.
+        #
+        # Therefore, DO NOT set EARLY_EXIT_A here.
+        # =========================================================
+
+        if context.qdrant_collection is None:
+
+            logger.info(
+                "code_retrieval_global_qdrant_search",
+                repo_name=context.repo_name,
+            )
+
+            print(
+                "CODE RETRIEVAL: Global Qdrant search enabled"
+            )
+
+            print(
+                "CODE RETRIEVAL: Searching ALL collections"
+            )
+
+        else:
+
+            logger.info(
+                "code_retrieval_collection_selected",
+                repo_name=context.repo_name,
+                collection=context.qdrant_collection,
+            )
+
+            print(
+                "CODE RETRIEVAL: Searching collection:",
+                context.qdrant_collection,
+            )
+
+        # =========================================================
+        # VALIDATE LIMIT
+        # =========================================================
 
         if limit <= 0:
 
             logger.error(
                 "code_retrieval_invalid_limit",
-                repo_id=context.repo_id,
+                repo_name=context.repo_name,
                 limit=limit,
             )
 
@@ -79,23 +154,12 @@ class CodeRetrievalStage:
             )
 
         # =========================================================
-        # 1. GENERATE QUERY EMBEDDING
+        # STEP 1: GENERATE QUERY EMBEDDING
         # =========================================================
-
-        logger.info(
-            "query_embedding_started",
-            repo_id=context.repo_id,
-            query=context.query,
-        )
 
         print("\n--- STEP 1: QUERY EMBEDDING ---")
 
         if context.query_vector is None:
-
-            logger.info(
-                "query_vector_missing",
-                repo_id=context.repo_id,
-            )
 
             print("QUERY VECTOR: Not available")
             print("Calling generate_embeddings()...")
@@ -107,99 +171,97 @@ class CodeRetrievalStage:
                     input_type="query",
                 )
 
-                logger.info(
-                    "query_embedding_provider_completed",
-                    repo_id=context.repo_id,
-                    vectors_count=len(vectors) if vectors else 0,
-                )
-
                 print("generate_embeddings() completed")
-                print("VECTORS TYPE:", type(vectors))
 
-                if vectors:
-
-                    print("NUMBER OF VECTORS:", len(vectors))
-
-                    if vectors[0]:
-
-                        logger.info(
-                            "query_embedding_generated",
-                            repo_id=context.repo_id,
-                            dimension=len(vectors[0]),
-                        )
-
-                        print(
-                            "QUERY VECTOR DIMENSION:",
-                            len(vectors[0]),
-                        )
-
-                        print(
-                            "QUERY VECTOR FIRST 5:",
-                            vectors[0][:5],
-                        )
-
-                if not vectors or not vectors[0]:
-
-                    logger.error(
-                        "query_embedding_empty",
-                        repo_id=context.repo_id,
+                if not vectors:
+                    raise ValueError(
+                        "Embedding provider returned no vectors."
                     )
 
+                if not vectors[0]:
                     raise ValueError(
-                        "Embedding provider returned no query vector."
+                        "Embedding provider returned an empty "
+                        "query vector."
                     )
 
                 context.query_vector = vectors[0]
 
+                print(
+                    "QUERY VECTOR DIMENSION:",
+                    len(context.query_vector),
+                )
+
+                print(
+                    "QUERY VECTOR FIRST 5:",
+                    context.query_vector[:5],
+                )
+
                 logger.info(
-                    "query_embedding_stored_in_context",
-                    repo_id=context.repo_id,
+                    "query_embedding_generated",
+                    repo_name=context.repo_name,
                     dimension=len(context.query_vector),
                 )
 
             except Exception as exc:
 
-                logger.warning(
-                    "query_embedding_failed_fallback_sparse",
-                    repo_id=context.repo_id,
+                # Do not immediately stop the pipeline.
+                # HybridSearch may still be able to perform
+                # sparse retrieval.
+
+                context.query_vector = None
+
+                logger.exception(
+                    "query_embedding_failed",
+                    repo_name=context.repo_name,
                     error_type=type(exc).__name__,
                     error=str(exc),
                 )
 
-                print("\n[!] QUERY EMBEDDING FAILED - Falling back to sparse retrieval")
+                print("\n[WARNING] QUERY EMBEDDING FAILED")
                 print("EXCEPTION TYPE:", type(exc).__name__)
                 print("EXCEPTION:", str(exc))
-                print("==========================================\n")
-
-                context.query_vector = None
+                print(
+                    "Continuing with hybrid retrieval..."
+                )
 
         else:
 
-            logger.info(
-                "query_vector_already_available",
-                repo_id=context.repo_id,
-                dimension=len(context.query_vector),
-            )
-
             print("QUERY VECTOR ALREADY EXISTS")
+
             print(
                 "QUERY VECTOR DIMENSION:",
                 len(context.query_vector),
             )
 
+            logger.info(
+                "query_vector_already_available",
+                repo_name=context.repo_name,
+                dimension=len(context.query_vector),
+            )
+
         # =========================================================
-        # 2. HYBRID SEARCH
+        # STEP 2: HYBRID / QDRANT SEARCH
         # =========================================================
 
-        logger.info(
-            "hybrid_search_started",
-            repo_id=context.repo_id,
-            collection=context.qdrant_collection,
-            limit=limit,
+        print("\n--- STEP 2: QDRANT / HYBRID SEARCH ---")
+
+        print(
+            "Repository name:",
+            context.repo_name,
         )
 
-        print("\n--- STEP 2: HYBRID SEARCH ---")
-        print("Calling HybridSearch.search()...")
+        print(
+            "Qdrant collection:",
+            (
+                "ALL COLLECTIONS"
+                if context.qdrant_collection is None
+                else context.qdrant_collection
+            ),
+        )
+
+        print(
+            "Calling HybridSearch.search()..."
+        )
 
         try:
 
@@ -208,87 +270,134 @@ class CodeRetrievalStage:
                 limit=limit,
             )
 
-            logger.info(
-                "hybrid_search_completed",
-                repo_id=context.repo_id,
-                result_count=len(chunks or []),
+            if chunks is None:
+                chunks = []
+
+            print(
+                "HybridSearch.search() completed"
             )
 
-            print("HybridSearch.search() completed")
-            print("RETRIEVED CHUNKS:", len(chunks or []))
+            print(
+                "RETRIEVED CHUNKS:",
+                len(chunks),
+            )
+
+            logger.info(
+                "hybrid_search_completed",
+                repo_name=context.repo_name,
+                collection=context.qdrant_collection,
+                result_count=len(chunks),
+            )
 
         except Exception as exc:
 
             logger.exception(
                 "hybrid_code_retrieval_failed",
-                repo_id=context.repo_id,
+                repo_name=context.repo_name,
+                collection=context.qdrant_collection,
                 limit=limit,
                 error_type=type(exc).__name__,
                 error=str(exc),
             )
 
-            print("\n[ERROR] HYBRID SEARCH FAILED")
+            print("\n[ERROR] QDRANT / HYBRID SEARCH FAILED")
             print("EXCEPTION TYPE:", type(exc).__name__)
             print("EXCEPTION:", str(exc))
             print("==========================================\n")
 
             context.retrieved_chunks = []
+
             context.early_exit = "EARLY_EXIT_B"
+
             context.early_exit_message = (
                 f"Code retrieval failed: "
                 f"{type(exc).__name__}: {str(exc)}"
             )
 
-            logger.warning(
-                "code_retrieval_early_exit",
-                repo_id=context.repo_id,
-                early_exit=context.early_exit,
-                message=context.early_exit_message,
-            )
-
             return
 
         # =========================================================
-        # 3. STORE RETRIEVAL RESULTS
+        # STEP 3: STORE RETRIEVAL RESULTS
         # =========================================================
 
-        context.retrieved_chunks = chunks or []
+        context.retrieved_chunks = chunks
+
+        print("\n--- STEP 3: RETRIEVAL RESULTS ---")
+
+        print(
+            "TOTAL CHUNKS:",
+            len(context.retrieved_chunks),
+        )
 
         logger.info(
             "retrieval_results_stored",
-            repo_id=context.repo_id,
+            repo_name=context.repo_name,
             result_count=len(context.retrieved_chunks),
         )
 
-        print("\n--- STEP 3: RETRIEVAL RESULTS ---")
-        print("TOTAL CHUNKS:", len(context.retrieved_chunks))
+        # =========================================================
+        # DEBUG: SHOW RETRIEVED CODE
+        # =========================================================
+
+        for index, chunk in enumerate(
+            context.retrieved_chunks[:5],
+            start=1,
+        ):
+
+            print(
+                f"\n--- RETRIEVED CHUNK {index} ---"
+            )
+
+            print(
+                "FILE:",
+                chunk.file_path,
+            )
+
+            print(
+                "SCORE:",
+                chunk.score,
+            )
+
+            print(
+                "METADATA:",
+                chunk.metadata,
+            )
+
+            print(
+                "CONTENT PREVIEW:"
+            )
+
+            print(
+                chunk.content[:500]
+            )
 
         # =========================================================
-        # NO RESULTS
+        # STEP 4: NO RESULTS
         # =========================================================
 
         if not context.retrieved_chunks:
 
+            print(
+                "[WARNING] NO CHUNKS RETRIEVED"
+            )
+
             logger.warning(
                 "no_chunks_retrieved",
-                repo_id=context.repo_id,
+                repo_name=context.repo_name,
                 query=context.query,
+                collection=context.qdrant_collection,
                 limit=limit,
+                query_vector_available=(
+                    context.query_vector is not None
+                ),
             )
-
-            print("[!] NO CHUNKS RETRIEVED")
 
             context.early_exit = "EARLY_EXIT_B"
-            context.early_exit_message = (
-                "No relevant code was found for this query in the "
-                "repository. Try rephrasing or broadening your search."
-            )
 
-            logger.warning(
-                "code_retrieval_early_exit",
-                repo_id=context.repo_id,
-                early_exit=context.early_exit,
-                message=context.early_exit_message,
+            context.early_exit_message = (
+                "No relevant code was found for this query in "
+                f"repository '{context.repo_name}'. "
+                "Try rephrasing or broadening your search."
             )
 
             return
@@ -299,11 +408,21 @@ class CodeRetrievalStage:
 
         logger.info(
             "code_retrieval_completed",
-            repo_id=context.repo_id,
+            repo_name=context.repo_name,
+            collection=context.qdrant_collection,
             result_count=len(context.retrieved_chunks),
         )
 
-        print("[OK] CODE RETRIEVAL SUCCESS")
+        print(
+            "\n[OK] CODE RETRIEVAL SUCCESS"
+        )
 
-        print("========== CODE RETRIEVAL END ==========\n")
+        print(
+            "FINAL RETRIEVED CHUNKS:",
+            len(context.retrieved_chunks),
+        )
+
+        print(
+            "========== CODE RETRIEVAL END ==========\n"
+        )
 

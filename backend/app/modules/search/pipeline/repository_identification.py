@@ -24,15 +24,24 @@ class RepositoryIdentificationStage:
         """Resolve the repository; set Early Exit A if unresolvable."""
         repo = None
 
-        # 1. Direct ID lookup (primary path when repo_id is supplied)
-        if context.repo_id:
+        # 1. Name-based lookup (primary path when repo_name is supplied)
+        if context.repo_name and not context.repo_id:
+            repo = await self.repo_repo.get_by_name(context.repo_name)
+
+            # Also try full_name match "owner/repo_name" in case it was
+            # passed that way (e.g. "acme/Language-Translator").
+            if repo is None and "/" not in context.repo_name:
+                repo = await self.repo_repo.get_by_full_name(context.repo_name)
+
+        # 2. Direct UUID lookup (when repo_id is already resolved)
+        if repo is None and context.repo_id:
             repo = await self.repo_repo.get_by_id(context.repo_id)
 
-        # 2. Hint from query preprocessing: "owner/repo"
+        # 3. Hint from query preprocessing: "owner/repo"
         if repo is None and context.repo_hint:
             repo = await self.repo_repo.get_by_full_name(context.repo_hint)
 
-        # 3. Intent-parameter hints
+        # 4. Intent-parameter hints
         if repo is None:
             for key in ("repo", "repository", "full_name"):
                 candidate = context.intent_parameters.get(key)
@@ -41,9 +50,9 @@ class RepositoryIdentificationStage:
                     if repo:
                         break
 
-        # 4. Unresolvable → Early Exit A
+        # 5. Unresolvable → Early Exit A
         if repo is None:
-            identifier = context.repo_id or context.repo_hint or "unknown"
+            identifier = context.repo_name or context.repo_id or context.repo_hint or "unknown"
             logger.warning("repository_not_found", identifier=identifier)
             context.early_exit = "EARLY_EXIT_A"
             context.early_exit_message = (
@@ -52,6 +61,8 @@ class RepositoryIdentificationStage:
             )
             return
 
+        # Resolve and store internal fields
+        context.repo_id = str(repo.id)
         context.repo_owner = repo.owner
         context.repo_name = repo.name
         context.qdrant_collection = repo.qdrant_collection
@@ -62,3 +73,4 @@ class RepositoryIdentificationStage:
             full_name=repo.full_name,
             collection=repo.qdrant_collection,
         )
+

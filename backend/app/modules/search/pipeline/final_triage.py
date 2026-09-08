@@ -59,6 +59,7 @@ class FinalTriageStage:
         # ---------------------------------------------------------
         # Build triage components
         # ---------------------------------------------------------
+
         issue_summary = _build_issue_summary(
             context,
             analysis,
@@ -75,6 +76,7 @@ class FinalTriageStage:
                 "Review the validated analysis before applying any change."
             )
 
+        # Keep the public suggestion concise.
         ai_suggestion = _build_ai_suggestion(
             context,
             analysis,
@@ -107,16 +109,7 @@ class FinalTriageStage:
         # ---------------------------------------------------------
         # Safety determination
         # ---------------------------------------------------------
-        #
-        # A change is considered safe to recommend for application
-        # only when:
-        #
-        # 1. Validation passed.
-        # 2. Confidence is HIGH or MEDIUM.
-        #
-        # This does NOT mean the system has automatically applied
-        # the change.
-        #
+
         is_safe = (
             validation_status == "passed"
             and confidence
@@ -163,26 +156,7 @@ def _build_issue_summary(
 ) -> str:
     """Build a concise summary of the user's request and target."""
 
-    if context.intent:
-        intent_label = context.intent.value.replace(
-            "_",
-            " ",
-        ).title()
-    else:
-        intent_label = "Query"
-
-    target_name = context.target_symbol
-
-    if not target_name and context.primary_chunk:
-        target_name = context.primary_chunk.file_path
-
-    if not target_name:
-        target_name = "codebase"
-
-    return (
-        f"{intent_label} request regarding "
-        f"`{target_name}`: {context.query}"
-    )
+    return context.query.strip()
 
 
 def _build_ai_suggestion(
@@ -191,65 +165,54 @@ def _build_ai_suggestion(
     action: dict[str, Any],
 ) -> str:
     """
-    Build a grounded suggestion from the validated analysis.
+    Build a concise, grounded suggestion for the final API response.
 
-    Only fields actually present in the analysis/action result
-    are included.
+    Detailed reasoning remains internally available through
+    analysis_result and action_analysis.
+
+    The public suggestion contains only the recommended action.
     """
 
-    parts: list[str] = []
+    # ---------------------------------------------------------
+    # Preferred source: action analysis
+    # ---------------------------------------------------------
 
-    if analysis.get("existing_implementation"):
-        parts.append(
-            f"Current state: "
-            f"{analysis['existing_implementation']}"
-        )
+    change_desc = (
+        action.get("proposed_change")
+        if isinstance(action, dict)
+        else None
+    )
+
+    if change_desc:
+        return str(change_desc).strip()
+
+    # ---------------------------------------------------------
+    # Fallback: validated analysis
+    # ---------------------------------------------------------
+
+    if analysis.get("recommended_change"):
+        return str(
+            analysis["recommended_change"]
+        ).strip()
+
+    if analysis.get("suggestion"):
+        return str(
+            analysis["suggestion"]
+        ).strip()
+
+    # ---------------------------------------------------------
+    # Final fallback: current behavior
+    # ---------------------------------------------------------
 
     if analysis.get("current_behavior"):
-        parts.append(
-            f"Observed behavior: "
+        target_name = context.target_symbol or "target"
+
+        return (
+            f"The `{target_name}` currently "
             f"{analysis['current_behavior']}"
         )
 
-    if analysis.get("likely_cause"):
-        parts.append(
-            f"Root cause: "
-            f"{analysis['likely_cause']}"
-        )
-
-    if analysis.get("bottleneck"):
-        parts.append(
-            f"Bottleneck: "
-            f"{analysis['bottleneck']}"
-        )
-
-    if analysis.get("code_smell"):
-        parts.append(
-            f"Identified smell: "
-            f"{analysis['code_smell']}"
-        )
-
-    change_desc = action.get("proposed_change")
-
-    if change_desc:
-        parts.append(
-            f"Recommended action: {change_desc}"
-        )
-
-    rationale = action.get("rationale")
-
-    if rationale:
-        parts.append(
-            f"Rationale: {rationale}"
-        )
-
-    if not parts:
-        return (
-            "No additional validated analysis was available. "
-            f"Original request: {context.query}"
-        )
-
-    return " | ".join(parts)
+    return "No additional validated recommendation is available."
 
 
 def _compute_confidence(
@@ -259,11 +222,16 @@ def _compute_confidence(
     """
     Determine confidence from evidence quality and validation.
 
+    Retrieval scores can vary depending on the embedding model,
+    vector database, reranker, and scoring strategy. Therefore,
+    fixed thresholds such as 0.75 and 0.45 should not be assumed
+    to be universal.
+
     Confidence levels:
     - NONE: no usable retrieval evidence.
     - LOW: weak evidence or failed validation.
-    - MEDIUM: reasonable retrieval evidence.
-    - HIGH: strong evidence plus an identified primary chunk.
+    - MEDIUM: usable evidence without full validation.
+    - HIGH: retrieved evidence + primary target + passed validation.
     """
 
     if validation_status == "failed":
@@ -275,34 +243,13 @@ def _compute_confidence(
     if not context.retrieved_chunks:
         return ConfidenceLevel.NONE.value
 
-    # Explicitly sort rather than assuming HybridSearch already
-    # returned chunks in score order.
-    ranked_chunks = sorted(
-        context.retrieved_chunks,
-        key=lambda chunk: chunk.score,
-        reverse=True,
-    )
+    if context.primary_chunk is None:
+        return ConfidenceLevel.LOW.value
 
-    top_scores = [
-        chunk.score
-        for chunk in ranked_chunks[:3]
-    ]
-
-    if not top_scores:
-        return ConfidenceLevel.NONE.value
-
-    avg_score = sum(top_scores) / len(top_scores)
-
-    if (
-        avg_score >= 0.75
-        and context.primary_chunk is not None
-    ):
+    if validation_status == "passed":
         return ConfidenceLevel.HIGH.value
 
-    if avg_score >= 0.45:
-        return ConfidenceLevel.MEDIUM.value
-
-    return ConfidenceLevel.LOW.value
+    return ConfidenceLevel.MEDIUM.value
 
 
 def _build_warning(

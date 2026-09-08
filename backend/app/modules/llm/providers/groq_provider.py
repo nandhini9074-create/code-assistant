@@ -1,4 +1,3 @@
-
 """
 app/modules/llm/providers/groq_provider.py
 
@@ -121,11 +120,15 @@ class GroqProvider(BaseLLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         schema: dict[str, Any] | None = None,
-        max_tokens: int = 1024,
+        max_tokens: int = 300,
         temperature: float = 0.0,
     ) -> dict[str, Any]:
         """
-        Generate a structured JSON response using Groq.
+        Generate a structured JSON object using Groq.
+
+        The Groq API is configured with json_object response format,
+        so all structured responses must have a JSON object at the
+        top level.
         """
 
         sys_prompt = (
@@ -138,6 +141,7 @@ class GroqProvider(BaseLLMProvider):
                 f"{sys_prompt}\n\n"
                 "You MUST output raw, valid JSON only. "
                 "Do not use markdown code blocks. "
+                "Do not add explanations before or after the JSON. "
                 "Your response must strictly conform to "
                 "the following JSON schema:\n"
                 f"{json.dumps(schema, indent=2)}"
@@ -195,6 +199,7 @@ class GroqProvider(BaseLLMProvider):
             return parsed
 
         except Exception as exc:
+
             if isinstance(
                 exc,
                 (LLMError, LLMParseError),
@@ -248,6 +253,7 @@ class GroqProvider(BaseLLMProvider):
         user_prompt: str,
         schema: dict[str, Any],
         temperature: float | None = None,
+        max_tokens: int = 300,
     ) -> dict[str, Any]:
         """
         Generate a structured JSON response.
@@ -263,7 +269,6 @@ class GroqProvider(BaseLLMProvider):
             prompt=user_prompt,
             system_prompt=system_prompt,
             schema=schema,
-            max_tokens=self.settings.groq_max_tokens,
+            max_tokens=max_tokens,
             temperature=temp,
         )
-

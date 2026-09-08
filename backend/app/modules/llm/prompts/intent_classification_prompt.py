@@ -21,8 +21,15 @@ The absence of parameters MUST NOT affect the intent classification.
 
 SUPPORTED INTENTS:
 
+- RETRIEVE:
+  The user wants to find, locate, search, show, explain, understand, or
+  describe existing code WITHOUT modifying it.
+  Trigger words: "find", "show", "where", "which", "what does", "how does",
+  "explain", "list", "search for", "locate", "look for", "get", "display".
+
 - ADD_FEATURE:
   The user wants to add new functionality or introduce a new capability.
+  Trigger words: "add", "implement", "create", "introduce", "build".
 
 - FIX_BUG:
   The user wants to diagnose, correct, or resolve an existing bug, error,
@@ -39,35 +46,46 @@ SUPPORTED INTENTS:
 CLASSIFICATION RULES:
 
 1. Return exactly ONE supported intent:
-   ADD_FEATURE, FIX_BUG, OPTIMIZE, or REFACTOR.
+   RETRIEVE, ADD_FEATURE, FIX_BUG, OPTIMIZE, or REFACTOR.
 
-2. Determine the intent from the user's PRIMARY OBJECTIVE.
+2. RETRIEVE vs ADD_FEATURE — the most critical distinction:
+   - Query asks WHERE code IS or HOW code WORKS → RETRIEVE.
+   - Query asks to CREATE or ADD something new → ADD_FEATURE.
+   - "Find the function that handles X" → RETRIEVE (not ADD_FEATURE).
+   - "Add a function that handles X" → ADD_FEATURE.
 
-3. If the query mentions multiple activities, select the intent that
+3. Determine the intent from the user's PRIMARY OBJECTIVE.
+
+4. If the query mentions multiple activities, select the intent that
    represents the main requested outcome.
 
-4. Do not infer an intent from information that is not present in the query.
+5. Do not infer an intent from information that is not present in the query.
 
-5. Do not invent parameters, file paths, function names, requirements,
+6. Do not invent parameters, file paths, function names, requirements,
    technologies, errors, or other details.
 
-6. Extract a parameter ONLY when it is explicitly stated or clearly
+7. Extract a parameter ONLY when it is explicitly stated or clearly
    expressed in the user's query.
 
-7. The parameters object must contain only information explicitly present
+8. The parameters object must contain only information explicitly present
    in the query.
 
-8. If no parameters are explicitly provided, return an empty parameters
+9. If no parameters are explicitly provided, return an empty parameters
    object. Do NOT change the classified intent because parameters are absent.
 
-9. The parameters object must always be a JSON object.
+10. The parameters object must always be a JSON object.
 
-10. The confidence value must be a number between 0.0 and 1.0.
+11. The confidence value must be a number between 0.0 and 1.0.
 
-11. Return ONLY valid JSON.
+12. Return ONLY valid JSON.
     Do not return Markdown, explanations, comments, or additional text.
 
 PARAMETER GUIDELINES:
+
+For RETRIEVE, possible explicit parameters include:
+- target
+- file_path
+- function_name
 
 For ADD_FEATURE, possible explicit parameters include:
 - feature
@@ -95,7 +113,35 @@ information.
 
 EXAMPLES:
 
-Example 1:
+Example 1 — RETRIEVE (finding existing code):
+
+User query:
+"Find the function that uses language translation"
+
+Return:
+{
+  "intent": "RETRIEVE",
+  "parameters": {
+    "target": "language translation function"
+  },
+  "confidence": 0.95
+}
+
+Example 2 — RETRIEVE (understanding behavior):
+
+User query:
+"How does the translation work?"
+
+Return:
+{
+  "intent": "RETRIEVE",
+  "parameters": {
+    "target": "translation"
+  },
+  "confidence": 0.92
+}
+
+Example 3 — ADD_FEATURE (adding new capability):
 
 User query:
 "add a feature to get user feedback"
@@ -109,19 +155,21 @@ Return:
   "confidence": 0.95
 }
 
-Example 2:
+Example 4 — ADD_FEATURE (adding behavior after existing flow):
 
 User query:
-"add a new feature"
+"Add a goodbye message after translation"
 
 Return:
 {
   "intent": "ADD_FEATURE",
-  "parameters": {},
-  "confidence": 0.90
+  "parameters": {
+    "feature": "goodbye message after translation"
+  },
+  "confidence": 0.95
 }
 
-Example 3:
+Example 5:
 
 User query:
 "fix the login bug"
@@ -135,22 +183,7 @@ Return:
   "confidence": 0.95
 }
 
-Example 4:
-
-User query:
-"fix the error in auth_service.py"
-
-Return:
-{
-  "intent": "FIX_BUG",
-  "parameters": {
-    "error": "error",
-    "file_path": "auth_service.py"
-  },
-  "confidence": 0.95
-}
-
-Example 5:
+Example 6:
 
 User query:
 "make the search faster"
@@ -165,7 +198,7 @@ Return:
   "confidence": 0.90
 }
 
-Example 6:
+Example 7:
 
 User query:
 "refactor the authentication module"
@@ -182,6 +215,8 @@ Return:
 FINAL RULE:
 
 Never select REFACTOR merely because the query contains no parameters.
+Never select ADD_FEATURE for a query that is only looking for or asking
+about existing code.
 
 Always determine the intent from the user's requested objective.
 """

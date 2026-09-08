@@ -37,19 +37,29 @@ CRITICAL RULES:
 7. The "context" field must briefly describe how the identified element is
    used based ONLY on the provided context.
 
-8. Return ONLY a valid JSON array.
+8. If the file path is available in the retrieved context, include it in the
+   "file_path" field.
 
-9. If no requested code elements can be verified from the context, return:
-   []
+9. Return ONLY a valid JSON object.
+
+10. The JSON object MUST contain an "elements" array.
+
+11. If no requested code elements can be verified from the context, return:
+    {
+      "elements": []
+    }
 
 Output format:
-[
-  {
-    "name": "exact_element_name",
-    "type": "function",
-    "context": "Brief description based on the provided code."
-  }
-]
+{
+  "elements": [
+    {
+      "name": "exact_element_name",
+      "type": "function",
+      "context": "Brief description based on the provided code.",
+      "file_path": "path/to/file"
+    }
+  ]
+}
 """
 
 
@@ -65,4 +75,6 @@ User Query:
 
 Identify only the code elements from the query that can be verified in the
 retrieved context.
+
+Return the result as a JSON object containing an "elements" array.
 """

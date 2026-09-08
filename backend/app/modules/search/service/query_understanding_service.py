@@ -45,13 +45,13 @@ class QueryUnderstandingService:
 
     async def understand(
         self,
-        repo_id: str,
+        repo_name: str,
         query: str,
     ) -> QueryUnderstandingResponse:
         """Validate, classify intent, and preprocess the user's query."""
 
         context = SearchContext(
-            repo_id=repo_id,
+            repo_name=repo_name,
             query=query,
         )
 
@@ -85,7 +85,7 @@ class QueryUnderstandingService:
         except Exception as exc:
             logger.error(
                 "query_understanding_failed",
-                repo_id=repo_id,
+                repo_name=repo_name,
                 exc_info=exc,
             )
 

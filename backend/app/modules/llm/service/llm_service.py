@@ -1,4 +1,3 @@
-
 """
 app/modules/llm/service/llm_service.py
 
@@ -283,6 +282,8 @@ class LLMService:
         """
         Identify code elements relevant to the query from retrieved chunks.
 
+        The LLM returns a JSON object containing an ``elements`` list.
+
         Each identified element has the following structure:
 
         {
@@ -302,7 +303,7 @@ class LLMService:
         context_parts: list[str] = []
 
         for index, chunk in enumerate(
-            retrieved_chunks[:10],
+            retrieved_chunks,
             start=1,
         ):
             if isinstance(chunk, dict):
@@ -339,11 +340,31 @@ class LLMService:
                 )
 
             elif hasattr(chunk, "content"):
-                file_path = getattr(chunk, "file_path", "unknown") or "unknown"
-                metadata = getattr(chunk, "metadata", {}) or {}
-                start_line = metadata.get("start_line", "?")
-                end_line = metadata.get("end_line", "?")
-                code = getattr(chunk, "content", "") or ""
+                file_path = getattr(
+                    chunk,
+                    "file_path",
+                    "unknown",
+                ) or "unknown"
+
+                metadata = getattr(
+                    chunk,
+                    "metadata",
+                    {},
+                ) or {}
+
+                start_line = metadata.get(
+                    "start_line",
+                    "?",
+                )
+                end_line = metadata.get(
+                    "end_line",
+                    "?",
+                )
+                code = getattr(
+                    chunk,
+                    "content",
+                    "",
+                ) or ""
 
                 context_parts.append(
                     f"Snippet {index}: "
@@ -362,38 +383,54 @@ class LLMService:
             query=query,
         )
 
+        # IMPORTANT:
+        # GroqProvider.complete_json() uses:
+        #
+        #     response_format={"type": "json_object"}
+        #
+        # Therefore the top-level response must be an object.
+        # The actual code elements are returned inside "elements".
         schema = {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                    },
-                    "type": {
-                        "type": "string",
-                        "enum": [
-                            "function",
-                            "class",
-                            "variable",
-                            "file",
-                            "unknown",
+            "type": "object",
+            "properties": {
+                "elements": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                            },
+                            "type": {
+                                "type": "string",
+                                "enum": [
+                                    "function",
+                                    "class",
+                                    "variable",
+                                    "file",
+                                    "unknown",
+                                ],
+                            },
+                            "context": {
+                                "type": "string",
+                            },
+                            "file_path": {
+                                "type": "string",
+                            },
+                        },
+                        "required": [
+                            "name",
+                            "type",
+                            "context",
                         ],
-                    },
-                    "context": {
-                        "type": "string",
-                    },
-                    "file_path": {
-                        "type": "string",
+                        "additionalProperties": False,
                     },
                 },
-                "required": [
-                    "name",
-                    "type",
-                    "context",
-                ],
-                "additionalProperties": False,
             },
+            "required": [
+                "elements",
+            ],
+            "additionalProperties": False,
         }
 
         try:
@@ -501,12 +538,10 @@ class LLMService:
         response: Any,
     ) -> list[dict[str, Any]]:
         """
-        Normalize different JSON response shapes into a list of code
-        elements.
+        Normalize the JSON response into a list of code elements.
 
-        The expected response is a JSON array. Some providers/models may
-        occasionally wrap the array in an object, so common wrapper keys
-        are supported defensively.
+        The expected response is a JSON object containing an ``elements``
+        array. Common wrapper keys are supported defensively.
         """
 
         elements: Any = response
@@ -574,4 +609,3 @@ class LLMService:
             normalized.append(normalized_element)
 
         return normalized
-

@@ -98,7 +98,9 @@ class Reranker:
         are highly informative for repository search.
         """
 
-        content = chunk.content.lower()
+        func_name = str(chunk.metadata.get("function_name") or "")
+        class_name = str(chunk.metadata.get("class_name") or "")
+        content = f"{func_name} {class_name} {chunk.content}".lower()
 
         score = float(chunk.score)
 
