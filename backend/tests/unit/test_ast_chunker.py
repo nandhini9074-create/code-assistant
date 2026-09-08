@@ -115,3 +115,30 @@ def test_huge_function_sub_splitting() -> None:
         assert c["function_name"] == "huge_function"
         assert c["metadata"]["chunking_strategy"] == "ast_split"
         assert len(c["content"]) <= 350
+
+
+def test_ts_decorated_property_preserves_decorator():
+    code = """
+class FileDto {
+  @ForeignKey(() => Group)
+  @Column({ allowNull: false })
+  fileName: string;
+}
+"""
+    chunks = chunk_ast(code, "typescript")
+    prop_chunk = next(c for c in chunks if "fileName" in c.get("content", "") and c.get("function_name") == "fileName")
+    assert "@ForeignKey(() => Group)" in prop_chunk["content"]
+    assert "@Column({ allowNull: false })" in prop_chunk["content"]
+    assert "fileName: string;" in prop_chunk["content"]
+
+
+def test_ts_arrow_function_in_decorator_not_chunked_standalone():
+    code = """
+class FileDto {
+  @ForeignKey(() => Group)
+  fileName: string;
+}
+"""
+    chunks = chunk_ast(code, "typescript")
+    arrow_only = [c for c in chunks if c.get("content", "").strip() == "() => Group"]
+    assert arrow_only == [], "Arrow function inside decorator must not be a standalone chunk"

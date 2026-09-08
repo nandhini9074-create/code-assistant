@@ -71,22 +71,20 @@ TARGET_NODE_TYPES: dict[str, set[str]] = {
     },
     "javascript": {
         "function_declaration",
-        "function_expression",
-        "arrow_function",
         "method_definition",
         "class_declaration",
         "class_expression",
+        "public_field_definition",
     },
     "typescript": {
         "function_declaration",
-        "function_expression",
-        "arrow_function",
         "method_definition",
         "class_declaration",
         "class_expression",
         "interface_declaration",
         "type_alias_declaration",
         "enum_declaration",
+        "public_field_definition",
     },
     "go": {
         "function_declaration",
@@ -225,6 +223,30 @@ def _extract_names(node: tree_sitter.Node, language: str, current_class: str | N
     return extracted_name, current_class
 
 
+def _get_node_start_with_decorators(node: tree_sitter.Node) -> tuple[int, int]:
+    """
+    Finds the true start byte and line of a node by including preceding decorator siblings.
+    In TypeScript/JavaScript, decorators are often siblings preceding the actual declaration.
+    Returns (start_byte, start_line).
+    """
+    start_byte = node.start_byte
+    start_line = node.start_point[0] + 1
+
+    current = node.prev_sibling
+    earliest_byte = start_byte
+    earliest_line = start_line
+
+    while current:
+        if current.type == "decorator":
+            earliest_byte = current.start_byte
+            earliest_line = current.start_point[0] + 1
+        elif current.type != "comment":
+            break
+        current = current.prev_sibling
+
+    return earliest_byte, earliest_line
+
+
 def _extract_nodes(
     node: tree_sitter.Node,
     content_bytes: bytes,
@@ -248,6 +270,8 @@ def _extract_nodes(
                 inner_func_node = child
                 effective_type = child.type
                 break
+    elif node_type == "public_field_definition":
+        effective_type = "property"
 
     is_class_like = any(keyword in effective_type for keyword in ("class", "interface", "struct", "impl", "type_declaration"))
     is_function_like = any(keyword in effective_type for keyword in ("function", "method", "constructor", "arrow"))
@@ -265,13 +289,13 @@ def _extract_nodes(
         if is_class_like and child_chunks:
             # Policy: Emit child methods as standalone semantic chunks.
             # Emit class header/structure chunk (first ~10 lines or docstring) to preserve class context without full duplication.
-            start_line = node.start_point[0] + 1
+            start_byte, start_line = _get_node_start_with_decorators(node)
             first_child_line = child_chunks[0]["start_line"]
             header_end_line = min(node.end_point[0] + 1, max(start_line, first_child_line - 1))
 
-            class_header_code = content_bytes[node.start_byte:body.start_byte].decode("utf-8", errors="replace").strip()
+            class_header_code = content_bytes[start_byte:body.start_byte].decode("utf-8", errors="replace").strip()
             if not class_header_code:
-                class_header_code = content_bytes[node.start_byte:min(node.end_byte, node.start_byte + 300)].decode("utf-8", errors="replace")
+                class_header_code = content_bytes[start_byte:min(node.end_byte, start_byte + 300)].decode("utf-8", errors="replace")
 
             if class_header_code:
                 header_chunk: ASTChunk = {
@@ -299,9 +323,9 @@ def _extract_nodes(
             pass
 
         # Standalone function, method, or leaf class without sub-methods
-        start_line = node.start_point[0] + 1
+        start_byte, start_line = _get_node_start_with_decorators(node)
         end_line = node.end_point[0] + 1
-        raw_code = content_bytes[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        raw_code = content_bytes[start_byte:node.end_byte].decode("utf-8", errors="replace")
 
         chunk: ASTChunk = {
             "content": raw_code,
