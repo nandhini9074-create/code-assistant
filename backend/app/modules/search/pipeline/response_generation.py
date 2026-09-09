@@ -70,7 +70,7 @@ class ResponseGenerationStage:
         confidence = None
 
         # ---------------------------------------------------------
-        # STEP 12 - TRIAGE RESULT
+        # STEP 11 - TRIAGE RESULT
         # ---------------------------------------------------------
         if context.triage_result:
             requirement = (
@@ -87,7 +87,7 @@ class ResponseGenerationStage:
             confidence = context.triage_result.get("confidence")
 
         # ---------------------------------------------------------
-        # STEP 9 - CODE ANALYSIS RESULT
+        # STEP 8 - CODE ANALYSIS RESULT
         # ---------------------------------------------------------
         if context.analysis_result:
             if requirement is None:
@@ -107,12 +107,8 @@ class ResponseGenerationStage:
                 confidence = context.analysis_result.get("confidence")
 
         # ---------------------------------------------------------
-        # IMPORTANT:
-        # Triage may convert a dictionary into a Python string such as:
-        #
-        # "{'description': '...', 'implementation_steps': [...]}"
-        #
-        # Convert it back into a real JSON-compatible object.
+        # SearchResponse.suggestion expects a STRING.
+        # Convert structured LLM output into a readable string.
         # ---------------------------------------------------------
         suggestion = self._normalize_suggestion(suggestion)
 
@@ -188,7 +184,10 @@ class ResponseGenerationStage:
             suggestion=suggestion,
             confidence=confidence,
             code_context=context.code_snippets,
-            early_exit=context.early_exit,
+            early_exit={
+                "code": context.early_exit,
+                "message": context.early_exit_message,
+            },
         )
 
     # =============================================================
@@ -196,82 +195,114 @@ class ResponseGenerationStage:
     # =============================================================
 
     @staticmethod
-    def _normalize_suggestion(suggestion: Any) -> Any:
+    def _normalize_suggestion(suggestion: Any) -> str | None:
         """
-        Convert stringified dictionaries/lists into real Python
-        dictionaries/lists before constructing SearchResponse.
+        Convert any suggestion value into the string expected by
+        SearchResponse.suggestion.
 
-        Handles:
-            1. Already structured dict/list
-            2. Valid JSON strings
-            3. Python repr strings containing single quotes
-            4. Empty strings
-            5. Invalid strings
-
-        Example input:
-
-            "{'description': 'Add EmailService',
-              'implementation_steps': ['Step 1', 'Step 2']}"
-
-        Becomes:
-
-            {
-                "description": "Add EmailService",
-                "implementation_steps": [
-                    "Step 1",
-                    "Step 2"
-                ]
-            }
+        If the LLM returns a structured dictionary, prefer its
+        description. If no description exists, serialize the
+        structure as JSON.
         """
 
-        # Already structured.
-        if isinstance(suggestion, (dict, list)):
-            return suggestion
-
-        # Nothing to normalize.
         if suggestion is None:
             return None
 
-        if not isinstance(suggestion, str):
-            return suggestion
+        # ---------------------------------------------------------
+        # Structured dictionary returned directly by the LLM.
+        # ---------------------------------------------------------
+        if isinstance(suggestion, dict):
+            description = suggestion.get("description")
 
-        value = suggestion.strip()
+            if description is not None:
+                if isinstance(description, str):
+                    return description.strip() or None
 
-        if not value:
-            return None
+                return str(description)
+
+            return json.dumps(
+                suggestion,
+                ensure_ascii=False,
+            )
 
         # ---------------------------------------------------------
-        # First try strict JSON.
+        # List returned directly by the LLM.
         # ---------------------------------------------------------
-        try:
-            parsed = json.loads(value)
-
-            if isinstance(parsed, (dict, list)):
-                return parsed
-
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
+        if isinstance(suggestion, list):
+            return json.dumps(
+                suggestion,
+                ensure_ascii=False,
+            )
 
         # ---------------------------------------------------------
-        # Then handle Python dictionary representation.
-        #
-        # Example:
-        # "{'description': '...', 'implementation_steps': [...]}"
+        # Already a string.
         # ---------------------------------------------------------
-        try:
-            parsed = ast.literal_eval(value)
+        if isinstance(suggestion, str):
+            value = suggestion.strip()
 
-            if isinstance(parsed, (dict, list)):
-                return parsed
+            if not value:
+                return None
 
-        except (ValueError, SyntaxError, TypeError):
-            pass
+            # Try JSON first.
+            try:
+                parsed = json.loads(value)
+
+                if isinstance(parsed, dict):
+                    description = parsed.get("description")
+
+                    if description is not None:
+                        if isinstance(description, str):
+                            return description.strip() or None
+
+                        return str(description)
+
+                    return json.dumps(
+                        parsed,
+                        ensure_ascii=False,
+                    )
+
+                if isinstance(parsed, list):
+                    return json.dumps(
+                        parsed,
+                        ensure_ascii=False,
+                    )
+
+            except (json.JSONDecodeError, TypeError, ValueError):
+                pass
+
+            # Try Python repr.
+            try:
+                parsed = ast.literal_eval(value)
+
+                if isinstance(parsed, dict):
+                    description = parsed.get("description")
+
+                    if description is not None:
+                        if isinstance(description, str):
+                            return description.strip() or None
+
+                        return str(description)
+
+                    return json.dumps(
+                        parsed,
+                        ensure_ascii=False,
+                    )
+
+                if isinstance(parsed, list):
+                    return json.dumps(
+                        parsed,
+                        ensure_ascii=False,
+                    )
+
+            except (ValueError, SyntaxError, TypeError):
+                pass
+
+            return value
 
         # ---------------------------------------------------------
-        # If it cannot safely be parsed, preserve the original
-        # string rather than crashing the response pipeline.
+        # Any other type.
         # ---------------------------------------------------------
-        return suggestion
+        return str(suggestion)
 
     # =============================================================
     # TARGET SYMBOL
@@ -282,73 +313,71 @@ class ResponseGenerationStage:
         """
         Resolve the most useful target symbol.
 
-        Prefer the symbol selected by the analysis pipeline.
+        Prefer an already meaningful target symbol.
 
-        If target_symbol accidentally contains only a filename
-        such as:
-
-            payout-transaction.service.ts
-
-        use the primary chunk's class/function information instead.
+        If the target symbol is a filename or is otherwise unavailable,
+        use the primary chunk metadata to resolve the class/function.
         """
 
         target_symbol = context.target_symbol
-
         primary_chunk = context.primary_chunk
 
+        metadata = (
+            primary_chunk.metadata
+            if primary_chunk and primary_chunk.metadata
+            else {}
+        )
+
+        class_name = str(
+            metadata.get("class_name") or ""
+        ).strip()
+
+        function_name = str(
+            metadata.get("function_name") or ""
+        ).strip()
+
+        file_path = (
+            primary_chunk.file_path
+            if primary_chunk
+            else None
+        )
+
         # ---------------------------------------------------------
-        # If target_symbol is already a meaningful symbol, keep it.
+        # If target_symbol is meaningful and is not just the file path,
+        # keep it.
         # ---------------------------------------------------------
         if target_symbol:
             normalized = target_symbol.strip()
 
-            if (
-                normalized
-                and primary_chunk
-                and normalized != primary_chunk.file_path
-            ):
-                return normalized
-
-            if normalized and not normalized.lower().endswith(
-                (
-                    ".ts",
-                    ".tsx",
-                    ".js",
-                    ".jsx",
-                    ".py",
-                    ".java",
-                    ".go",
-                    ".rs",
-                    ".cpp",
-                    ".c",
-                    ".cs",
-                )
-            ):
-                return normalized
+            if normalized and normalized != file_path:
+                if not normalized.lower().endswith(
+                    (
+                        ".ts",
+                        ".tsx",
+                        ".js",
+                        ".jsx",
+                        ".py",
+                        ".java",
+                        ".go",
+                        ".rs",
+                        ".cpp",
+                        ".c",
+                        ".cs",
+                    )
+                ):
+                    return normalized
 
         # ---------------------------------------------------------
-        # Prefer class name.
+        # Prefer class name from chunk metadata.
         # ---------------------------------------------------------
-        if primary_chunk:
-            class_name = getattr(primary_chunk, "class_name", None)
-
-            if class_name:
-                class_name = str(class_name).strip()
-
-                if class_name:
-                    return class_name
+        if class_name:
+            return class_name
 
         # ---------------------------------------------------------
         # Fall back to function/method name.
         # ---------------------------------------------------------
-        if primary_chunk:
-            function_name = getattr(primary_chunk, "function_name", None)
-
-            if function_name:
-                function_name = str(function_name).strip()
-
-                if function_name:
-                    return function_name
+        if function_name:
+            return function_name
 
         # ---------------------------------------------------------
         # Last fallback.

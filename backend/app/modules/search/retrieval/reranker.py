@@ -13,6 +13,7 @@ ML-based reranker such as Cohere Rerank or Voyage Rerank.
 """
 
 from __future__ import annotations
+from sentence_transformers import CrossEncoder
 
 import re
 
@@ -38,7 +39,8 @@ class Reranker:
         lightweight lexical signals for identifiers explicitly extracted
         during query preprocessing.
 
-        Candidates are not modified in-place.
+        The final reranking score is stored in chunk.score so that the
+        API exposes only one score for each retrieved result.
         """
 
         if top_k <= 0:
@@ -57,6 +59,15 @@ class Reranker:
                 chunk=chunk,
                 identifiers=identifiers,
                 keywords=keywords,
+            )
+
+            # Store the final reranking score as the single score
+            # exposed by the API.
+            chunk.score = score
+
+            print(
+                f"RERANKER SCORE: {score:.4f} | "
+                f"{chunk.file_path}"
             )
 
             scored_candidates.append(
@@ -98,9 +109,19 @@ class Reranker:
         are highly informative for repository search.
         """
 
-        func_name = str(chunk.metadata.get("function_name") or "")
-        class_name = str(chunk.metadata.get("class_name") or "")
-        content = f"{func_name} {class_name} {chunk.content}".lower()
+        func_name = str(
+            chunk.metadata.get("function_name") or ""
+        )
+
+        class_name = str(
+            chunk.metadata.get("class_name") or ""
+        )
+
+        content = (
+            f"{func_name} "
+            f"{class_name} "
+            f"{chunk.content}"
+        ).lower()
 
         score = float(chunk.score)
 
@@ -118,10 +139,14 @@ class Reranker:
             identifier_ratio = (
                 identifier_matches / len(identifiers)
             )
+
             score += identifier_ratio * 0.20
 
         if keywords:
-            keyword_ratio = keyword_matches / len(keywords)
+            keyword_ratio = (
+                keyword_matches / len(keywords)
+            )
+
             score += keyword_ratio * 0.05
 
         return score
@@ -191,4 +216,3 @@ class Reranker:
             normalized.append(value)
 
         return normalized
-

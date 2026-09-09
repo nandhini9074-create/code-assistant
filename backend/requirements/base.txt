@@ -51,3 +51,6 @@ python-dotenv>=1.0.0               # .env loading
 structlog>=24.1.0                  # Structured logging
 orjson>=3.10.0                     # Fast JSON serialization
 aiofiles>=23.2.0                   # Async file I/O
+
+# ── ML Reranker ───────────────────────────────────────────────────────────────
+sentence-transformers>=3.0.0,<4.0.0

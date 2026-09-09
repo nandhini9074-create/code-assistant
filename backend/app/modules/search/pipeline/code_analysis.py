@@ -59,6 +59,18 @@ class CodeAnalysisStage:
 
         # CodeAnalysisService selects the correct analyzer based on
         # context.intent and executes it against the current context.
+        print("\n" + "=" * 80)
+        print("LLM INPUT")
+        print("=" * 80)
+
+        print("\nQUERY:")
+        print(context.query)
+
+        print("\nCODE CONTEXT:")
+        print(context.llm_context or "EMPTY")
+
+        print("=" * 80 + "\n")
+
         analysis = await self.code_analysis_service.analyze(context)
 
         # Store the result in the shared pipeline context.
