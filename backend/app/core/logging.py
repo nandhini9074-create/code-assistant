@@ -124,16 +124,13 @@ def _scrub_secrets(
 
 # Setup
 
-def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> None:
+def configure_logging(*, json_logs: bool | None = None, log_level: str = "INFO") -> None:
     """
-    Configure structlog and the standard library logging integration.
-
-    Call once at application startup (in app/main.py lifespan).
-
-    Args:
-        json_logs:  Render logs as JSON (production). False = pretty console.
-        log_level:  Minimum log level (e.g. "DEBUG", "INFO", "WARNING").
+    Configure structlog and standard library logging integration.
     """
+    if json_logs is None:
+        json_logs = os.environ.get("APP_ENV", "development") == "production"
+
     level = getattr(logging, log_level.upper(), logging.INFO)
 
     # Ensure stdout handles UTF-8 on Windows
@@ -147,16 +144,19 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
     handler = logging.StreamHandler(sys.stdout)
     handler.setLevel(level)
 
-    logging.basicConfig(
-        level=level,
-        handlers=[handler],
-        format="%(message)s",
-        force=True,
-    )
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.handlers = [handler]
 
     # Silence noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "uvicorn.access", "sqlalchemy.engine"):
+    for noisy in ("httpx", "httpcore", "sqlalchemy.engine"):
         logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Ensure app & uvicorn loggers output at INFO level
+    logging.getLogger("app").setLevel(level)
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
     # Shared processors
     shared_processors: list[Any] = [
@@ -171,10 +171,8 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
     ]
 
     if json_logs:
-        # Production: JSON output (parseable by log aggregators)
         renderer: Any = structlog.processors.JSONRenderer()
     else:
-        # Development: colorized human-readable output (colors disabled if sys.platform is win32 without vt100)
         use_colors = sys.platform != "win32" or "WT_SESSION" in os.environ or "TERM" in os.environ
         renderer = structlog.dev.ConsoleRenderer(colors=use_colors)
 
@@ -185,7 +183,7 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),
         wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
+        cache_logger_on_first_use=False,
     )
 
     formatter = structlog.stdlib.ProcessorFormatter(
@@ -198,12 +196,6 @@ def configure_logging(*, json_logs: bool = True, log_level: str = "INFO") -> Non
 def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
     """
     Get a structlog logger bound to the given name.
-
-    Usage::
-
-        from app.core.logging import get_logger
-        logger = get_logger(__name__)
-        logger.info("file_processed", file_path="src/main.py", duration_ms=42)
     """
     if not structlog.is_configured():
         configure_logging()

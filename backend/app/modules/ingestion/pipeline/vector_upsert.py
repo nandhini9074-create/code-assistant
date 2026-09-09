@@ -82,10 +82,13 @@ class VectorUpsertStage:
                     )
                 )
 
+        # Guarantee Qdrant collection exists for this repository
+        coll_name = repo.qdrant_collection
+        await ensure_collection_exists(coll_name)
+
         if points:
-            logger.info("stage_10_upserting_to_qdrant", points_count=len(points), collection=repo.qdrant_collection_name)
-            await ensure_collection_exists(repo.qdrant_collection_name)
-            await upsert_vectors(repo.qdrant_collection_name, points)
+            logger.info("stage_10_upserting_to_qdrant", points_count=len(points), collection=coll_name)
+            await upsert_vectors(coll_name, points)
             logger.info("stage_10_qdrant_upsert_success", points_count=len(points))
             
         if db_chunks:

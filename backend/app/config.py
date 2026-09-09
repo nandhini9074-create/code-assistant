@@ -198,7 +198,10 @@ class EmbeddingSettings(BaseSettings):
     jina_embedding_batch_size: int = Field(
         default=32, alias="JINA_EMBEDDING_BATCH_SIZE"
     )
-    jina_max_retries: int = Field(default=3, alias="JINA_MAX_RETRIES")
+    jina_max_retries: int = Field(default=6, alias="JINA_MAX_RETRIES")
+    jina_inter_batch_delay: float = Field(
+        default=2.0, alias="JINA_INTER_BATCH_DELAY"
+    )
     embedding_dimension: int = Field(
         default=1024, alias="EMBEDDING_DIMENSION"
     )

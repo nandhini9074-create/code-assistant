@@ -17,7 +17,11 @@ from app.modules.repositories.schemas.repository_schema import (
 )
 from app.modules.repositories.service.repository_service import RepositoryService
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
+from app.modules.ingestion.schemas.ingestion_schema import IngestionJobResponse
 from app.dependencies import get_ingestion_job_repo
+from app.core.logging import get_logger
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/repositories", tags=["Repositories"])
 
@@ -87,31 +91,46 @@ async def delete_repository(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@router.post("/zip", response_model=dict, status_code=status.HTTP_202_ACCEPTED)
+@router.post("/zip", response_model=IngestionJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_zip(
     file: UploadFile = File(...),
     repo_name: str = Form(...),
     service: RepositoryService = Depends(get_repository_service),
     job_repo: IngestionJobRepository = Depends(get_ingestion_job_repo),
-) -> dict:
+) -> IngestionJobResponse:
     """Upload a ZIP file for repository ingestion."""
     if not file.filename or not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Must be a ZIP file.")
+
+    # Calculate ZIP fingerprint hash for versioning
+    from app.infrastructure.storage.zip_storage import ZipStorageManager
+    zip_hash = ZipStorageManager.calculate_zip_hash(file.file)
+    commit_sha = f"zip_{zip_hash[:16]}"
         
     # Check if repo exists, if not create it
-    full_name = f"local/{repo_name}"
+    url = f"local://{repo_name}"
     from app.infrastructure.database.models.repository import Repository
     
-    existing = await service.repo.get_by_full_name(full_name)
+    existing = await service.repo.get_by_url(url)
     if not existing:
+        existing = await service.repo.get_by_full_name(repo_name)
+    if not existing:
+        safe_collection_name = f"repo_local_{repo_name}".lower().replace("-", "_").replace("/", "_")
         repo_record = Repository(
             repo_name=repo_name,
-            repo_url=f"local://{repo_name}",
+            repo_url=url,
             source_type="local",
             default_branch="main",
-            qdrant_collection_name=f"repo_local_{repo_name}".lower().replace("-", "_"),
+            qdrant_collection_name=safe_collection_name,
         )
         existing = await service.repo.create(repo_record)
+        
+        # Provision collection in Qdrant immediately
+        try:
+            from app.infrastructure.qdrant.collection_manager import ensure_collection_exists
+            await ensure_collection_exists(existing.qdrant_collection_name)
+        except Exception as e:
+            logger.error("qdrant_collection_provisioning_failed", collection=existing.qdrant_collection_name, error=str(e))
         
     # Create job
     from app.infrastructure.database.models.ingestion_job import IngestionJob
@@ -122,23 +141,38 @@ async def upload_zip(
         job_type="full",
         trigger_source=TriggerSource.ZIP_UPLOAD.value,
         status=JobStatus.PENDING.value,
-        commit_sha="zip_upload",
+        commit_sha=commit_sha,
     )
     job = await job_repo.create(job)
     
     from app.modules.ingestion.service.zip_ingestion_service import ZipIngestionService
     from app.dependencies import get_ingestion_service
-    # Zip extraction takes time, but it needs to be synchronous here to grab the file upload before it closes.
-    # The actual ingestion runs inside process_zip.
     zip_service = ZipIngestionService(get_ingestion_service(service.repo, job_repo, service.repo.session))
     try:
+        logger.info("starting_zip_ingestion", repo_name=repo_name, commit_sha=commit_sha, job_id=str(job.id))
         result = await zip_service.process_zip(
             job_id=str(job.id),
             repo_id=str(existing.id),
             repo_name=existing.name,
-            commit_sha="zip_upload",
+            commit_sha=commit_sha,
             zip_file=file.file
         )
-        return {"job_id": result.job_id, "status": "queued"}
+        
+        if not result.success:
+            logger.error("zip_ingestion_failed", repo_name=repo_name, error=result.error_message)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=result.error_message or "Ingestion failed.")
+            
+        logger.info("zip_ingestion_completed", repo_name=repo_name, job_id=str(job.id), chunks=result.indexed_chunks_count)
+        return IngestionJobResponse(
+            job_id=str(job.id),
+            repo_id=str(existing.id),
+            status=JobStatus.COMPLETED.value,
+            message="Repository successfully ingested and indexed from ZIP archive.",
+            processed_files=result.processed_files_count,
+            processed_chunks=result.indexed_chunks_count,
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
+        logger.error("zip_upload_processing_failed", repo_name=repo_name, error=str(exc), exc_info=True)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))

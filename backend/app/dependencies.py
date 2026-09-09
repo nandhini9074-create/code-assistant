@@ -26,6 +26,11 @@ def get_ingestion_job_repo(session: AsyncSession = Depends(get_db)) -> Ingestion
     return IngestionJobRepository(session)
 
 
+def get_webhook_event_repo(session: AsyncSession = Depends(get_db)):
+    from app.modules.webhooks.repository.webhook_event_repo import WebhookEventRepository
+    return WebhookEventRepository(session)
+
+
 def get_repository_service(
     repo_repo: RepositoryRepository = Depends(get_repository_repo),
     job_repo: IngestionJobRepository = Depends(get_ingestion_job_repo),
@@ -52,8 +57,9 @@ def get_webhook_validator(
 def get_webhook_service(
     validator: WebhookValidator = Depends(get_webhook_validator),
     job_repo: IngestionJobRepository = Depends(get_ingestion_job_repo),
+    event_repo=Depends(get_webhook_event_repo),
 ) -> WebhookService:
-    return WebhookService(validator, job_repo)
+    return WebhookService(validator, job_repo, event_repo)
 
 
 def get_ingestion_service(

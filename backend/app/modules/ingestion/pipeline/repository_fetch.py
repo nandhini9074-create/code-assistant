@@ -34,6 +34,14 @@ class RepositoryFetchStage:
             # Local ZIP extraction
             logger.info("stage_2_fetching_from_local_zip", path=context.extracted_zip_path)
             self._fetch_from_local(context, context.extracted_zip_path)
+        elif context.source == TriggerSource.WEBHOOK and context.webhook_diff:
+            # Webhook incremental fetch
+            parts = repo.repo_url.rstrip("/").split("/")
+            owner = parts[-2]
+            repo_slug = parts[-1].removesuffix(".git")
+            target_ref = context.commit_sha or repo.default_branch or "main"
+            logger.info("stage_2_fetching_webhook_diff", owner=owner, repo=repo_slug, commit_sha=target_ref)
+            await self._fetch_webhook_diff_files(context, owner, repo_slug, target_ref)
         else:
             # GitHub API fetch — parse owner/slug from repo_url
             parts = repo.repo_url.rstrip("/").split("/")
@@ -67,6 +75,36 @@ class RepositoryFetchStage:
             tree = await fetch_repository_tree(owner, repo, target_ref, context.github_token)
             for item in tree:
                 if item.get("type") == "blob":
+                    context.files.append(
+                        FileRecord(
+                            file_path=item["path"],
+                            blob_sha=item["sha"],
+                            file_hash="",
+                            size=item.get("size", 0),
+                        )
+                    )
+        except Exception as exc:
+            logger.error("stage_2_github_tree_fetch_failed", owner=owner, repo=repo, error=str(exc), exc_info=exc)
+            raise
+
+    async def _fetch_webhook_diff_files(self, context: IngestionContext, owner: str, repo: str, target_ref: str) -> None:
+        try:
+            # We fetch the tree to get the current blob SHAs for the files.
+            # While this fetches the whole tree metadata, it's a single API call and
+            # prevents us from having to do N API calls to get blob SHAs for N files.
+            tree = await fetch_repository_tree(owner, repo, target_ref, context.github_token)
+            
+            # Combine added and modified into a single set of paths to fetch content for
+            files_to_fetch = set()
+            if context.webhook_diff:
+                files_to_fetch.update(context.webhook_diff.get("added", []))
+                files_to_fetch.update(context.webhook_diff.get("modified", []))
+                
+                # Add deleted files to context
+                context.deleted_files.extend(context.webhook_diff.get("deleted", []))
+                
+            for item in tree:
+                if item.get("type") == "blob" and item["path"] in files_to_fetch:
                     context.files.append(
                         FileRecord(
                             file_path=item["path"],

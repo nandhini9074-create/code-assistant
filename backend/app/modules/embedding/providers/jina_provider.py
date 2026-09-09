@@ -6,6 +6,7 @@ Embedding provider for Jina AI (jina-embeddings-v3).
 from __future__ import annotations
 
 import asyncio
+import random
 from typing import Any
 import httpx
 
@@ -30,7 +31,7 @@ class JinaProvider:
         self.settings = get_settings()
         self.api_url = getattr(self.settings, "jina_api_url", "https://api.jina.ai/v1/embeddings")
         self.model = getattr(self.settings, "jina_embedding_model", "jina-embeddings-v3")
-        self.max_retries = getattr(self.settings, "jina_max_retries", 3)
+        self.max_retries = getattr(self.settings, "jina_max_retries", 5)
         self.dimension = getattr(self.settings, "embedding_dimension", 1024)
 
         if not self.settings.jina_api_key:
@@ -132,20 +133,26 @@ class JinaProvider:
                         f"Jina API returned non-retryable HTTP {status_code}: {err_text}"
                     )
 
-                # 4. Rate limit (429) - Retry with exponential backoff
+                # 4. Rate limit (429) - Retry with exponential backoff + jitter
                 if status_code == 429:
                     retry_after_hdr = response.headers.get("Retry-After")
-                    delay = float(retry_after_hdr) if retry_after_hdr else backoff
+                    if retry_after_hdr:
+                        try:
+                            delay = float(retry_after_hdr)
+                        except ValueError:
+                            delay = min(2.0 * (2 ** (attempt - 1)) + random.uniform(0.1, 1.0), 30.0)
+                    else:
+                        delay = min(2.0 * (2 ** (attempt - 1)) + random.uniform(0.1, 1.0), 30.0)
+
                     logger.warning(
                         "jina_api_rate_limit",
                         attempt=attempt,
-                        delay=delay,
+                        delay=round(delay, 2),
                         max_retries=self.max_retries,
                     )
-                    if attempt == self.max_retries:
+                    if attempt >= self.max_retries:
                         raise RateLimitError("jina", retry_after=delay)
                     await asyncio.sleep(delay)
-                    backoff *= 2.0
                     continue
 
                 # 5. Server errors (5xx) - Retry

@@ -21,6 +21,32 @@ class ZipStorageManager:
     MAX_FILES = 10000
 
     @classmethod
+    def calculate_zip_hash(cls, zip_file: IO[bytes]) -> str:
+        """
+        Calculate SHA-256 fingerprint of a ZIP payload.
+        Resets the stream position to 0 after reading.
+        """
+        import hashlib
+        hasher = hashlib.sha256()
+        
+        if hasattr(zip_file, "seek"):
+            try:
+                zip_file.seek(0)
+            except Exception:
+                pass
+
+        while chunk := zip_file.read(65536):
+            hasher.update(chunk)
+
+        if hasattr(zip_file, "seek"):
+            try:
+                zip_file.seek(0)
+            except Exception:
+                pass
+
+        return hasher.hexdigest()
+
+    @classmethod
     def extract_securely(cls, zip_file: IO[bytes]) -> str:
         """
         Securely extract a ZIP file to a temporary directory.
@@ -28,6 +54,14 @@ class ZipStorageManager:
         Caller is responsible for cleaning it up.
         """
         temp_dir = tempfile.mkdtemp(prefix="code_explorer_zip_")
+        
+        # Ensure file object has seekable method (fixes SpooledTemporaryFile issue in Python < 3.11)
+        if not hasattr(zip_file, "seekable"):
+            import io
+            if hasattr(zip_file, "_file") and zip_file._file is not None and hasattr(zip_file._file, "seekable"):
+                zip_file = zip_file._file
+            else:
+                zip_file = io.BytesIO(zip_file.read())
         
         try:
             with zipfile.ZipFile(zip_file, "r") as zf:

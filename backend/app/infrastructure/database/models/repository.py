@@ -93,7 +93,7 @@ class Repository(Base, TimestampMixin):
 
     @property
     def qdrant_collection(self) -> str:
-        return self.qdrant_collection_name
+        return self.qdrant_collection_name.lower().replace("/", "_").replace("-", "_").replace(".", "_").replace(":", "_")
 
     @property
     def current_commit_sha(self) -> str | None:

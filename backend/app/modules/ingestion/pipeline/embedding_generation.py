@@ -43,6 +43,9 @@ class EmbeddingGenerationStage:
             or DEFAULT_EMBEDDING_DIMENSION
         )
         self.model_name = getattr(self.settings, "jina_embedding_model", "jina-embeddings-v3")
+        self.inter_batch_delay = getattr(
+            self.settings, "jina_inter_batch_delay", 2.0
+        )
 
     async def execute(self, context: IngestionContext) -> None:
         """Generates vector embeddings for new chunks."""
@@ -150,6 +153,11 @@ class EmbeddingGenerationStage:
                     raise EmbeddingDimensionMismatchError(err_msg)
 
             all_embeddings.extend(batch_embeddings)
+
+            # Pause between batch dispatches to prevent rate-limit bursts on large repos
+            if batch_idx < total_batches - 1 and self.inter_batch_delay > 0:
+                import asyncio
+                await asyncio.sleep(self.inter_batch_delay)
 
         # 5. Global count safety check before assignment
         if len(all_embeddings) != total_chunks:

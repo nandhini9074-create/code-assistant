@@ -29,17 +29,13 @@ class WebhookValidator:
         if not repo_name:
             raise ValidationError("Repository full_name not found in payload")
             
-        # Get all repos to find one matching this name and branch
-        # In a real system, we'd query by owner/name/branch.
-        # Here we just iterate to find a matching active repo.
-        repos = await self.repo_repo.list_all()
-        target_repo = None
-        for repo in repos:
-            if f"{repo.owner}/{repo.name}" == repo_name and repo.default_branch == branch:
-                target_repo = repo
-                break
-                
+        # Get repo using get_by_full_name
+        target_repo = await self.repo_repo.get_by_full_name(repo_name)
+        
         if not target_repo:
-            raise ValidationError(f"Repository {repo_name} (branch: {branch}) not registered")
+            raise ValidationError(f"Repository {repo_name} not registered")
+            
+        if target_repo.default_branch != branch:
+            raise ValidationError(f"Repository {repo_name} (branch: {branch}) not registered or not default branch")
             
         return {"repo": target_repo, "branch": branch}

@@ -18,14 +18,21 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def sanitize_collection_name(collection_name: str) -> str:
+    """Sanitize collection name to ensure valid URL routing in Qdrant REST API."""
+    return collection_name.lower().replace("/", "_").replace("-", "_").replace(".", "_").replace(":", "_")
+
+
 async def ensure_collection_exists(
     collection_name: str,
     vector_size: int = 1024,
-) -> None:
+) -> str:
     """
     Ensure a Qdrant collection exists and has the required payload indices.
     If it doesn't exist, it creates it.
+    Returns the sanitized collection name.
     """
+    collection_name = sanitize_collection_name(collection_name)
     client = get_qdrant_client()
 
     try:
