@@ -1,23 +1,25 @@
 """
 app/modules/embedding/service/embedding_service.py
+
 Service for interacting with the Embedding layer.
 """
 
 from __future__ import annotations
 
-from app.modules.embedding.providers.voyage_provider import VoyageProvider
-
-# Singleton provider instance
-_provider: VoyageProvider | None = None
+from app.modules.embedding.providers.jina_provider import JinaProvider
 
 
-def get_embedding_provider() -> VoyageProvider:
-    """
-    Get the configured embedding provider (defaults to Voyage AI).
-    """
+_provider: JinaProvider | None = None
+
+
+def get_embedding_provider() -> JinaProvider:
+    """Get the configured Jina embedding provider."""
+
     global _provider
+
     if _provider is None:
-        _provider = VoyageProvider()
+        _provider = JinaProvider()
+
     return _provider
 
 
@@ -25,15 +27,11 @@ async def generate_embeddings(
     texts: list[str],
     input_type: str = "document",
 ) -> list[list[float]]:
-    """
-    Generate embeddings for a list of strings.
-    
-    Args:
-        texts: The texts to embed.
-        input_type: "document" for chunk indexing, "query" for search queries.
-        
-    Returns:
-        List of embedding vectors.
-    """
+    """Generate embeddings for a list of strings."""
+
     provider = get_embedding_provider()
-    return await provider.generate_embeddings(texts=texts, input_type=input_type)
+
+    return await provider.generate_embeddings(
+        texts=texts,
+        input_type=input_type,
+    )

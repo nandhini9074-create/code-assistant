@@ -1,10 +1,9 @@
 """
-app/modules/embedding/providers/__init__.py
-Embedding providers module.
+Embedding providers.
 """
 
-from app.modules.embedding.providers.voyage_provider import VoyageProvider
+from app.modules.embedding.providers.jina_provider import JinaProvider
 
 __all__ = [
-    "VoyageProvider",
+    "JinaProvider",
 ]
