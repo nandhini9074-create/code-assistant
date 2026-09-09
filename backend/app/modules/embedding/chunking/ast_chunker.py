@@ -225,21 +225,25 @@ def _extract_names(node: tree_sitter.Node, language: str, current_class: str | N
 
 def _get_node_start_with_decorators(node: tree_sitter.Node) -> tuple[int, int]:
     """
-    Finds the true start byte and line of a node by including preceding decorator siblings.
-    In TypeScript/JavaScript, decorators are often siblings preceding the actual declaration.
+    Finds the true start byte and line of a node by including preceding decorator siblings,
+    export keywords, and parent export_statement containers.
     Returns (start_byte, start_line).
     """
     start_byte = node.start_byte
     start_line = node.start_point[0] + 1
+
+    if node.parent and node.parent.type in ("export_statement", "export_declaration"):
+        start_byte = min(start_byte, node.parent.start_byte)
+        start_line = min(start_line, node.parent.start_point[0] + 1)
 
     current = node.prev_sibling
     earliest_byte = start_byte
     earliest_line = start_line
 
     while current:
-        if current.type == "decorator":
-            earliest_byte = current.start_byte
-            earliest_line = current.start_point[0] + 1
+        if current.type in ("decorator", "export"):
+            earliest_byte = min(earliest_byte, current.start_byte)
+            earliest_line = min(earliest_line, current.start_point[0] + 1)
         elif current.type != "comment":
             break
         current = current.prev_sibling

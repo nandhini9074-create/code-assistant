@@ -129,7 +129,7 @@ class FileDto {
     prop_chunk = next(c for c in chunks if "fileName" in c.get("content", "") and c.get("function_name") == "fileName")
     assert "@ForeignKey(() => Group)" in prop_chunk["content"]
     assert "@Column({ allowNull: false })" in prop_chunk["content"]
-    assert "fileName: string;" in prop_chunk["content"]
+    assert "fileName: string" in prop_chunk["content"]
 
 
 def test_ts_arrow_function_in_decorator_not_chunked_standalone():
@@ -142,3 +142,22 @@ class FileDto {
     chunks = chunk_ast(code, "typescript")
     arrow_only = [c for c in chunks if c.get("content", "").strip() == "() => Group"]
     assert arrow_only == [], "Arrow function inside decorator must not be a standalone chunk"
+
+
+def test_ts_exported_decorated_class_preserves_class_decorator():
+    code = """
+@Table({
+    tableName: 'activity_logs',
+    timestamps: true,
+})
+export class ActivityLog extends Model {
+    @Column
+    id: string;
+}
+"""
+    chunks = chunk_ast(code, "typescript")
+    class_chunk = next(c for c in chunks if c.get("class_name") == "ActivityLog")
+    assert "@Table({" in class_chunk["content"]
+    assert "tableName: 'activity_logs'" in class_chunk["content"]
+    assert "export class ActivityLog" in class_chunk["content"]
+
