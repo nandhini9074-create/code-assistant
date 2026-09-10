@@ -45,6 +45,11 @@ class AppSettings(BaseSettings):
     app_secret_key: str = Field(
         default="change-me-in-production", alias="APP_SECRET_KEY"
     )
+    app_base_url: str = Field(
+        default="http://localhost:8000",
+        alias="APP_BASE_URL",
+        description="Publicly reachable base URL (e.g. ngrok URL). Used to construct GitHub webhook payload URL.",
+    )
 
     @property
     def is_production(self) -> bool:
@@ -62,6 +67,11 @@ class AppSettings(BaseSettings):
     def json_logs(self) -> bool:
         """Use JSON logs in production / staging; pretty logs in development."""
         return self.app_env != "development"
+
+    @property
+    def webhook_payload_url(self) -> str:
+        """Fully constructed GitHub webhook target URL. Never contains secrets."""
+        return f"{self.app_base_url.rstrip('/')}/api/v1/webhooks/github"
 
 
 class DatabaseSettings(BaseSettings):
@@ -331,19 +341,22 @@ class Settings(
                 warnings.warn(
                     "GITHUB_WEBHOOK_SECRET is not set in production", stacklevel=2
                 )
+
+        # Warn if base URL is localhost — GitHub cannot send webhooks to localhost
+        if "localhost" in self.app_base_url or "127.0.0.1" in self.app_base_url:
+            warnings.warn(
+                f"APP_BASE_URL is set to '{self.app_base_url}'. "
+                "GitHub cannot reach localhost from the public internet. "
+                "Set APP_BASE_URL to your ngrok/public URL to enable automatic webhook creation.",
+                stacklevel=2,
+            )
+
         return self
 
 
-# Singleton accessor
-
-@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """
-    Return the cached application settings instance.
-
-    The first call reads from environment / .env file.
-    Subsequent calls return the same cached object.
-
-    In tests, call ``get_settings.cache_clear()`` to reset.
+    Return application settings instance read from environment / .env file.
     """
     return Settings()
+

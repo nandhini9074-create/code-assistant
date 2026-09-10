@@ -37,6 +37,17 @@ class ChunkDeduplicationStage:
                 else:
                     chunk.is_new = True
                     new_count += 1
+                    
+                    # For webhooks, log the specific new chunk content so the user can see exactly what changed
+                    if str(context.source) == "TriggerSource.WEBHOOK" or str(context.source) == "webhook":
+                        preview = chunk.code[:200] + "..." if len(chunk.code) > 200 else chunk.code
+                        logger.info(
+                            "webhook_chunk_changed",
+                            file=file.file_path,
+                            chunk_hash=chunk.chunk_hash,
+                            chunk_type=chunk.chunk_type,
+                            content_preview=preview
+                        )
 
         logger.info(
             "stage_7_chunk_deduplication_completed",

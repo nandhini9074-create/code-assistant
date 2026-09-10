@@ -30,29 +30,50 @@ class GitHubClient:
     """
     Base HTTP client for GitHub REST API calls.
     Handles retries, rate limits, and common error mapping.
+    Ensures httpx.AsyncClient is always bound to the current running event loop.
     """
 
     def __init__(self) -> None:
         settings = get_settings()
         self.base_url = settings.github_api_base_url
-        
-        headers = {
-            "Accept": GITHUB_ACCEPT_JSON,
-            "X-GitHub-Api-Version": GITHUB_API_VERSION,
-        }
-        
-        if settings.github_token:
-            headers["Authorization"] = f"Bearer {settings.github_token}"
-            
-        self.client = httpx.AsyncClient(
-            base_url=self.base_url,
-            headers=headers,
-            timeout=httpx.Timeout(30.0),
-        )
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._client: httpx.AsyncClient | None = None
+
+    def _get_client(self) -> httpx.AsyncClient:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if self._client is None or self._loop != current_loop or self._client.is_closed:
+            settings = get_settings()
+            headers = {
+                "Accept": GITHUB_ACCEPT_JSON,
+                "X-GitHub-Api-Version": GITHUB_API_VERSION,
+            }
+            if settings.github_token:
+                headers["Authorization"] = f"Bearer {settings.github_token}"
+
+            self.base_url = settings.github_api_base_url
+            self._client = httpx.AsyncClient(
+                base_url=self.base_url,
+                headers=headers,
+                timeout=httpx.Timeout(30.0),
+            )
+            self._loop = current_loop
+
+        return self._client
+
+    @property
+    def client(self) -> httpx.AsyncClient:
+        return self._get_client()
 
     async def close(self) -> None:
         """Close the underlying HTTP client."""
-        await self.client.aclose()
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+            self._client = None
+            self._loop = None
 
     async def request(
         self,

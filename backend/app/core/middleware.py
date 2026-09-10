@@ -169,6 +169,27 @@ async def unhandled_exception_handler(
     )
 
 
+from starlette.requests import ClientDisconnect
+
+
+async def client_disconnect_exception_handler(
+    request: Request,
+    exc: ClientDisconnect,
+) -> JSONResponse:
+    """Handle client disconnections (e.g. GitHub/ngrok socket reset) gracefully."""
+    logger.info("client_disconnected", path=str(request.url.path), method=request.method)
+    return JSONResponse(
+        status_code=499,
+        content={
+            "success": False,
+            "error": {
+                "code": "CLIENT_DISCONNECTED",
+                "message": "Client disconnected before request completed.",
+            },
+        },
+    )
+
+
 # Registration Helper
 
 def register_middleware(app: FastAPI) -> None:
@@ -181,5 +202,7 @@ def register_middleware(app: FastAPI) -> None:
     app.add_middleware(RequestContextMiddleware)
 
     # Exception handlers
+    app.add_exception_handler(ClientDisconnect, client_disconnect_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(CodeExplorerException, code_explorer_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
+

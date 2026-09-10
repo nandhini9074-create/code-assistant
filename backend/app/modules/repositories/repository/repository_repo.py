@@ -42,14 +42,18 @@ class RepositoryRepository:
         return result.scalar_one_or_none()
 
     async def get_by_full_name(self, full_name: str) -> Repository | None:
-        """Get repository by full name or name."""
+        """Get repository by full name (owner/repo) or by matching URL."""
+        # full_name is "owner/repo" from GitHub. Extract the repo slug for name comparison.
+        slug = full_name.split("/")[-1] if "/" in full_name else full_name
         stmt = select(Repository).where(
-            (Repository.repo_name == full_name) | 
-            (Repository.repo_url.endswith(full_name)) |
-            (Repository.repo_url.endswith(f"{full_name}.git"))
+            (Repository.repo_name == slug) |
+            (Repository.repo_url.endswith(f"/{full_name}")) |
+            (Repository.repo_url.endswith(f"/{full_name}.git"))
         )
         result = await self.session.execute(stmt)
-        return result.scalar_one_or_none()
+        # Use first() instead of scalar_one_or_none() to avoid MultipleResultsFound
+        # when the broad OR accidentally matches more than one row.
+        return result.scalars().first()
 
     async def list_all(self, limit: int = 100, offset: int = 0) -> Sequence[Repository]:
         """List repositories."""

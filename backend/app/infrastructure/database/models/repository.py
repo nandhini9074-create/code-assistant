@@ -8,7 +8,7 @@ PostgreSQL source of truth for repository identity, status, and indexing state.
 from typing import TYPE_CHECKING
 import uuid
 
-from sqlalchemy import Boolean, Index, String, Text
+from sqlalchemy import Boolean, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -43,6 +43,7 @@ class Repository(Base, TimestampMixin):
     access_token_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     qdrant_collection_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_indexed_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    github_webhook_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Relationships
     ingestion_jobs: Mapped[list["IngestionJob"]] = relationship(  # noqa: F821

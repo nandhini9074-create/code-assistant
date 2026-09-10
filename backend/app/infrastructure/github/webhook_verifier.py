@@ -24,7 +24,11 @@ def verify_webhook_payload(payload_body: bytes, signature_header: str) -> None:
     settings = get_settings()
     secret = settings.github_webhook_secret
     
+    from app.core.logging import get_logger
+    logger = get_logger(__name__)
+    
     if not secret:
+        logger.error("webhook_secret_not_configured")
         from app.core.exceptions import ConfigurationError
         raise ConfigurationError(
             "GITHUB_WEBHOOK_SECRET is not configured.", 

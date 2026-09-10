@@ -31,13 +31,22 @@ async def github_webhook(
     Verifies HMAC-SHA256 signature, checks idempotency, and enqueues ingestion.
     """
     logger.info("received_github_webhook", event_type=x_github_event, delivery_id=x_github_delivery)
-    raw_body = await request.body()
+    
+    from starlette.requests import ClientDisconnect
+    try:
+        raw_body = await request.body()
+    except ClientDisconnect:
+        raw_body = getattr(request, "_body", b"")
+        if not raw_body:
+            logger.warning("github_webhook_client_disconnected_early", delivery_id=x_github_delivery)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client disconnected before payload body transfer completed.")
 
     # HMAC signature verification
     try:
         verify_webhook_payload(raw_body, x_hub_signature_256)
     except WebhookVerificationError as exc:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc))
+
 
     # Parse and process
     import json

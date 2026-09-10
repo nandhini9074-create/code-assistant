@@ -9,12 +9,17 @@ from typing import Sequence
 
 import uuid
 
+from app.config import get_settings
 from app.core.enums import RepositoryStatus
 from app.core.exceptions import RepositoryAlreadyExistsError, RepositoryNotFoundError
 from app.core.logging import get_logger
 from app.infrastructure.database.models.repository import Repository
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
-from app.modules.repositories.schemas.repository_schema import CreateRepositoryRequest, UpdateRepositoryRequest
+from app.modules.repositories.schemas.repository_schema import (
+    CreateRepositoryRequest,
+    RepositoryResponse,
+    UpdateRepositoryRequest,
+)
 from app.modules.repositories.validators.github_url_validator import validate_and_parse_github_url
 from app.shared.types.repo_types import RepoId
 
@@ -34,7 +39,32 @@ class RepositoryService:
 
     async def register_repository(self, request: CreateRepositoryRequest) -> Repository:
         """
-        Validate URL, check for duplicates, register a new repository, and auto-trigger initial indexing.
+        Validate URL, check for duplicates, register a new repository,
+        auto-create a GitHub webhook, and trigger initial indexing.
+
+        Returns a Repository ORM instance. Callers that need webhook_configured
+        should use register_repository_with_response() instead.
+        """
+        repo, _, _ = await self._register_repository_internal(request)
+        return repo
+
+    async def register_repository_with_response(self, request: CreateRepositoryRequest) -> RepositoryResponse:
+        """
+        Same as register_repository but returns a RepositoryResponse with
+        webhook_configured and webhook_error populated.
+        """
+        repo, webhook_configured, webhook_error = await self._register_repository_internal(request)
+        response = RepositoryResponse.model_validate(repo)
+        response.webhook_configured = webhook_configured
+        response.webhook_error = webhook_error
+        return response
+
+    async def _register_repository_internal(
+        self,
+        request: CreateRepositoryRequest,
+    ) -> tuple[Repository, bool, str | None]:
+        """
+        Core registration logic. Returns (repo, webhook_configured, safe_error_msg).
         """
         logger.info("repository_registration_started", url=request.repo_url, branch=request.branch)
         try:
@@ -75,8 +105,18 @@ class RepositoryService:
         
         created_repo = await self.repo.create(repo_record)
         logger.info("repository_registered_successfully", repo_id=str(created_repo.id), full_name=full_name, collection=collection_name)
-        
-        # Auto-trigger initial ingestion pipeline
+
+        # --- Step 5: Auto-create GitHub webhook ---
+        webhook_configured = False
+        webhook_error: str | None = None
+        webhook_configured, webhook_error = await self._setup_github_webhook(
+            repo_id=str(created_repo.id),
+            owner=owner,
+            repo_name=name,
+            pat_token=request.pat_token,
+        )
+
+        # --- Step 6: Auto-trigger initial ingestion pipeline ---
         if self.job_repo is not None:
             try:
                 from app.core.enums import TriggerSource, JobStatus
@@ -103,7 +143,96 @@ class RepositoryService:
             except Exception as e:
                 logger.error("failed_to_auto_trigger_ingestion", repo_id=str(created_repo.id), error=str(e), exc_info=e)
 
-        return created_repo
+        return created_repo, webhook_configured, webhook_error
+
+    async def _setup_github_webhook(
+        self,
+        repo_id: str,
+        owner: str,
+        repo_name: str,
+        pat_token: str | None,
+    ) -> tuple[bool, str | None]:
+        """
+        Attempt to create a GitHub webhook for the repository.
+
+        Returns (success: bool, safe_error_message: str | None).
+        Never raises — webhook failure is non-fatal for registration.
+        Never logs PAT or webhook secret.
+        """
+        from app.core.exceptions import GitHubWebhookError
+        from app.infrastructure.github.hooks_client import create_webhook
+
+        settings = get_settings()
+
+        if not pat_token:
+            logger.info(
+                "github_webhook_setup_skipped",
+                repo_id=repo_id,
+                reason="No PAT provided — cannot authenticate to GitHub Hooks API",
+            )
+            return False, "No GitHub token provided; webhook must be configured manually."
+
+        if not settings.github_webhook_secret:
+            logger.warning(
+                "github_webhook_setup_skipped",
+                repo_id=repo_id,
+                reason="GITHUB_WEBHOOK_SECRET is not configured",
+            )
+            return False, "Webhook secret is not configured on the server."
+
+        if "localhost" in settings.app_base_url or "127.0.0.1" in settings.app_base_url:
+            logger.warning(
+                "github_webhook_setup_skipped",
+                repo_id=repo_id,
+                reason="APP_BASE_URL is localhost — GitHub cannot reach it",
+                app_base_url=settings.app_base_url,
+            )
+            return False, (
+                f"APP_BASE_URL is set to '{settings.app_base_url}' which is not publicly reachable. "
+                "Configure APP_BASE_URL to your public/ngrok URL."
+            )
+
+        payload_url = settings.webhook_payload_url
+
+        try:
+            webhook_id = await create_webhook(
+                owner=owner,
+                repo=repo_name,
+                payload_url=payload_url,
+                secret=settings.github_webhook_secret,
+                github_token=pat_token,   # NOT logged
+            )
+            # Persist the webhook ID so we can delete it later
+            await self.repo.update_fields(repo_id, {"github_webhook_id": webhook_id})
+            logger.info(
+                "github_webhook_id_stored",
+                repo_id=repo_id,
+                webhook_id=webhook_id,
+            )
+            return True, None
+
+        except GitHubWebhookError as exc:
+            logger.warning(
+                "github_webhook_creation_failed",
+                repo_id=repo_id,
+                owner=owner,
+                repo_name=repo_name,
+                status_code=exc.details.get("github_status_code"),
+                reason=exc.safe_reason,
+                # NOT logged: pat_token, webhook secret
+            )
+            return False, exc.safe_reason
+
+        except Exception as exc:
+            logger.error(
+                "github_webhook_creation_unexpected_error",
+                repo_id=repo_id,
+                owner=owner,
+                repo_name=repo_name,
+                error=str(exc),
+                exc_info=exc,
+            )
+            return False, "An unexpected error occurred while configuring the GitHub webhook."
 
     async def get_repository(self, repo_id: RepoId | str) -> Repository:
         """
@@ -154,11 +283,48 @@ class RepositoryService:
         return repo
 
     async def delete_repository(self, repo_id: RepoId | str) -> None:
-        """Delete repository and attempt to drop its Qdrant collection."""
+        """Delete repository: remove GitHub webhook, drop Qdrant collection, delete DB record."""
         logger.info("repository_deletion_started", repo_id=str(repo_id))
         repo = await self.get_repository(repo_id)
-        
-        # 1. Attempt to drop Qdrant collection
+
+        # --- Step 1: Delete GitHub webhook if we have one ---
+        if repo.github_webhook_id is not None and repo.access_token_ref:
+            owner = repo.owner
+            repo_name = repo.repo_name
+            webhook_id = repo.github_webhook_id
+            logger.info(
+                "github_webhook_deletion_started",
+                repo_id=str(repo_id),
+                owner=owner,
+                repo_name=repo_name,
+                webhook_id=webhook_id,
+            )
+            try:
+                from app.infrastructure.github.hooks_client import delete_webhook
+                await delete_webhook(
+                    owner=owner,
+                    repo=repo_name,
+                    webhook_id=webhook_id,
+                    github_token=repo.access_token_ref,  # NOT logged
+                )
+            except Exception as exc:
+                # Non-fatal: log and continue with local deletion
+                logger.warning(
+                    "github_webhook_deletion_failed",
+                    repo_id=str(repo_id),
+                    webhook_id=webhook_id,
+                    error=str(exc),
+                    reason="Local repository will still be deleted",
+                )
+        elif repo.github_webhook_id is not None and not repo.access_token_ref:
+            logger.warning(
+                "github_webhook_deletion_skipped",
+                repo_id=str(repo_id),
+                webhook_id=repo.github_webhook_id,
+                reason="No token available to authenticate with GitHub",
+            )
+
+        # --- Step 2: Drop Qdrant collection ---
         try:
             logger.info("qdrant_collection_deletion_started", collection=repo.qdrant_collection_name)
             from app.infrastructure.qdrant.client import get_qdrant_client
@@ -168,6 +334,6 @@ class RepositoryService:
         except Exception as e:
             logger.warning("qdrant_collection_deletion_failed", collection=repo.qdrant_collection_name, error=str(e))
             
-        # 2. Delete from DB (cascades to jobs, chunks, etc if configured)
+        # --- Step 3: Delete from DB (cascades to jobs, chunks, etc) ---
         await self.repo.delete(repo_id)
         logger.info("repository_deleted_successfully", repo_id=str(repo_id))

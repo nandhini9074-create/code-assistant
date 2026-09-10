@@ -229,6 +229,38 @@ class GitHubRateLimitError(GitHubAPIError, RateLimitError):
     http_status = 429
 
 
+class GitHubWebhookError(GitHubAPIError):
+    """GitHub Hooks API returned an error (permissions, duplicate, invalid config, etc.)."""
+
+    code = "GITHUB_WEBHOOK_ERROR"
+    http_status = 502
+
+    # Safe user-facing messages keyed by HTTP status code
+    _STATUS_MESSAGES: dict[int, str] = {
+        401: "GitHub token is invalid or expired.",
+        403: "GitHub token does not have permission to manage repository webhooks. "
+             "Ensure the token has 'admin:repo_hook' scope (classic PAT) or "
+             "Webhooks write permission (fine-grained PAT).",
+        404: "Repository not found or the token cannot access it.",
+        422: "Invalid webhook configuration or a duplicate webhook already exists.",
+        429: "GitHub API rate limit exceeded. Please retry later.",
+    }
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        endpoint: str | None = None,
+    ) -> None:
+        super().__init__(message, status_code, endpoint=endpoint)
+        # Provide a safe, human-readable reason based on HTTP status
+        self.safe_reason: str = self._STATUS_MESSAGES.get(
+            status_code or 0,
+            "An unexpected error occurred while configuring the GitHub webhook.",
+        )
+
+
 class EmbeddingError(CodeExplorerException):
     """Jina embedding API returned an error or timed out."""
 

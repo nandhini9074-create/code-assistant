@@ -33,8 +33,7 @@ async def register_repository(
 ) -> RepositoryResponse:
     """Register a new GitHub repository for indexing."""
     try:
-        repo = await service.register_repository(request)
-        return RepositoryResponse.model_validate(repo)
+        return await service.register_repository_with_response(request)
     except RepositoryAlreadyExistsError as exc:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
 

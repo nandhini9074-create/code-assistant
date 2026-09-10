@@ -33,6 +33,8 @@ class RepositoryResponse(BaseSchema):
     status: str
     current_commit_sha: str | None
     qdrant_collection: str
+    webhook_configured: bool = False
+    webhook_error: str | None = None  # Safe human-readable message only — never contains PAT or secret
     
     model_config = ConfigDict(from_attributes=True)
 
