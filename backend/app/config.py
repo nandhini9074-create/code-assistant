@@ -116,7 +116,7 @@ class QdrantSettings(BaseSettings):
         alias="QDRANT_URL",
     )
     qdrant_api_key: str | None = Field(default=None, alias="QDRANT_API_KEY")
-    qdrant_timeout: float = Field(default=30.0, alias="QDRANT_TIMEOUT")
+    qdrant_timeout: int = Field(default=30, alias="QDRANT_TIMEOUT")
 
 
 class RedisSettings(BaseSettings):

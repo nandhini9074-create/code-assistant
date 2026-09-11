@@ -83,8 +83,11 @@ def get_ingestion_service(
     from app.modules.ingestion.pipeline.checkpoint_update import CheckpointUpdateStage
     from app.modules.ingestion.service.ingestion_service import IngestionService
 
+    from app.modules.webhooks.repository.webhook_event_repo import WebhookEventRepository
+
     file_repo = FileHashRepository(session)
     chunk_repo = ChunkRegistryRepository(session)
+    event_repo = WebhookEventRepository(session)
 
     return IngestionService(
         RequestValidationStage(repo_repo),
@@ -98,5 +101,5 @@ def get_ingestion_service(
         EmbeddingGenerationStage(),
         VectorUpsertStage(repo_repo, chunk_repo),
         DeletedChunkCleanupStage(repo_repo, file_repo, chunk_repo),
-        CheckpointUpdateStage(job_repo),
+        CheckpointUpdateStage(job_repo, event_repo),
     )

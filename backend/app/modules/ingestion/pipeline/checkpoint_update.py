@@ -7,13 +7,19 @@ from app.core.enums import JobStatus
 from app.core.logging import get_logger
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
+from app.modules.webhooks.repository.webhook_event_repo import WebhookEventRepository
 
 logger = get_logger(__name__)
 
 
 class CheckpointUpdateStage:
-    def __init__(self, job_repo: IngestionJobRepository) -> None:
+    def __init__(
+        self,
+        job_repo: IngestionJobRepository,
+        event_repo: WebhookEventRepository | None = None,
+    ) -> None:
         self.job_repo = job_repo
+        self.event_repo = event_repo
 
     async def execute(self, context: IngestionContext) -> None:
         """Updates job progress in database."""
@@ -39,6 +45,12 @@ class CheckpointUpdateStage:
             status=final_status,
             stage="pipeline_complete",
         )
+
+        if self.event_repo is not None and context.job_id:
+            try:
+                await self.event_repo.mark_processed_by_job_id(context.job_id)
+            except Exception as exc:
+                logger.warning("failed_to_mark_webhook_event_processed", job_id=context.job_id, error=str(exc))
         logger.info(
             "stage_12_checkpoint_update_completed",
             job_id=context.job_id,

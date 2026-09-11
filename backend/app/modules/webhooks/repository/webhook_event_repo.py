@@ -42,3 +42,13 @@ class WebhookEventRepository:
         stmt = select(WebhookEvent.id).where(WebhookEvent.delivery_id == delivery_id)
         result = await self.session.execute(stmt)
         return result.first() is not None
+
+    async def mark_processed_by_job_id(self, job_id: uuid.UUID | str) -> None:
+        """Mark all webhook events associated with an ingestion job as processed."""
+        uid = uuid.UUID(job_id) if isinstance(job_id, str) else job_id
+        stmt = select(WebhookEvent).where(WebhookEvent.ingestion_job_id == uid)
+        result = await self.session.execute(stmt)
+        events = result.scalars().all()
+        for event in events:
+            event.processed = True
+        await self.session.commit()

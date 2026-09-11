@@ -100,15 +100,21 @@ class IngestionService:
                 logger.info("pipeline_stage_completed", stage_number=f"{idx}/{total_stages}", stage_name=stage_name, job_id=job_id)
                 
             failed_files_count = len(context.failed_files)
-            successful_files = sum(1 for f in context.files if f.fetch_status == "success" or f.fetch_status.value == "success") if context.files else 0
+            successful_file_records = [f for f in context.files if getattr(f.fetch_status, "value", f.fetch_status) == "success"] if context.files else []
+            successful_files = len(successful_file_records)
+            processed_file_paths = [f.file_path for f in successful_file_records]
             indexed_chunks = sum(len(f.chunks) for f in context.files)
+            chunk_ids = [chunk.point_id for f in context.files for chunk in f.chunks if chunk.point_id]
+
             logger.info(
                 "pipeline_completed_successfully",
                 job_id=job_id,
                 repo_name=repo_name,
                 processed_files=successful_files,
+                processed_file_paths=processed_file_paths,
                 failed_files=failed_files_count,
                 indexed_chunks=indexed_chunks,
+                chunk_ids=chunk_ids,
                 deleted_files=len(context.deleted_files),
             )
             return PipelineResult(
@@ -116,6 +122,8 @@ class IngestionService:
                 job_id=job_id,
                 processed_files_count=successful_files,
                 indexed_chunks_count=indexed_chunks,
+                chunk_ids=chunk_ids,
+                processed_file_paths=processed_file_paths,
                 failed_files_count=failed_files_count,
             )
         except Exception as exc:

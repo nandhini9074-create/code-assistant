@@ -32,6 +32,7 @@ from app.modules.ingestion.repository.file_hash_repo import FileHashRepository
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
 from app.modules.ingestion.service.ingestion_service import IngestionService
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
+from app.modules.webhooks.repository.webhook_event_repo import WebhookEventRepository
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
@@ -63,6 +64,7 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
             job_repo = IngestionJobRepository(session)
             file_repo = FileHashRepository(session)
             chunk_repo = ChunkRegistryRepository(session)
+            event_repo = WebhookEventRepository(session)
             
             # Instantiate stages
             val_stage = RequestValidationStage(repo_repo)
@@ -76,7 +78,7 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
             embed_stage = EmbeddingGenerationStage()
             upsert_stage = VectorUpsertStage(repo_repo, chunk_repo)
             cleanup_stage = DeletedChunkCleanupStage(repo_repo, file_repo, chunk_repo)
-            checkpoint_stage = CheckpointUpdateStage(job_repo)
+            checkpoint_stage = CheckpointUpdateStage(job_repo, event_repo)
             
             service = IngestionService(
                 val_stage,
@@ -114,7 +116,9 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
                 "status": "success" if result.success else "failed",
                 "job_id": result.job_id,
                 "processed_files": result.processed_files_count,
+                "processed_file_paths": result.processed_file_paths,
                 "chunks_indexed": result.indexed_chunks_count,
+                "chunk_ids": result.chunk_ids,
                 "error": result.error_message,
             }
     finally:

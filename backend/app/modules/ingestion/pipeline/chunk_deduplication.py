@@ -4,6 +4,7 @@ Pipeline stage: Chunk deduplication.
 """
 
 from app.core.logging import get_logger
+from app.infrastructure.qdrant.vector_repository import generate_point_id
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
 
@@ -36,6 +37,7 @@ class ChunkDeduplicationStage:
                     reused_count += 1
                 else:
                     chunk.is_new = True
+                    chunk.point_id = generate_point_id(context.repo_id, file.file_path, chunk.chunk_hash)
                     new_count += 1
                     
                     # For webhooks, log the specific new chunk content so the user can see exactly what changed
@@ -44,6 +46,7 @@ class ChunkDeduplicationStage:
                         logger.info(
                             "webhook_chunk_changed",
                             file=file.file_path,
+                            chunk_id=chunk.point_id,
                             chunk_hash=chunk.chunk_hash,
                             chunk_type=chunk.chunk_type,
                             content_preview=preview

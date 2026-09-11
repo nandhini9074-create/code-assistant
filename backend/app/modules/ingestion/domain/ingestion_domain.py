@@ -48,6 +48,8 @@ class PipelineResult:
     job_id: str
     processed_files_count: int = 0
     indexed_chunks_count: int = 0
+    chunk_ids: list[str] = field(default_factory=list)
+    processed_file_paths: list[str] = field(default_factory=list)
     failed_files_count: int = 0
     error_message: str | None = None
 
