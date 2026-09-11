@@ -181,8 +181,17 @@ class HybridSearch:
         # ---------------------------------------------------------
         # 6. Hybrid Merge: merged_results = dense_results + sparse_results
         # Both sources participate. If either unavailable, continue with other.
+        # Ensure results are only from the selected collection.
         # ---------------------------------------------------------
         merged_results = dense_results + sparse_results
+        if context.qdrant_collection:
+            merged_results = [
+                chunk for chunk in merged_results
+                if chunk.metadata.get("_qdrant_collection") == context.qdrant_collection
+                or not chunk.metadata.get("_qdrant_collection")
+            ]
+            for chunk in merged_results:
+                chunk.metadata["_qdrant_collection"] = context.qdrant_collection
         print(f"MERGED RESULTS: {len(merged_results)}")
 
         # ---------------------------------------------------------

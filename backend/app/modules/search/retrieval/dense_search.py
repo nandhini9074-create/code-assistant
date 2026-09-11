@@ -1,7 +1,7 @@
 """
 app/modules/search/retrieval/dense_search.py
 
-Dense vector retrieval using the pre-computed Voyage query embedding
+Dense vector retrieval using the pre-computed Jina query embedding
 and Qdrant similarity search.
 
 The current architecture uses multiple Qdrant collections.
@@ -70,63 +70,36 @@ class DenseSearch:
         # 3. DEBUG
         # ---------------------------------------------------------
         print("\n========== DENSE SEARCH DEBUG ==========")
-
-        print(
-            "QDRANT SEARCH MODE:",
-            "ALL COLLECTIONS"
-            if context.qdrant_collection is None
-            else context.qdrant_collection,
-        )
-
         print("REQUEST REPOSITORY NAME:", context.repo_name)
-
+        print("SELECTED COLLECTION:", context.qdrant_collection)
+        print("DENSE SEARCH: ONLY selected collection")
         print(
             "QUERY VECTOR TYPE:",
             type(context.query_vector),
         )
-
         print(
             "QUERY VECTOR DIMENSION:",
             len(context.query_vector),
         )
-
         print(
             "QUERY VECTOR FIRST 5 VALUES:",
             context.query_vector[:5],
         )
-
         print(
             "QUERY VECTOR EMPTY:",
             not bool(context.query_vector),
         )
-
         print("========================================\n")
 
         # ---------------------------------------------------------
         # 4. Search Qdrant
         # ---------------------------------------------------------
-        #
-        # IMPORTANT:
-        #
-        # Do NOT pass:
-        #
-        #     collection_name=context.qdrant_collection
-        #
-        # because qdrant_collection is None for global search.
-        #
-        # Do NOT pass repo_name as a filter either.
-        #
-        # The requirement is to search ALL repository collections.
-        #
-        # search_vectors() will enumerate the collections and
-        # perform the vector search in each one.
-        # ---------------------------------------------------------
-
-        print(
-            "DENSE SEARCH: Searching ALL Qdrant collections..."
-        )
+        if not context.qdrant_collection:
+            print("DENSE SEARCH: No selected collection")
+            return []
 
         scored_points = await search_vectors(
+            collection_name=context.qdrant_collection,
             query_vector=context.query_vector,
             limit=limit,
         )

@@ -23,13 +23,14 @@ This stage does not depend on PostgreSQL or RepositoryIdentificationStage.
 from __future__ import annotations
 
 from app.core.logging import get_logger
+from app.infrastructure.qdrant.client import get_qdrant_client
 from app.modules.search.domain.search_domain import SearchContext
 
 logger = get_logger(__name__)
 
 
 class CollectionSelectionStage:
-    """Selects the Qdrant search mode for the current search."""
+    """Selects the Qdrant collection for the current search repository."""
 
     async def execute(self, context: SearchContext) -> None:
         """
@@ -38,17 +39,12 @@ class CollectionSelectionStage:
         Behaviour:
         - Skip when an earlier stage triggered an early exit.
         - Validate that the search request contains a repository name.
-        - Do NOT select a hardcoded Qdrant collection.
-        - Set qdrant_collection to None to indicate global search.
-        - The retrieval layer will enumerate all Qdrant collections.
-
-        The repository name is retained in the SearchContext as request
-        metadata, but it is NOT used as a Qdrant filter for global search.
+        - Retrieve all Qdrant collection names.
+        - Normalize the requested repo name by replacing '-' with '_'.
+        - Find the collection whose name contains the normalized repo name.
+        - Set context.qdrant_collection to the selected collection.
+        - If no collection matches, trigger EARLY_EXIT_A repository not found.
         """
-
-        # ---------------------------------------------------------
-        # Skip if an earlier stage already stopped the pipeline.
-        # ---------------------------------------------------------
 
         if context.early_exit:
             logger.info(
@@ -58,46 +54,62 @@ class CollectionSelectionStage:
             )
             return
 
-        # ---------------------------------------------------------
-        # Validate repository name.
-        # ---------------------------------------------------------
-
         if not context.repo_name:
             logger.error(
                 "collection_selection_missing_repo_name",
             )
-
             context.early_exit = "EARLY_EXIT_A"
             context.early_exit_message = (
                 "Repository name is required for this search."
             )
             return
 
-        # ---------------------------------------------------------
-        # Global Qdrant search.
-        #
-        # Do NOT use:
-        #
-        #     context.qdrant_collection = "code_chunks"
-        #
-        # because there is no shared collection.
-        #
-        # None means the retrieval layer should search ALL
-        # repository-specific Qdrant collections.
-        # ---------------------------------------------------------
+        print(f"REQUEST REPOSITORY NAME: {context.repo_name}")
+        normalized_repo_name = context.repo_name.replace("-", "_")
+        print(f"NORMALIZED REPOSITORY NAME: {normalized_repo_name}")
 
-        context.qdrant_collection = None
+        client = get_qdrant_client()
+        try:
+            collections_response = await client.get_collections()
+            collection_names = [
+                collection.name
+                for collection in collections_response.collections
+            ]
+        except Exception as exc:
+            logger.exception(
+                "collection_selection_get_collections_failed",
+                error=str(exc),
+            )
+            collection_names = []
+
+        selected_collection = None
+        for coll in collection_names:
+            if normalized_repo_name in coll:
+                selected_collection = coll
+                break
+
+        if not selected_collection:
+            target = normalized_repo_name.split("/")[-1].lower()
+            for coll in collection_names:
+                if normalized_repo_name.lower() in coll.lower() or target in coll.lower():
+                    selected_collection = coll
+                    break
+
+        if not selected_collection:
+            logger.warning("repository_not_found", identifier=context.repo_name)
+            context.early_exit = "EARLY_EXIT_A"
+            context.early_exit_message = (
+                f"Repository '{context.repo_name}' could not be found. "
+                "Please clarify which repository should be analysed."
+            )
+            return
+
+        context.qdrant_collection = selected_collection
+        print(f"SELECTED COLLECTION: {selected_collection}")
 
         logger.info(
-            "global_collection_search_selected",
+            "repository_collection_selected",
             repo_name=context.repo_name,
-        )
-
-        print(
-            "[SEARCH] Qdrant search mode: ALL COLLECTIONS"
-        )
-
-        print(
-            f"[SEARCH] Request repo_name: "
-            f"{context.repo_name}"
+            normalized_repo_name=normalized_repo_name,
+            collection=selected_collection,
         )

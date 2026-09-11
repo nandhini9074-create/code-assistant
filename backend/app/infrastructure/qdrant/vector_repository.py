@@ -216,14 +216,10 @@ async def search_vectors(
     if collection_name:
         # Specific collection search
         collections = [collection_name]
-
         search_mode = "SINGLE_COLLECTION"
-
     else:
-        # Global search across every repository collection
-        collections = await get_all_collections()
-
-        search_mode = "ALL_COLLECTIONS"
+        print("QDRANT SEARCH: ALL_COLLECTIONS mode disabled. Specific collection required.")
+        return []
 
     # ------------------------------------------------------------
     # No collections available

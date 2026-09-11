@@ -183,7 +183,7 @@ class ChunkingError(IngestionError):
 # 429 Rate Limited
 
 class RateLimitError(CodeExplorerException):
-    """External API rate limit hit (GitHub, Voyage, Qwen)."""
+    """External API rate limit hit (GitHub, Jina, Qwen)."""
 
     http_status = 429
     code = "RATE_LIMIT_ERROR"
@@ -230,7 +230,7 @@ class GitHubRateLimitError(GitHubAPIError, RateLimitError):
 
 
 class EmbeddingError(CodeExplorerException):
-    """Voyage embedding API returned an error or timed out."""
+    """Jina embedding API returned an error or timed out."""
 
     http_status = 502
     code = "EMBEDDING_ERROR"

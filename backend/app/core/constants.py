@@ -38,10 +38,10 @@ CHUNK_MAX_RAW_CODE_CHARS: int = 8_000
 
 # Embedding
 
-# Default Voyage embedding batch size
+# Default Jina embedding batch size
 EMBEDDING_BATCH_SIZE: int = 128
 
-# Default vector dimension (voyage-code-3)
+# Default vector dimension (jina-embedding-2-code-en)
 DEFAULT_EMBEDDING_DIMENSION: int = 1024
 
 # Maximum retries for embedding API calls

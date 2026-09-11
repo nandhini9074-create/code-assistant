@@ -9,7 +9,7 @@ Reciprocal Rank Fusion (RRF). This reranker applies lightweight
 code-search-specific signals on top of the RRF ranking.
 
 This is intentionally deterministic and does not claim to be an
-ML-based reranker such as Cohere Rerank or Voyage Rerank.
+ML-based reranker such as Cohere Rerank or Jina Rerank.
 """
 
 from __future__ import annotations

@@ -63,33 +63,20 @@ class SparseSearch:
                 return []
 
             print("\n========== SPARSE SEARCH DEBUG ==========")
-            print("QDRANT SEARCH MODE:", context.qdrant_collection or "ALL REPOSITORY COLLECTIONS")
             print("REQUEST REPOSITORY NAME:", context.repo_name)
+            print("SELECTED COLLECTION:", context.qdrant_collection)
+            print("SPARSE SEARCH: ONLY selected collection")
             print("SEARCH TERMS:", terms)
             print("SEARCH PRIORITY: function_name > class_name > code")
             print("LIMIT:", limit)
             print("=========================================\n")
 
-            client = get_qdrant_client()
-
-            if context.qdrant_collection:
-                collections = [context.qdrant_collection]
-            else:
-                collections_response = await client.get_collections()
-                collections = [
-                    collection.name
-                    for collection in collections_response.collections
-                    if collection.name.startswith("repo_")
-                ]
-
-            print(
-                f"SPARSE SEARCH: Found "
-                f"{len(collections)} repository Qdrant collections"
-            )
-
-            if not collections:
-                print("SPARSE SEARCH: No repository Qdrant collections found")
+            if not context.qdrant_collection:
+                print("SPARSE SEARCH: No selected collection")
                 return []
+
+            client = get_qdrant_client()
+            collections = [context.qdrant_collection]
 
             chunks: list[RetrievedChunk] = []
 
