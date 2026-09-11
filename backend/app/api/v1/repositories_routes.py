@@ -1,3 +1,4 @@
+
 """
 app/api/v1/repositories_routes.py
 Repository management API routes.
@@ -26,7 +27,11 @@ logger = get_logger(__name__)
 router = APIRouter(prefix="/repositories", tags=["Repositories"])
 
 
-@router.post("/", response_model=RepositoryResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=RepositoryResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 async def register_repository(
     request: CreateRepositoryRequest,
     service: RepositoryService = Depends(get_repository_service),
@@ -35,7 +40,10 @@ async def register_repository(
     try:
         return await service.register_repository_with_response(request)
     except RepositoryAlreadyExistsError as exc:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        )
 
 
 @router.get("/", response_model=RepositoryListResponse)

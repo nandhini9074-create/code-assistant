@@ -2,7 +2,6 @@
 app/infrastructure/qdrant/client.py
 Async Qdrant client lifecycle management for Code Explorer.
 """
-
 from __future__ import annotations
 
 import asyncio
@@ -11,9 +10,7 @@ from qdrant_client import AsyncQdrantClient
 
 from app.core.exceptions import QdrantError
 from app.core.logging import get_logger
-
 logger = get_logger(__name__)
-
 # Module-level singleton
 _qdrant_client: AsyncQdrantClient | None = None
 _qdrant_loop: asyncio.AbstractEventLoop | None = None
@@ -81,8 +78,6 @@ async def close_qdrant() -> None:
         _qdrant_client = None
         _qdrant_loop = None
         logger.info("qdrant_closed")
-
-
 def get_qdrant_client() -> AsyncQdrantClient:
     """
     Get the global Qdrant client instance, ensuring it is bound to the active event loop.

@@ -10,24 +10,18 @@ Provides:
 """
 
 from __future__ import annotations
-
 import time
 import traceback
 from typing import Any
 from uuid import uuid4
-
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-
 from app.core.exceptions import CodeExplorerException
 from app.core.logging import get_logger, set_request_id
 
 logger = get_logger(__name__)
-
-
-# Request ID + Timing Middleware
-
+# ── Request ID + Timing Middleware ────────────────────────────────────────────
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """
     Injects a unique request ID into each request and logs request/response
@@ -84,7 +78,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Error Response Builder
+# ── Error Response Builder ─────────────────────────────────────────────────────
 
 def _build_error_response(
     *,
@@ -110,7 +104,7 @@ def _build_error_response(
     return JSONResponse(status_code=status_code, content=body)
 
 
-# Exception Handlers
+# ── Exception Handlers ────────────────────────────────────────────────────────
 
 async def code_explorer_exception_handler(
     request: Request,

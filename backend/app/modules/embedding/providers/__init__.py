@@ -1,6 +1,5 @@
 """
-app/modules/embedding/providers/__init__.py
-Embedding provider registry.
+Embedding providers.
 """
 
 from app.modules.embedding.providers.jina_provider import JinaProvider

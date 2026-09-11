@@ -183,7 +183,7 @@ class ChunkingError(IngestionError):
 # 429 Rate Limited
 
 class RateLimitError(CodeExplorerException):
-    """External API rate limit hit (GitHub, Voyage, Qwen)."""
+    """External API rate limit hit (GitHub, Jina, Qwen)."""
 
     http_status = 429
     code = "RATE_LIMIT_ERROR"

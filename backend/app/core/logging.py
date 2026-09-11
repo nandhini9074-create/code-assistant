@@ -1,96 +1,67 @@
+
 """
 app/core/logging.py
-Structured logging configuration for Code Explorer.
 
-Uses structlog for JSON-structured logs with request-scoped context vars.
-Never logs secrets, API keys, or tokens.
+Centralized application logging configuration.
+
+Provides:
+- Console logging with color-aware rendering
+- File logging with rotating file handler
+- Structured logging using structlog
+- Request ID support via context vars
+- Secret redaction
 """
 
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import os
 import sys
-from contextvars import ContextVar
+from pathlib import Path
 from typing import Any
-from uuid import uuid4
 
 import structlog
 
-# Context Variables (per-request, async-safe)
 
-_request_id_var: ContextVar[str] = ContextVar("request_id", default="")
-_repo_id_var: ContextVar[str] = ContextVar("repo_id", default="")
-_job_id_var: ContextVar[str] = ContextVar("job_id", default="")
-_webhook_delivery_id_var: ContextVar[str] = ContextVar("webhook_delivery_id", default="")
+# ============================================================
+# LOG FILE CONFIGURATION
+# ============================================================
 
+BASE_DIR = Path(__file__).resolve().parents[2]
 
-def set_request_id(request_id: str | None = None) -> str:
-    """Set request ID in context. Generates a new UUID if not provided."""
-    rid = request_id or str(uuid4())
-    _request_id_var.set(rid)
-    return rid
+LOG_DIR = BASE_DIR / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+
+LOG_FILE = LOG_DIR / "app.log"
 
 
-def set_repo_id(repo_id: str) -> None:
-    """Bind repo_id to the current async context."""
-    _repo_id_var.set(repo_id)
+# ============================================================
+# REQUEST ID
+# ============================================================
 
-
-def set_job_id(job_id: str) -> None:
-    """Bind job_id to the current async context."""
-    _job_id_var.set(job_id)
-
-
-def set_webhook_delivery_id(delivery_id: str) -> None:
-    """Bind webhook delivery ID to the current async context."""
-    _webhook_delivery_id_var.set(delivery_id)
-
-
-def get_request_id() -> str:
-    return _request_id_var.get()
-
-
-def get_repo_id() -> str:
-    return _repo_id_var.get()
-
-
-def get_job_id() -> str:
-    return _job_id_var.get()
-
-
-def get_webhook_delivery_id() -> str:
-    return _webhook_delivery_id_var.get()
-
-
-# Context Injector Processor
-
-def _inject_context(
-    _logger: Any,
-    _method: str,
-    event_dict: dict[str, Any],
-) -> dict[str, Any]:
+def set_request_id(request_id: str) -> None:
     """
-    Structlog processor that injects async-safe context variables
-    (request_id, repo_id, job_id, webhook_delivery_id) into every log record.
+    Store the request ID in structlog context.
+
+    The request ID will automatically be included
+    in subsequent logs for the current request.
     """
-    if rid := _request_id_var.get():
-        event_dict["request_id"] = rid
-    if repo := _repo_id_var.get():
-        event_dict["repo_id"] = repo
-    if job := _job_id_var.get():
-        event_dict["job_id"] = job
-    if delivery := _webhook_delivery_id_var.get():
-        event_dict["webhook_delivery_id"] = delivery
-    return event_dict
+    structlog.contextvars.bind_contextvars(
+        request_id=request_id
+    )
 
 
-# Secret Scrubber
+# ============================================================
+# SECRET REDACTION
+# ============================================================
 
 _SECRET_KEYS: frozenset[str] = frozenset(
     {
         "api_key",
         "token",
+        "access_token",
+        "refresh_token",
         "secret",
         "password",
         "passwd",
@@ -122,46 +93,61 @@ def _scrub_secrets(
     return event_dict
 
 
-# Setup
+# ============================================================
+# CONFIGURE LOGGING
+# ============================================================
 
-def configure_logging(*, json_logs: bool | None = None, log_level: str = "INFO") -> None:
+def configure_logging(
+    *,
+    json_logs: bool | None = None,
+    log_level: str = "INFO",
+) -> None:
     """
     Configure structlog and standard library logging integration.
+
+    Sets up:
+    - Console handler (color-aware in dev, JSON in prod)
+    - Rotating file handler (always JSON for machine readability)
+    - Structlog processors with secret redaction and request ID support
     """
     if json_logs is None:
         json_logs = os.environ.get("APP_ENV", "development") == "production"
 
     level = getattr(logging, log_level.upper(), logging.INFO)
 
-    # Ensure stdout handles UTF-8 on Windows
-    if hasattr(sys.stdout, "reconfigure"):
-        try:
-            sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-        except Exception:
-            pass
+    # Ensure stdout/stderr handle UTF-8 on Windows
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
 
-    # Standard library logging handler
-    handler = logging.StreamHandler(sys.stdout)
-    handler.setLevel(level)
+    # --------------------------------------------------------
+    # Console handler
+    # --------------------------------------------------------
 
-    root_logger = logging.getLogger()
-    root_logger.setLevel(level)
-    root_logger.handlers = [handler]
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(level)
 
-    # Silence noisy third-party loggers
-    for noisy in ("httpx", "httpcore", "sqlalchemy.engine"):
-        logging.getLogger(noisy).setLevel(logging.WARNING)
+    # --------------------------------------------------------
+    # File handler (rotating)
+    # --------------------------------------------------------
 
-    # Ensure app & uvicorn loggers output at INFO level
-    logging.getLogger("app").setLevel(level)
-    logging.getLogger("uvicorn").setLevel(logging.INFO)
-    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
-    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+    file_handler = logging.handlers.RotatingFileHandler(
+        filename=LOG_FILE,
+        maxBytes=10 * 1024 * 1024,  # 10 MB
+        backupCount=5,
+        encoding="utf-8",
+    )
+    file_handler.setLevel(level)
 
-    # Shared processors
+    # --------------------------------------------------------
+    # Shared structlog processors
+    # --------------------------------------------------------
+
     shared_processors: list[Any] = [
         structlog.contextvars.merge_contextvars,
-        _inject_context,
         _scrub_secrets,
         structlog.stdlib.add_log_level,
         structlog.stdlib.add_logger_name,
@@ -170,11 +156,26 @@ def configure_logging(*, json_logs: bool | None = None, log_level: str = "INFO")
         structlog.processors.format_exc_info,
     ]
 
+    # --------------------------------------------------------
+    # Renderers
+    # --------------------------------------------------------
+
     if json_logs:
-        renderer: Any = structlog.processors.JSONRenderer()
+        console_renderer: Any = structlog.processors.JSONRenderer()
     else:
-        use_colors = sys.platform != "win32" or "WT_SESSION" in os.environ or "TERM" in os.environ
-        renderer = structlog.dev.ConsoleRenderer(colors=use_colors)
+        use_colors = (
+            sys.platform != "win32"
+            or "WT_SESSION" in os.environ
+            or "TERM" in os.environ
+        )
+        console_renderer = structlog.dev.ConsoleRenderer(colors=use_colors)
+
+    # File output is always JSON for machine readability
+    file_renderer: Any = structlog.processors.JSONRenderer()
+
+    # --------------------------------------------------------
+    # Structlog configuration
+    # --------------------------------------------------------
 
     structlog.configure(
         processors=[
@@ -186,16 +187,61 @@ def configure_logging(*, json_logs: bool | None = None, log_level: str = "INFO")
         cache_logger_on_first_use=False,
     )
 
-    formatter = structlog.stdlib.ProcessorFormatter(
-        processor=renderer,
+    # --------------------------------------------------------
+    # Console formatter
+    # --------------------------------------------------------
+
+    console_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=console_renderer,
         foreign_pre_chain=shared_processors,
     )
-    handler.setFormatter(formatter)
+    console_handler.setFormatter(console_formatter)
+
+    # --------------------------------------------------------
+    # File formatter
+    # --------------------------------------------------------
+
+    file_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=file_renderer,
+        foreign_pre_chain=shared_processors,
+    )
+    file_handler.setFormatter(file_formatter)
+
+    # --------------------------------------------------------
+    # Root logger
+    # --------------------------------------------------------
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(level)
+    root_logger.handlers.clear()
+    root_logger.addHandler(console_handler)
+    root_logger.addHandler(file_handler)
+
+    # --------------------------------------------------------
+    # Silence noisy third-party loggers
+    # --------------------------------------------------------
+
+    for noisy in ("httpx", "httpcore", "urllib3", "sqlalchemy.engine"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
+    # Ensure app & uvicorn loggers output at configured level
+    logging.getLogger("app").setLevel(level)
+    logging.getLogger("uvicorn").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 
 
-def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
+# ============================================================
+# LOGGER
+# ============================================================
+
+def get_logger(
+    name: str | None = None,
+):
     """
-    Get a structlog logger bound to the given name.
+    Return a structlog logger bound to the given name.
+
+    Auto-configures logging with defaults if not already configured.
     """
     if not structlog.is_configured():
         configure_logging()

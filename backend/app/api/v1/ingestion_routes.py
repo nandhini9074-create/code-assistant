@@ -15,7 +15,10 @@ from app.core.logging import get_logger
 from app.dependencies import get_repository_repo, get_ingestion_job_repo
 from app.infrastructure.database.models.ingestion_job import IngestionJob
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
-from app.modules.ingestion.schemas.ingestion_schema import IngestRepositoryRequest, IngestionJobResponse
+from app.modules.ingestion.schemas.ingestion_schema import (
+    IngestRepositoryRequest,
+    IngestionJobResponse,
+)
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
 from app.workers.tasks.ingestion_tasks import ingest_repository_task
 
@@ -70,8 +73,12 @@ async def reindex_repository(
     logger.info("received_reindex_repository_request", repo_id=str(repo_id))
     repo = await repo_repo.get_by_id(str(repo_id))
     if not repo:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Repository not found.",
+        )
 
+    # 2. Create an ingestion job
     job = IngestionJob(
         repo_id=repo.id,
         job_type="full" if full else "incremental",
@@ -79,8 +86,10 @@ async def reindex_repository(
         status=JobStatus.QUEUED.value,
         commit_sha="",
     )
+
     job = await job_repo.create(job)
 
+    # 3. Queue the existing ingestion task
     ingest_repository_task.delay(
         job_id=str(job.id),
         repo_id=str(repo.id),
@@ -88,11 +97,15 @@ async def reindex_repository(
         full_reindex=full,
     )
 
+    # 4. Return the response expected by IngestionJobResponse
     return IngestionJobResponse(
         job_id=str(job.id),
         repo_id=str(repo.id),
         status=job.status,
-        message="Reindex job queued.",
+        stage="QUEUED",
+        processed_files=0,
+        processed_chunks=0,
+        error_info=None,
     )
 
 

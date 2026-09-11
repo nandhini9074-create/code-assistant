@@ -23,7 +23,10 @@ qdrant-client[fastembed]>=1.9.0,<2.0.0
 redis[hiredis]>=5.0.0,<6.0.0
 celery[redis]>=5.4.0,<6.0.0
 
-# Qwen LLM (OpenAI-compatible API client)
+# ── Jina Embedding API ──────────────────────────────────────────────────────
+Jinaai>=0.2.3,<0.3.0
+
+# ── Qwen LLM (OpenAI-compatible API client) ───────────────────────────────────
 openai>=1.30.0,<2.0.0              # Used to call Qwen via DashScope-compatible endpoint
 
 # HTTP Client
@@ -48,3 +51,6 @@ python-dotenv>=1.0.0               # .env loading
 structlog>=24.1.0                  # Structured logging
 orjson>=3.10.0                     # Fast JSON serialization
 aiofiles>=23.2.0                   # Async file I/O
+
+# ── ML Reranker ───────────────────────────────────────────────────────────────
+sentence-transformers>=3.0.0,<4.0.0

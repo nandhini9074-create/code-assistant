@@ -1,0 +1,2 @@
+# Code Explorer — Backend Requirements
+-r requirements/base.txt

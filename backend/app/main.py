@@ -1,3 +1,4 @@
+
 """
 app/main.py
 Main entry point for the FastAPI application.
@@ -13,6 +14,9 @@ from app.api.v1 import api_router
 from app.config import get_settings
 from app.core.logging import configure_logging, get_logger
 from app.core.middleware import register_middleware
+from app.infrastructure.database.session import init_db, close_db
+from app.infrastructure.qdrant.client import init_qdrant, close_qdrant
+
 
 logger = get_logger(__name__)
 
@@ -34,22 +38,39 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     
     await init_redis()
     await init_db()
+
+    logger.info(
+        "database_ready",
+        message="PostgreSQL initialized successfully",
+    )
+
+    # Initialize Qdrant
     await init_qdrant()
-    
-    logger.info("app_ready")
-    
-    yield
-    
-    logger.info("app_shutdown")
-    
-    # Cleanup infrastructure connections
-    from app.infrastructure.cache.redis_client import close_redis
-    from app.infrastructure.database.session import close_db
-    from app.infrastructure.qdrant.client import close_qdrant
-    
-    await close_redis()
-    await close_db()
-    await close_qdrant()
+
+    logger.info(
+        "qdrant_ready",
+        message="Qdrant initialized successfully",
+    )
+
+    logger.info(
+        "app_ready",
+        message="Application startup completed",
+    )
+
+    try:
+        yield
+
+    finally:
+        await close_qdrant()
+
+        await close_db()
+
+        logger.info(
+            "app_shutdown",
+            message="Application shutdown completed",
+        )
+
+
 
 
 def create_app() -> FastAPI:
@@ -75,7 +96,7 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    
+
     # Register custom request context/logging middleware and exception handlers
     register_middleware(app)
 
@@ -87,10 +108,14 @@ def create_app() -> FastAPI:
         """
         Basic health check endpoint for load balancers.
         """
-        return {"status": "ok", "environment": settings.app_env}
+        return {
+            "status": "ok",
+            "environment": settings.app_env,
+        }
 
     return app
 
 
 # Create the global app instance for Uvicorn
 app = create_app()
+
