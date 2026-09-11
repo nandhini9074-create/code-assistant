@@ -217,10 +217,30 @@ def _fallback_identification(
     )
 
     stop_words = {
-        "find", "where", "is", "are", "the", "a", "an",
-        "in", "on", "at", "to", "from", "for", "of",
-        "and", "or", "with", "used", "use", "service",
-        "class", "function", "method", "code",
+        "find",
+        "where",
+        "is",
+        "are",
+        "the",
+        "a",
+        "an",
+        "in",
+        "on",
+        "at",
+        "to",
+        "from",
+        "for",
+        "of",
+        "and",
+        "or",
+        "with",
+        "used",
+        "use",
+        "service",
+        "class",
+        "function",
+        "method",
+        "code",
     }
 
     candidates = [
@@ -292,8 +312,30 @@ def _find_primary_chunk(
     element: dict[str, Any],
 ) -> RetrievedChunk | None:
     """
-    Find the chunk containing the actual function/class identified
-    by the LLM.
+    Find the primary retrieved chunk for the identified element.
+
+    Priority:
+    1. Exact file path + exact function/class symbol.
+    2. Exact file path from the LLM identification.
+    3. Exact function/class symbol across retrieved chunks.
+    4. Highest-scoring retrieved chunk as final fallback.
+
+    The file-path fallback is important when the identified symbol
+    is something inside a function, such as a variable, imported
+    class, library call, or API usage.
+
+    Example:
+
+        Retrieved chunk:
+            file_path = "app.py"
+            function_name = "home"
+
+        LLM identifies:
+            name = "gTTS"
+            file_path = "app.py"
+
+    Since gTTS is not the function_name "home", step 1 will not
+    match. Step 2 will still correctly select the app.py chunk.
     """
 
     if not chunks:
@@ -307,9 +349,15 @@ def _find_primary_chunk(
         element.get("file_path", "")
     ).strip().lower()
 
-    # Exact file + exact symbol metadata.
+    # ---------------------------------------------------------
+    # 1. Exact file + exact function/class metadata match
+    # ---------------------------------------------------------
     if file_hint and name:
         for chunk in chunks:
+            chunk_file = str(
+                chunk.file_path or ""
+            ).strip().lower()
+
             metadata = chunk.metadata or {}
 
             function_name = str(
@@ -321,7 +369,7 @@ def _find_primary_chunk(
             ).strip().lower()
 
             if (
-                chunk.file_path.lower() == file_hint
+                chunk_file == file_hint
                 and name in {
                     function_name,
                     class_name,
@@ -329,7 +377,40 @@ def _find_primary_chunk(
             ):
                 return chunk
 
-    # Exact symbol metadata.
+    # ---------------------------------------------------------
+    # 2. Exact file path match
+    #
+    # This handles cases where the identified element is inside
+    # a function rather than being the function/class itself.
+    #
+    # Example:
+    #     symbol = gTTS
+    #     file_path = app.py
+    #
+    # The retrieved chunk may have:
+    #     function_name = home
+    #     file_path = app.py
+    #
+    # Therefore we use the file path to locate the chunk.
+    # ---------------------------------------------------------
+    if file_hint:
+        file_matches = [
+            chunk
+            for chunk in chunks
+            if str(
+                chunk.file_path or ""
+            ).strip().lower() == file_hint
+        ]
+
+        if file_matches:
+            return max(
+                file_matches,
+                key=lambda chunk: chunk.score,
+            )
+
+    # ---------------------------------------------------------
+    # 3. Exact function/class metadata match
+    # ---------------------------------------------------------
     if name:
         matches = []
 
@@ -356,5 +437,14 @@ def _find_primary_chunk(
                 key=lambda chunk: chunk.score,
             )
 
-    return None
-
+    # ---------------------------------------------------------
+    # 4. Final fallback:
+    # Use the highest-scoring retrieved chunk.
+    #
+    # This guarantees that primary_chunk is still populated
+    # whenever retrieval returned at least one chunk.
+    # ---------------------------------------------------------
+    return max(
+        chunks,
+        key=lambda chunk: chunk.score,
+    )
