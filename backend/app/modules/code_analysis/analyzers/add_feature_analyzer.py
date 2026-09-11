@@ -1,5 +1,7 @@
+
 """
 app/modules/code_analysis/analyzers/add_feature_analyzer.py
+
 Analyzer for ADD_FEATURE intent.
 """
 
@@ -61,6 +63,9 @@ _SCHEMA = {
         "risks": {
             "type": "string",
         },
+        "suggested_code": {
+            "type": "string",
+        },
     },
     "required": [
         "existing_implementation",
@@ -68,6 +73,7 @@ _SCHEMA = {
         "required_changes",
         "affected_files",
         "risks",
+        "suggested_code",
     ],
     "additionalProperties": False,
 }
@@ -86,6 +92,7 @@ class AddFeatureAnalyzer(BaseAnalyzer):
             feedback_str = "\n".join(
                 f"- {err}" for err in context.validation_feedback
             )
+
             query_text += (
                 "\n\n"
                 "[VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT - "
@@ -103,14 +110,31 @@ class AddFeatureAnalyzer(BaseAnalyzer):
                 prompt=user_prompt,
                 system_prompt=ADD_FEATURE_SYSTEM_PROMPT,
                 schema=_SCHEMA,
+                max_tokens=2048,
+            )
+
+            # Log the raw LLM response so we can verify whether
+            # suggested_code was actually generated.
+            logger.info(
+                "add_feature_raw_result",
+                raw=raw,
             )
 
             analysis = _coerce(raw)
 
+            # Log the normalized result after coercion.
+            logger.info(
+                "add_feature_analysis_result",
+                suggested_code=analysis.get("suggested_code"),
+                proposed_change=analysis.get("proposed_change"),
+                affected_files=analysis.get("affected_files"),
+            )
+
         except Exception as exc:
             logger.error(
                 "add_feature_analyzer_failed",
-                exc_info=exc,
+                error=str(exc),
+                exc_info=True,
             )
 
             analysis = {
@@ -123,6 +147,7 @@ class AddFeatureAnalyzer(BaseAnalyzer):
                 "required_changes": [],
                 "affected_files": [],
                 "risks": "",
+                "suggested_code": "",
             }
 
         return AnalysisResult(
@@ -168,4 +193,18 @@ def _coerce(raw: dict) -> dict:
 
     raw.setdefault("risks", "")
 
+    # ---------------------------------------------------------
+    # SUGGESTED CODE
+    # ---------------------------------------------------------
+    suggested_code = raw.get("suggested_code")
+
+    if suggested_code is None:
+        suggested_code = ""
+
+    elif not isinstance(suggested_code, str):
+        suggested_code = str(suggested_code)
+
+    raw["suggested_code"] = suggested_code.strip()
+
     return raw
+

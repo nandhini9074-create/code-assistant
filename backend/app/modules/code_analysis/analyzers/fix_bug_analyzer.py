@@ -25,8 +25,16 @@ _SCHEMA = {
         "likely_cause": {"type": "string"},
         "proposed_fix": {"type": "string"},
         "proposed_change": {"type": "string"},
+        "suggested_code": {"type": "string"},
     },
-    "required": ["current_behavior", "problematic_code", "likely_cause", "proposed_fix", "proposed_change"],
+    "required": [
+        "current_behavior",
+        "problematic_code",
+        "likely_cause",
+        "proposed_fix",
+        "proposed_change",
+        "suggested_code",
+    ],
 }
 
 
@@ -51,7 +59,17 @@ class FixBugAnalyzer(BaseAnalyzer):
                 system_prompt=FIX_BUG_SYSTEM_PROMPT,
                 schema=_SCHEMA,
             )
-            analysis = _coerce(raw, ["current_behavior", "problematic_code", "likely_cause", "proposed_fix"])
+            analysis = _coerce(
+                raw,
+                [
+                    "current_behavior",
+                    "problematic_code",
+                    "likely_cause",
+                    "proposed_fix",
+                    "proposed_change",
+                    "suggested_code",
+                ],
+            )
         except Exception as exc:
             logger.error("fix_bug_analyzer_failed", exc_info=exc)
             analysis = {"error": str(exc)}

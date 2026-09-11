@@ -1,3 +1,4 @@
+
 """
 app/modules/code_analysis/service/code_analysis_service.py
 
@@ -31,6 +32,7 @@ from app.modules.code_analysis.validators.evidence_validator import (
 from app.modules.code_analysis.validators.suggestion_validator import (
     SuggestionValidator,
 )
+from app.modules.llm.service.llm_service import LLMService
 from app.modules.search.domain.search_domain import (
     RetrievedChunk,
     SearchContext,
@@ -38,8 +40,6 @@ from app.modules.search.domain.search_domain import (
 
 
 class CodeAnalysisService:
-    """Service for running intent-specific code analysis and validation."""
-
     def __init__(
         self,
         add_feature_analyzer: AddFeatureAnalyzer,
@@ -51,8 +51,6 @@ class CodeAnalysisService:
         suggestion_validator: SuggestionValidator,
         llm_service: LLMService | None = None,
     ) -> None:
-        """Initialize analyzers and validators."""
-
         self.analyzers: dict[IntentType, Any] = {
             IntentType.ADD_FEATURE: add_feature_analyzer,
             IntentType.FIX_BUG: fix_bug_analyzer,
@@ -63,17 +61,22 @@ class CodeAnalysisService:
         self.evidence_validator = evidence_validator
         self.code_existence_validator = code_existence_validator
         self.suggestion_validator = suggestion_validator
-        self.llm_service = llm_service or getattr(add_feature_analyzer, "llm_service", None)
+
+        self.llm_service = (
+            llm_service
+            or getattr(add_feature_analyzer, "llm_service", None)
+        )
 
     async def analyze(self, context: SearchContext) -> dict[str, Any]:
         """
-        Run the analyzer corresponding to the classified intent.
+        Run intent-specific code analysis.
 
-        The intent must already have been classified by an earlier
-        pipeline stage. This method does not guess a default intent.
+        RETRIEVE:
+            Only explains the retrieved code. It does not generate
+            a proposed change or suggested code.
 
-        For RETRIEVE intent, generate an AI answer based strictly on
-        User Query and Retrieved Repository Context.
+        FIX_BUG / ADD_FEATURE / OPTIMIZE / REFACTOR:
+            Delegate to the corresponding intent-specific analyzer.
         """
 
         if context.intent is None:
@@ -81,9 +84,21 @@ class CodeAnalysisService:
                 "Cannot perform code analysis without a classified intent."
             )
 
-        # RETRIEVE intent: LLM grounded answer based only on retrieved context
+        # ---------------------------------------------------------
+        # RETRIEVE
+        # ---------------------------------------------------------
+        #
+        # RETRIEVE is only a code lookup/explanation request.
+        # Do NOT populate:
+        #   - current_behavior
+        #   - proposed_change
+        #   - suggested_code
+        #
+        # Those fields are intended for modification-oriented intents.
+        #
         if context.intent == IntentType.RETRIEVE:
             ai_answer = await self._analyze_retrieve(context)
+
             primary_fp = (
                 context.primary_chunk.file_path
                 if context.primary_chunk
@@ -93,30 +108,35 @@ class CodeAnalysisService:
                     else None
                 )
             )
+
             analysis: dict[str, Any] = {
                 "intent": "RETRIEVE",
                 "answer": ai_answer,
-                "suggestion": ai_answer,
-                "current_behavior": ai_answer,
-                "proposed_change": ai_answer,
                 "file_path": primary_fp,
                 "symbol": context.target_symbol,
             }
+
             context.analysis_result = analysis
             return analysis
+
+        # ---------------------------------------------------------
+        # INTENT-SPECIFIC ANALYSIS
+        # ---------------------------------------------------------
 
         analyzer = self.analyzers.get(context.intent)
 
         if analyzer is None:
             raise ValueError(
-                f"No analyzer configured for intent: {context.intent.value}"
+                f"No analyzer configured for intent: "
+                f"{context.intent.value}"
             )
 
         result = await analyzer.analyze(context)
 
         if result is None:
             raise ValueError(
-                f"Analyzer returned no result for intent: {context.intent.value}"
+                f"Analyzer returned no result for intent: "
+                f"{context.intent.value}"
             )
 
         analysis = getattr(result, "analysis", None)
@@ -131,19 +151,13 @@ class CodeAnalysisService:
 
         return analysis
 
-
     def validate_analysis(
         self,
         analysis: dict[str, Any],
         chunks: list[RetrievedChunk],
     ) -> ValidationResult:
         """
-        Run the three-layer validation on the analysis.
-
-        Validation layers:
-        1. Evidence validation
-        2. Code existence validation
-        3. Suggestion validation
+        Validate the generated analysis against retrieved repository evidence.
         """
 
         evidence_result = self.evidence_validator.validate(
@@ -175,30 +189,53 @@ class CodeAnalysisService:
             errors=all_errors,
         )
 
-    async def _analyze_retrieve(self, context: SearchContext) -> str:
+    async def _analyze_retrieve(
+        self,
+        context: SearchContext,
+    ) -> str:
         """
-        Generate grounded AI answer for RETRIEVE intent based strictly on
-        the supplied repository context.
+        Generate a concise explanation for RETRIEVE queries.
+
+        The response is based only on the retrieved repository context.
+        No code modification or fix should be proposed here.
         """
+
         if not context.llm_context and not context.code_snippets:
-            return "No relevant code was found in the repository for this query."
+            return (
+                "No relevant code was found in the repository "
+                "for this query."
+            )
 
         user_prompt = (
             f"User Query:\n{context.query}\n\n"
-            f"Retrieved Repository Context:\n{context.llm_context or '(No context)'}"
+            f"Retrieved Repository Context:\n"
+            f"{context.llm_context or '(No context)'}"
         )
+
         system_prompt = (
-            "You are CodeLens, an expert software developer and codebase analyzer.\n"
-            "Your task is to answer the user query based ONLY on the provided retrieved repository context.\n\n"
+            "You are CodeLens, an expert software developer and "
+            "codebase analyzer.\n"
+            "Your task is to answer the user query based ONLY on the "
+            "provided retrieved repository context.\n\n"
             "CRITICAL RULES:\n"
             "1. Base your answer only on the supplied repository context.\n"
-            "2. Identify the relevant repository, file path, class/function name, and line range where the evidence exists.\n"
+            "2. Identify the relevant repository, file path, "
+            "class/function name, and line range where the evidence exists.\n"
             "3. Explain the code clearly and directly answer the user query.\n"
-            "4. NEVER invent, guess, or hallucinate files, functions, classes, or behavior not in the context.\n"
-            "5. If the retrieved context does not contain enough information to answer the query reliably, explicitly say so instead of hallucinating."
+            "4. NEVER invent, guess, or hallucinate files, functions, "
+            "classes, or behavior not present in the context.\n"
+            "5. If the retrieved context does not contain enough information "
+            "to answer the query reliably, explicitly say so instead of "
+            "hallucinating.\n"
+            "6. This is a RETRIEVE request. Do NOT propose bug fixes, "
+            "feature changes, refactoring, optimization, or replacement code "
+            "unless the user explicitly asks for a modification.\n"
+            "7. The answer should focus on identifying and explaining the "
+            "existing code."
         )
 
         llm = self.llm_service
+
         if not llm:
             return context.llm_context or "Code retrieved."
 
@@ -209,6 +246,17 @@ class CodeAnalysisService:
                 max_tokens=2048,
                 temperature=0.0,
             )
-            return response.text if hasattr(response, "text") else str(response)
+
+            return (
+                response.text
+                if hasattr(response, "text")
+                else str(response)
+            )
+
         except Exception as exc:
-            return f"Code identified in repository: {context.target_symbol or 'target'} ({exc})"
+            return (
+                "Code identified in repository: "
+                f"{context.target_symbol or 'target'} "
+                f"({exc})"
+            )
+
