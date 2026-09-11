@@ -94,7 +94,6 @@ class ContextBuilderStage:
                 "chunk_type": chunk_type,
                 "start_line": start_line,
                 "end_line": end_line,
-                "content": truncated_content,
                 "source_code": truncated_content,
                 "score": round(chunk.score, 4),
                 "is_primary": is_primary,
