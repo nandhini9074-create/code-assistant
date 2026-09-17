@@ -3,11 +3,14 @@ app/modules/ingestion/pipeline/file_hash_check.py
 Pipeline stage: File hash check.
 """
 
+import uuid
+
 from app.core.enums import FileFetchStatus, FileStatus
 from app.core.logging import get_logger
 from app.infrastructure.database.models.file_hash import FileHash
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.file_hash_repo import FileHashRepository
+from app.shared.utils.file_utils import get_language_from_extension
 from app.shared.utils.hashing import sha256_content
 
 logger = get_logger(__name__)
@@ -65,14 +68,19 @@ class FileHashCheckStage:
                     file_hash=file.file_hash,
                     blob_sha=file.blob_sha,
                     last_commit_sha=context.commit_sha,
+                    language=get_language_from_extension(file.file_path),
                     status=FileStatus.ACTIVE.value,
+                    last_seen_job_id=uuid.UUID(context.job_id),
                 )
                 await self.registry_repo.upsert_file(registry_record)
                 
-        # Any file in active_paths not in seen_paths was deleted
-        for path in active_paths:
-            if path not in seen_paths:
-                context.deleted_files.append(path)
+        # If we fetched the entire repository tree, any active file that wasn't seen must have been deleted.
+        # But if we only fetched a subset of files (e.g., via webhook diff), GitHub already provided the 
+        # deleted files list, so we shouldn't assume unseen files are deleted.
+        if not context.webhook_diff:
+            for path in active_paths:
+                if path not in seen_paths:
+                    context.deleted_files.append(path)
 
         logger.info(
             "stage_5_hash_check_completed",

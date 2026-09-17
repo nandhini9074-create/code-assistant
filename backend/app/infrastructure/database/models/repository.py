@@ -104,5 +104,10 @@ class Repository(Base, TimestampMixin):
     def status(self) -> str:
         return "active" if self.last_indexed_commit_sha else "pending"
 
+    @property
+    def webhook_configured(self) -> bool:
+        """True if a GitHub webhook has been successfully registered for this repo."""
+        return self.github_webhook_id is not None
+
     def __repr__(self) -> str:
         return f"<Repository id={self.id!s} name={self.repo_name!r}>"

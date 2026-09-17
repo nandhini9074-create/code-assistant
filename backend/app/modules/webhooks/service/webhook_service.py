@@ -116,7 +116,7 @@ class WebhookService:
             repo_id=repo.id,
             signature_valid=True,
             payload_raw=payload,
-            processed=False,
+            processed=True,
             ingestion_job_id=job.id,
         )
         await self.event_repo.create(webhook_event)

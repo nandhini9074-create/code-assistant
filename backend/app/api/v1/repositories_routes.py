@@ -109,6 +109,18 @@ async def upload_zip(
     if not file.filename or not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Must be a ZIP file.")
 
+    # Sanitize repo_name
+    _clean = repo_name.strip().rstrip("/")
+    if "://" in _clean:
+        # e.g. "https://github.com/owner/repo.git" → take last URL path segment
+        _clean = _clean.rstrip("/").split("/")[-1]
+    if "/" in _clean:
+        # e.g. "owner/repo" → take the last segment
+        _clean = _clean.split("/")[-1]
+    if _clean.endswith(".git"):
+        _clean = _clean[:-4]
+    repo_name = _clean or repo_name  # fallback to original if somehow empty
+
     # Calculate ZIP fingerprint hash for versioning
     from app.infrastructure.storage.zip_storage import ZipStorageManager
     zip_hash = ZipStorageManager.calculate_zip_hash(file.file)

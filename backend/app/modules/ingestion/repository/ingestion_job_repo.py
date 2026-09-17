@@ -39,10 +39,27 @@ class IngestionJobRepository:
         status: JobStatus,
         stage: str | None = None,
         error_info: dict[str, Any] | None = None,
+        previous_commit_sha: str | None = None,
+        commit_sha: str | None = None,
     ) -> bool:
         import uuid
+        import datetime
         uid = uuid.UUID(job_id) if isinstance(job_id, str) else job_id
         values: dict[str, Any] = {"status": status.value}
+        
+        if previous_commit_sha is not None:
+            values["previous_commit_sha"] = previous_commit_sha
+            
+        if commit_sha is not None:
+            values["commit_sha"] = commit_sha
+        
+        # Automatically set timestamps based on status transitions
+        now = datetime.datetime.now(datetime.timezone.utc)
+        if status == JobStatus.RUNNING:
+            values["started_at"] = now
+        elif status in (JobStatus.COMPLETED, JobStatus.FAILED, JobStatus.CANCELLED, JobStatus.PARTIAL):
+            values["finished_at"] = now
+
         if error_info:
             values["error_message"] = str(error_info.get("error", error_info))
             

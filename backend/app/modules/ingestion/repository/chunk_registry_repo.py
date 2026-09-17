@@ -35,6 +35,19 @@ class ChunkRegistryRepository:
         result = await self.session.execute(stmt)
         return result.scalars().all()
 
+    async def get_by_file_paths(self, repo_id: RepoId | str, file_paths: list[str]) -> Sequence[ChunkRegistry]:
+        if not file_paths:
+            return []
+            
+        import uuid
+        uid = uuid.UUID(repo_id) if isinstance(repo_id, str) else repo_id
+        stmt = select(ChunkRegistry).where(
+            ChunkRegistry.repo_id == uid,
+            ChunkRegistry.file_path.in_(file_paths)
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().all()
+
     async def get_point_ids_by_file_paths(self, repo_id: RepoId | str, file_paths: list[str]) -> list[str]:
         if not file_paths:
             return []

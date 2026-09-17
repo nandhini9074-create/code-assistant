@@ -78,7 +78,7 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
             embed_stage = EmbeddingGenerationStage()
             upsert_stage = VectorUpsertStage(repo_repo, chunk_repo)
             cleanup_stage = DeletedChunkCleanupStage(repo_repo, file_repo, chunk_repo)
-            checkpoint_stage = CheckpointUpdateStage(job_repo, event_repo)
+            checkpoint_stage = CheckpointUpdateStage(job_repo, event_repo, repo_repo)
             
             service = IngestionService(
                 val_stage,
@@ -100,6 +100,15 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
             # Fetch the repo to get the per-repository token if it exists
             repo = await repo_repo.get_by_id(repo_id)
             github_token = repo.access_token_ref if repo else None
+            
+            # Mark the job as RUNNING and record the previous commit SHA before the new pipeline run
+            from app.core.enums import JobStatus
+            previous_sha = repo.last_indexed_commit_sha if repo else None
+            await job_repo.update_status(
+                job_id,
+                status=JobStatus.RUNNING,
+                previous_commit_sha=previous_sha,
+            )
             
             result = await service.run_pipeline(
                 job_id=job_id,

@@ -103,16 +103,6 @@ def create_app() -> FastAPI:
     # Register API routers
     app.include_router(api_router, prefix="/api/v1")
 
-    @app.get("/health", tags=["Health"])
-    async def health_check() -> dict:
-        """
-        Basic health check endpoint for load balancers.
-        """
-        return {
-            "status": "ok",
-            "environment": settings.app_env,
-        }
-
     return app
 
 

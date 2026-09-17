@@ -136,6 +136,14 @@ async def delete_index(
     async with session_factory() as session:
         await session.execute(delete(ChunkRegistry).where(ChunkRegistry.repo_id == repo.id))
         await session.execute(delete(FileHash).where(FileHash.repo_id == repo.id))
+        
+        # Reset the repository's commit SHA so it goes back to 'pending' state
+        from sqlalchemy import update
+        from app.infrastructure.database.models.repository import Repository
+        await session.execute(
+            update(Repository).where(Repository.id == repo.id).values(last_indexed_commit_sha=None)
+        )
+        
         await session.commit()
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
