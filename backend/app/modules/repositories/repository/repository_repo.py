@@ -81,7 +81,7 @@ class RepositoryRepository:
         stmt = (
             update(Repository)
             .where(Repository.id == uid)
-            .values(current_commit_sha=commit_sha)
+            .values(last_indexed_commit_sha=commit_sha)
         )
         result = await self.session.execute(stmt)
         await self.session.commit()

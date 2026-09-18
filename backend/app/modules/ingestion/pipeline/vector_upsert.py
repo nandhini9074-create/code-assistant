@@ -10,7 +10,7 @@ from qdrant_client.http import models as qmodels
 from app.core.logging import get_logger
 from app.infrastructure.database.models.chunk_registry import ChunkRegistry
 from app.infrastructure.qdrant.collection_manager import ensure_collection_exists
-from app.infrastructure.qdrant.vector_repository import generate_point_id, upsert_vectors
+from app.infrastructure.qdrant.vector_repository import generate_point_id, upsert_vectors, delete_vectors_by_ids
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
@@ -66,6 +66,10 @@ class VectorUpsertStage:
                             payload=chunk.metadata,
                         ))
 
+                # Fetch settings for embedding info
+                from app.config import get_settings
+                settings = get_settings()
+
                 # Re-save ALL chunks (new and reused) to DB, because we delete
                 # the entire file's old chunk records before re-writing.
                 db_chunks.append(
@@ -79,6 +83,8 @@ class VectorUpsertStage:
                         end_line=chunk.end_line,
                         qdrant_point_id=chunk.point_id,
                         last_seen_job_id=uuid.UUID(context.job_id) if context.job_id else None,
+                        embedding_model=settings.jina_embedding_model,
+                        embedding_version="1.0",
                     )
                 )
 
@@ -92,12 +98,18 @@ class VectorUpsertStage:
             await upsert_vectors(coll_name, points)
             logger.info("stage_10_qdrant_upsert_success", points_count=len(points))
 
-        # Always clean up old DB chunk records for modified files, regardless of
-        # whether there are new chunks to write. A file modification may only
-        # restructure or remove chunks without adding new ones (e.g. all hashes
-        # matched), but stale chunks from the previous version must be removed.
         modified_files = [f.file_path for f in context.files if f.is_new_or_modified]
         if modified_files:
+            # Clean up orphaned Qdrant points before wiping Postgres
+            old_chunks = await self.chunk_repo.get_by_file_paths(uuid.UUID(context.repo_id), modified_files)
+            old_point_ids = {c.qdrant_point_id for c in old_chunks}
+            new_point_ids = {c.qdrant_point_id for c in db_chunks}
+            orphaned_point_ids = list(old_point_ids - new_point_ids)
+            
+            if orphaned_point_ids:
+                logger.info("stage_10_cleaning_orphaned_qdrant_points", count=len(orphaned_point_ids))
+                await delete_vectors_by_ids(coll_name, orphaned_point_ids)
+                
             logger.info("stage_10_cleaning_old_db_chunks", modified_files_count=len(modified_files))
             await self.chunk_repo.delete_by_file_paths(uuid.UUID(context.repo_id), modified_files)
 

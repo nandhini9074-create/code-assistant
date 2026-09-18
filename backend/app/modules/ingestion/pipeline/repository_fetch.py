@@ -9,6 +9,7 @@ import uuid
 from app.core.enums import TriggerSource
 from app.core.logging import get_logger
 from app.infrastructure.github.trees_client import fetch_repository_tree
+from app.infrastructure.github.commits_client import fetch_latest_commit_sha
 from app.modules.ingestion.domain.ingestion_domain import FileRecord, IngestionContext
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
 
@@ -48,6 +49,18 @@ class RepositoryFetchStage:
             owner = parts[-2]
             repo_slug = parts[-1].removesuffix(".git")
             target_ref = context.commit_sha or repo.default_branch or "main"
+            
+            # If we don't have a specific commit SHA (e.g. manual trigger), resolve it now
+            # so that downstream stages (like file_hashes) know the exact commit we indexed.
+            if not context.commit_sha:
+                try:
+                    context.commit_sha = await fetch_latest_commit_sha(
+                        owner, repo_slug, target_ref, context.github_token
+                    )
+                    target_ref = context.commit_sha
+                except Exception as exc:
+                    logger.warning("failed_to_resolve_commit_sha", error=str(exc))
+                    
             logger.info("stage_2_fetching_from_github_api", owner=owner, repo=repo_slug, commit_sha=target_ref)
             await self._fetch_from_github(context, owner, repo_slug, target_ref)
         

@@ -564,6 +564,40 @@ async def delete_vectors_by_file(
 
 
 # ================================================================
+# Delete vectors by point IDs
+# ================================================================
+
+async def delete_vectors_by_ids(
+    collection_name: str,
+    point_ids: list[str],
+) -> None:
+    """
+    Delete specific vectors by their point IDs.
+    """
+
+    if not point_ids:
+        return
+
+    client = get_qdrant_client()
+
+    try:
+        await client.delete(
+            collection_name=collection_name,
+            points_selector=qmodels.PointIdsList(
+                points=point_ids,
+            ),
+        )
+
+    except Exception:
+        logger.exception(
+            "qdrant_delete_points_failed",
+            collection=collection_name,
+            count=len(point_ids),
+        )
+        raise
+
+
+# ================================================================
 # Delete vectors by repository
 # ================================================================
 
