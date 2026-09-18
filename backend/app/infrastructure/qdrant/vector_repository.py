@@ -70,9 +70,10 @@ def generate_point_id(
 async def upsert_vectors(
     collection_name: str,
     points: list[qmodels.PointStruct],
+    batch_size: int = 100,
 ) -> None:
     """
-    Upsert a batch of vectors into a Qdrant collection.
+    Upsert a batch of vectors into a Qdrant collection in chunks to prevent timeouts.
     """
 
     if not points:
@@ -81,10 +82,13 @@ async def upsert_vectors(
     client = get_qdrant_client()
 
     try:
-        await client.upsert(
-            collection_name=collection_name,
-            points=points,
-        )
+        for i in range(0, len(points), batch_size):
+            batch = points[i:i + batch_size]
+            logger.debug(f"qdrant_upsert_batch", collection=collection_name, start=i, count=len(batch))
+            await client.upsert(
+                collection_name=collection_name,
+                points=batch,
+            )
 
     except Exception:
         logger.exception(
