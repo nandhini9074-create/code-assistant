@@ -109,6 +109,11 @@ async def upload_zip(
     if not file.filename or not file.filename.endswith('.zip'):
         raise HTTPException(status_code=400, detail="Must be a ZIP file.")
 
+    import zipfile
+    if not zipfile.is_zipfile(file.file):
+        raise HTTPException(status_code=400, detail="The uploaded file is not a valid ZIP archive.")
+    file.file.seek(0)
+
     # Sanitize repo_name
     _clean = repo_name.strip().rstrip("/")
     if "://" in _clean:
@@ -147,7 +152,7 @@ async def upload_zip(
         # Provision collection in Qdrant immediately
         try:
             from app.infrastructure.qdrant.collection_manager import ensure_collection_exists
-            await ensure_collection_exists(existing.qdrant_collection_name)
+            await ensure_collection_exists(existing.qdrant_collection_name, recreate=True)
         except Exception as e:
             logger.error("qdrant_collection_provisioning_failed", collection=existing.qdrant_collection_name, error=str(e))
         

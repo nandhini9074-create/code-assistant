@@ -26,10 +26,11 @@ def sanitize_collection_name(collection_name: str) -> str:
 async def ensure_collection_exists(
     collection_name: str,
     vector_size: int = 1024,
+    recreate: bool = False,
 ) -> str:
     """
     Ensure a Qdrant collection exists and has the required payload indices.
-    If it doesn't exist, it creates it.
+    If it doesn't exist (or recreate=True), it creates it.
     Returns the sanitized collection name.
     """
     collection_name = sanitize_collection_name(collection_name)
@@ -40,22 +41,26 @@ async def ensure_collection_exists(
         existing_collections = {c.name for c in collections_response.collections}
 
         if collection_name in existing_collections:
-            logger.debug("qdrant_collection_exists", collection=collection_name)
-            # Verify collection config matches expected vector size (1024) and cosine distance
-            coll_info = await client.get_collection(collection_name=collection_name)
-            vectors_config = coll_info.config.params.vectors
-            if isinstance(vectors_config, qmodels.VectorParams):
-                if vectors_config.size != vector_size:
-                    raise ValueError(
-                        f"Qdrant collection {collection_name} dimension mismatch: "
-                        f"expected {vector_size}, found {vectors_config.size}"
-                    )
-                if vectors_config.distance != qmodels.Distance.COSINE:
-                    raise ValueError(
-                        f"Qdrant collection {collection_name} distance mismatch: "
-                        f"expected Cosine, found {vectors_config.distance}"
-                    )
-            return
+            if recreate:
+                logger.info("qdrant_recreating_collection", collection=collection_name)
+                await client.delete_collection(collection_name=collection_name)
+            else:
+                logger.debug("qdrant_collection_exists", collection=collection_name)
+                # Verify collection config matches expected vector size (1024) and cosine distance
+                coll_info = await client.get_collection(collection_name=collection_name)
+                vectors_config = coll_info.config.params.vectors
+                if isinstance(vectors_config, qmodels.VectorParams):
+                    if vectors_config.size != vector_size:
+                        raise ValueError(
+                            f"Qdrant collection {collection_name} dimension mismatch: "
+                            f"expected {vector_size}, found {vectors_config.size}"
+                        )
+                    if vectors_config.distance != qmodels.Distance.COSINE:
+                        raise ValueError(
+                            f"Qdrant collection {collection_name} distance mismatch: "
+                            f"expected Cosine, found {vectors_config.distance}"
+                        )
+                return
 
         logger.info("qdrant_creating_collection", collection=collection_name)
         await client.create_collection(

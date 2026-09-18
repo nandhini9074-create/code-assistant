@@ -78,9 +78,30 @@ class RepositoryService:
         
         existing = await self.repo.get_by_url(request.repo_url) or await self.repo.get_by_full_name(full_name)
         if existing:
-            logger.warning("repository_registration_duplicate", full_name=full_name, repo_id=str(existing.id))
-            raise RepositoryAlreadyExistsError(
-                f"Repository {full_name} is already registered.",
+            if existing.last_indexed_commit_sha is None:
+                logger.info("repository_registration_recovering_broken", full_name=full_name, repo_id=str(existing.id))
+                await self.delete_repository(str(existing.id))
+            else:
+                logger.warning("repository_registration_duplicate", full_name=full_name, repo_id=str(existing.id))
+                raise RepositoryAlreadyExistsError(
+                    f"Repository {full_name} is already registered.",
+                )
+
+        # --- Synchronous GitHub API Validation ---
+        try:
+            from app.infrastructure.github.github_client import get_github_client
+            from app.core.exceptions import GitHubAPIError, ValidationError
+            client = get_github_client()
+            await client.request(
+                "GET", 
+                f"/repos/{owner}/{name}",
+                github_token=request.pat_token
+            )
+            logger.info("repository_github_access_verified", full_name=full_name)
+        except GitHubAPIError as exc:
+            logger.warning("repository_github_access_denied", full_name=full_name, error=str(exc))
+            raise ValidationError(
+                f"Could not access repository on GitHub. It may not exist or the token is invalid. Details: {exc.message}"
             )
             
         collection_name = f"repo_{owner}_{name}".lower().replace("-", "_").replace(".", "_")
@@ -98,7 +119,7 @@ class RepositoryService:
         logger.info("qdrant_collection_provisioning_started", collection=collection_name)
         try:
             from app.infrastructure.qdrant.collection_manager import ensure_collection_exists
-            await ensure_collection_exists(repo_record.qdrant_collection_name)
+            await ensure_collection_exists(repo_record.qdrant_collection_name, recreate=True)
             logger.info("qdrant_collection_provisioned_successfully", collection=collection_name)
         except Exception as e:
             logger.error("qdrant_collection_provisioning_failed", collection=collection_name, error=str(e), exc_info=e)
