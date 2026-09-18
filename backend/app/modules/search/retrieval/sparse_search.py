@@ -1,26 +1,50 @@
+
 """
 app/modules/search/retrieval/sparse_search.py
 
-Sparse lexical retrieval using Qdrant payload fields.
+Application-side lexical retrieval using BM25 over existing Qdrant payloads.
 
-Search priority:
-    1. function_name
-    2. class_name
-    3. code
+Why scroll() instead of query_points(using="sparse"):
 
-The current architecture uses multiple Qdrant collections.
-Each repository has its own collection following:
+    Existing Qdrant collections contain only the default dense vector.
+    No named sparse vector was written during ingestion.
 
-    repo_owner_repositoryname
+Approach:
 
-Global search searches all repository collections.
+    1. Page through the selected Qdrant collection using scroll().
+    2. Deduplicate points/chunks.
+    3. Build code-aware tokens from:
+         - function_name
+         - class_name
+         - code
+    4. Calculate corpus-based BM25 IDF.
+    5. Score every unique chunk using weighted BM25:
+         function_name -> 4.0
+         class_name    -> 3.0
+         code          -> 1.0
+    6. Return top-k RetrievedChunk objects.
 
-PostgreSQL is not used.
+No ingestion changes.
+No Qdrant payload indexes.
+No Qdrant sparse vectors.
+No PostgreSQL.
+
+The returned RetrievedChunk objects remain compatible with:
+
+    SparseSearch
+        -> ResultMerger
+        -> Reranker
+        -> ContextBuilder
+        -> LLM
 """
 
 from __future__ import annotations
 
-from qdrant_client.http import models as qmodels
+import math
+import re
+from collections import Counter
+from dataclasses import dataclass
+from typing import Any
 
 from app.core.logging import get_logger
 from app.infrastructure.qdrant.client import get_qdrant_client
@@ -32,16 +56,59 @@ from app.modules.search.domain.search_domain import (
 logger = get_logger(__name__)
 
 
-class SparseSearch:
-    """Perform sparse lexical retrieval across repository Qdrant collections."""
+# ---------------------------------------------------------------------------
+# Tunable constants
+# ---------------------------------------------------------------------------
 
-    _MAX_TERMS = 10
+_SCROLL_PAGE_SIZE = 500
+_MAX_SCROLL_PAGES = 10
+
+_MAX_TERMS = 12
+
+_BM25_K1 = 1.5
+_BM25_B = 0.75
+
+_WEIGHT_FUNCTION_NAME = 4.0
+_WEIGHT_CLASS_NAME = 3.0
+_WEIGHT_CODE = 1.0
+
+# Prevent extremely large source files from dominating the lexical score.
+_MAX_CODE_CHARS = 12000
+
+
+# ---------------------------------------------------------------------------
+# Internal BM25 representation
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _IndexedChunk:
+    """One unique Qdrant chunk represented in the BM25 index."""
+
+    point_id: str
+    payload: dict[str, Any]
+
+    function_tokens: list[str]
+    class_tokens: list[str]
+    code_tokens: list[str]
+
+    chunk: RetrievedChunk
+
+
+# ---------------------------------------------------------------------------
+# Sparse search
+# ---------------------------------------------------------------------------
+
+
+class SparseSearch:
+    """Perform application-side BM25 retrieval from one Qdrant collection."""
 
     async def search(
         self,
         context: SearchContext,
         limit: int = 20,
     ) -> list[RetrievedChunk]:
+        """Fetch the selected collection and return top BM25 chunks."""
 
         if context.early_exit:
             print("SPARSE SEARCH: Early exit already set")
@@ -51,203 +118,288 @@ class SparseSearch:
             print("SPARSE SEARCH: Invalid limit")
             return []
 
+        collection_name = context.qdrant_collection
+
+        if not collection_name:
+            print("SPARSE SEARCH: No collection selected")
+            return []
+
+        query_terms = _build_terms(context)
+
+        if not query_terms:
+            logger.info(
+                "sparse_search_skipped_no_terms",
+                repo_name=context.repo_name,
+            )
+            print("SPARSE SEARCH: No search terms found")
+            return []
+
+        print("\n========== SPARSE SEARCH (LEXICAL BM25) ==========")
+        print("REPO:", context.repo_name)
+        print("COLLECTION:", collection_name)
+        print("QUERY TERMS:", query_terms)
+        print("LIMIT:", limit)
+        print("==================================================\n")
+
         try:
-            terms = self._build_terms(context)
-
-            if not terms:
-                logger.info(
-                    "sparse_search_skipped_no_terms",
-                    repo_name=context.repo_name,
-                )
-                print("SPARSE SEARCH: No search terms found")
-                return []
-
-            print("\n========== SPARSE SEARCH DEBUG ==========")
-            print("REQUEST REPOSITORY NAME:", context.repo_name)
-            print("SELECTED COLLECTION:", context.qdrant_collection)
-            print("SPARSE SEARCH: ONLY selected collection")
-            print("SEARCH TERMS:", terms)
-            print("SEARCH PRIORITY: function_name > class_name > code")
-            print("LIMIT:", limit)
-            print("=========================================\n")
-
-            if not context.qdrant_collection:
-                print("SPARSE SEARCH: No selected collection")
-                return []
-
             client = get_qdrant_client()
-            collections = [context.qdrant_collection]
 
-            chunks: list[RetrievedChunk] = []
+            # ---------------------------------------------------------------
+            # Step 1: Fetch the complete selected collection with pagination.
+            # ---------------------------------------------------------------
 
-            for collection_name in collections:
+            points_by_identity: dict[str, tuple[str, dict[str, Any]]] = {}
 
-                print(
-                    f"\nSPARSE SEARCH: Searching collection "
-                    f"'{collection_name}'..."
-                )
+            offset = None
+            pages_fetched = 0
 
-                conditions: list[qmodels.Condition] = []
+            while pages_fetched < _MAX_SCROLL_PAGES:
+                scroll_kwargs: dict[str, Any] = {
+                    "collection_name": collection_name,
+                    "limit": _SCROLL_PAGE_SIZE,
+                    "with_payload": True,
+                    "with_vectors": False,
+                }
 
-                for term in terms:
-                    # Function name
-                    conditions.append(
-                        qmodels.FieldCondition(
-                            key="function_name",
-                            match=qmodels.MatchText(
-                                text=term,
-                            ),
-                        )
-                    )
+                if offset is not None:
+                    scroll_kwargs["offset"] = offset
 
-                    # Class name
-                    conditions.append(
-                        qmodels.FieldCondition(
-                            key="class_name",
-                            match=qmodels.MatchText(
-                                text=term,
-                            ),
-                        )
-                    )
+                points, next_offset = await client.scroll(**scroll_kwargs)
 
-                    # Source code fallback
-                    conditions.append(
-                        qmodels.FieldCondition(
-                            key="code",
-                            match=qmodels.MatchText(
-                                text=term,
-                            ),
-                        )
-                    )
+                if not points:
+                    break
 
-                search_filter = qmodels.Filter(
-                    should=conditions,
-                    min_should=qmodels.MinShould(
-                        min_count=1,
-                        conditions=conditions,
-                    ),
-                )
-
-                try:
-                    points, _ = await client.scroll(
-                        collection_name=collection_name,
-                        scroll_filter=search_filter,
-                        limit=limit,
-                        with_payload=True,
-                        with_vectors=False,
-                    )
-                except Exception as coll_exc:
-                    logger.warning(
-                        "sparse_search_collection_failed",
-                        collection=collection_name,
-                        error=str(coll_exc),
-                    )
-                    print(
-                        f"SPARSE SEARCH: Failed collection "
-                        f"'{collection_name}', skipping: {coll_exc}"
-                    )
-                    continue
-
-                print(
-                    f"SPARSE SEARCH: Collection "
-                    f"'{collection_name}' returned "
-                    f"{len(points or [])} points"
-                )
-
-                for point in points or []:
-
+                for point in points:
                     payload = point.payload or {}
 
-                    function_name = payload.get(
-                        "function_name",
-                        "",
+                    point_id = str(point.id)
+
+                    # Prefer chunk_hash because the same logical chunk
+                    # should not appear multiple times in the BM25 index.
+                    chunk_hash = _as_string(
+                        payload.get("chunk_hash")
+                    ).strip()
+
+                    identity = (
+                        f"chunk:{chunk_hash}"
+                        if chunk_hash
+                        else f"point:{point_id}"
                     )
 
-                    class_name = payload.get(
-                        "class_name",
-                        "",
-                    )
-
-                    code = (
-                        payload.get("code")
-                        or payload.get("content")
-                        or ""
-                    )
-
-                    if not isinstance(function_name, str):
-                        function_name = str(function_name)
-
-                    if not isinstance(class_name, str):
-                        class_name = str(class_name)
-
-                    if not isinstance(code, str):
-                        code = str(code)
-
-                    # ---------------------------------------------------
-                    # Calculate weighted lexical score.
-                    #
-                    # Function name match = strongest
-                    # Class name match    = second strongest
-                    # Code match           = fallback
-                    # ---------------------------------------------------
-
-                    score = _weighted_lexical_score(
-                        function_name=function_name,
-                        class_name=class_name,
-                        code=code,
-                        terms=terms,
-                    )
-
-                    metadata = dict(payload)
-
-                    # Preserve the originating Qdrant collection.
-                    metadata["_qdrant_collection"] = collection_name
-
-                    chunks.append(
-                        RetrievedChunk(
-                            chunk_hash=payload.get(
-                                "chunk_hash",
-                                str(point.id),
-                            ),
-                            file_path=(
-                                payload.get("file_path")
-                                or payload.get("source")
-                                or ""
-                            ),
-                            content=code,
-                            score=score,
-                            metadata=metadata,
+                    if identity not in points_by_identity:
+                        points_by_identity[identity] = (
+                            point_id,
+                            payload,
                         )
+
+                pages_fetched += 1
+
+                if next_offset is None:
+                    break
+
+                offset = next_offset
+
+            unique_points = list(points_by_identity.values())
+
+            print(
+                f"SPARSE SEARCH: Fetched {sum(1 for _ in points_by_identity.values())} "
+                f"unique points in {pages_fetched} page(s) "
+                f"from '{collection_name}'"
+            )
+
+            if not unique_points:
+                logger.info(
+                    "sparse_search_empty_collection",
+                    collection=collection_name,
+                    repo_name=context.repo_name,
+                )
+                print("SPARSE SEARCH: Collection appears empty")
+                return []
+
+            # ---------------------------------------------------------------
+            # Step 2: Build one BM25 document per unique chunk.
+            # ---------------------------------------------------------------
+
+            indexed_chunks: list[_IndexedChunk] = []
+
+            for point_id, payload in unique_points:
+                function_name = _as_string(
+                    payload.get("function_name")
+                )
+
+                class_name = _as_string(
+                    payload.get("class_name")
+                )
+
+                code = _as_string(
+                    payload.get("code")
+                    or payload.get("content")
+                    or ""
+                )
+
+                code = code[:_MAX_CODE_CHARS]
+
+                function_tokens = _tokenize(function_name)
+                class_tokens = _tokenize(class_name)
+                code_tokens = _tokenize(code)
+
+                metadata = dict(payload)
+                metadata["_qdrant_collection"] = collection_name
+
+                chunk = RetrievedChunk(
+                    chunk_hash=_as_string(
+                        payload.get("chunk_hash") or point_id
+                    ),
+                    file_path=_as_string(
+                        payload.get("file_path")
+                        or payload.get("source")
+                        or ""
+                    ),
+                    content=code,
+                    score=0.0,
+                    metadata=metadata,
+                )
+
+                indexed_chunks.append(
+                    _IndexedChunk(
+                        point_id=point_id,
+                        payload=payload,
+                        function_tokens=function_tokens,
+                        class_tokens=class_tokens,
+                        code_tokens=code_tokens,
+                        chunk=chunk,
                     )
+                )
 
-            # -----------------------------------------------------------
-            # Remove duplicate chunks.
-            # -----------------------------------------------------------
+            print(
+                f"SPARSE SEARCH: Built BM25 index with "
+                f"{len(indexed_chunks)} unique documents"
+            )
 
-            chunks = self._deduplicate_chunks(chunks)
+            # ---------------------------------------------------------------
+            # Step 3: Calculate corpus document frequencies.
+            #
+            # This makes the IDF a real corpus-based BM25 value instead of
+            # assuming that a term occurs in 5% or 15% of documents.
+            # ---------------------------------------------------------------
 
-            # -----------------------------------------------------------
-            # Global ranking.
-            # -----------------------------------------------------------
+            fn_df: Counter[str] = Counter()
+            class_df: Counter[str] = Counter()
+            code_df: Counter[str] = Counter()
 
-            chunks.sort(
-                key=lambda chunk: chunk.score,
+            for item in indexed_chunks:
+                fn_df.update(set(item.function_tokens))
+                class_df.update(set(item.class_tokens))
+                code_df.update(set(item.code_tokens))
+
+            n_docs = len(indexed_chunks)
+
+            # Average field lengths are calculated from the actual corpus.
+            avg_fn_len = (
+                sum(len(item.function_tokens) for item in indexed_chunks)
+                / n_docs
+                if n_docs
+                else 1.0
+            )
+
+            avg_class_len = (
+                sum(len(item.class_tokens) for item in indexed_chunks)
+                / n_docs
+                if n_docs
+                else 1.0
+            )
+
+            avg_code_len = (
+                sum(len(item.code_tokens) for item in indexed_chunks)
+                / n_docs
+                if n_docs
+                else 1.0
+            )
+
+            avg_fn_len = max(avg_fn_len, 1.0)
+            avg_class_len = max(avg_class_len, 1.0)
+            avg_code_len = max(avg_code_len, 1.0)
+
+            # ---------------------------------------------------------------
+            # Step 4: Score every unique document.
+            # ---------------------------------------------------------------
+
+            scored: list[tuple[float, int]] = []
+
+            for index, item in enumerate(indexed_chunks):
+                score = _bm25_score(
+                    item=item,
+                    query_terms=query_terms,
+                    n_docs=n_docs,
+                    fn_df=fn_df,
+                    class_df=class_df,
+                    code_df=code_df,
+                    avg_fn_len=avg_fn_len,
+                    avg_class_len=avg_class_len,
+                    avg_code_len=avg_code_len,
+                )
+
+                if score > 0.0:
+                    scored.append((score, index))
+
+            # Highest score first.
+            scored.sort(
+                key=lambda value: value[0],
                 reverse=True,
             )
 
-            chunks = chunks[:limit]
+            # ---------------------------------------------------------------
+            # Step 5: Convert BM25 results to RetrievedChunk.
+            # ---------------------------------------------------------------
+
+            chunks: list[RetrievedChunk] = []
+
+            seen_chunk_hashes: set[str] = set()
+
+            for score, index in scored:
+                if len(chunks) >= limit:
+                    break
+
+                original_chunk = indexed_chunks[index].chunk
+
+                chunk_hash = original_chunk.chunk_hash
+
+                # Final safety guard against duplicate logical chunks.
+                if chunk_hash in seen_chunk_hashes:
+                    continue
+
+                seen_chunk_hashes.add(chunk_hash)
+
+                metadata = dict(original_chunk.metadata)
+                metadata["_sparse_score"] = float(score)
+                metadata["_lexical_score"] = float(score)
+
+                chunks.append(
+                    RetrievedChunk(
+                        chunk_hash=original_chunk.chunk_hash,
+                        file_path=original_chunk.file_path,
+                        content=original_chunk.content,
+                        score=float(score),
+                        metadata=metadata,
+                    )
+                )
+
+            print(
+                f"SPARSE SEARCH: {len(scored)} unique points "
+                f"scored > 0; returning {len(chunks)} unique chunks"
+            )
+
+            # ---------------------------------------------------------------
+            # Debug output
+            # ---------------------------------------------------------------
 
             print(
                 f"\nSPARSE SEARCH: Retrieved "
-                f"{len(chunks)} global chunks"
+                f"{len(chunks)} lexical chunks"
             )
 
-            for index, chunk in enumerate(
-                chunks[:10],
-                start=1,
-            ):
-
-                print(f"\n--- Sparse Result {index} ---")
+            for idx, chunk in enumerate(chunks[:10], start=1):
+                print(f"\n--- Sparse Result {idx} ---")
 
                 print(
                     "Collection:",
@@ -281,191 +433,397 @@ class SparseSearch:
                     ),
                 )
 
-                print(
-                    "File:",
-                    chunk.file_path,
-                )
+                print("File:", chunk.file_path)
+                print("BM25 Score:", round(chunk.score, 4))
+                print("Chunk Hash:", chunk.chunk_hash)
 
                 print(
-                    "Score:",
-                    chunk.score,
-                )
-
-                print(
-                    "Chunk Hash:",
-                    chunk.chunk_hash,
-                )
-
-                print(
-                    "Code:",
-                    chunk.content[:500],
+                    "Code (first 200 chars):",
+                    chunk.content[:200],
                 )
 
             logger.info(
                 "sparse_search_complete",
                 hits=len(chunks),
-                terms=len(terms),
-                collections=len(collections),
+                terms=len(query_terms),
+                collection=collection_name,
                 repo_name=context.repo_name,
+                total_scrolled=len(unique_points),
+                pages_fetched=pages_fetched,
             )
 
             return chunks
+
         except Exception as exc:
             logger.warning(
                 "sparse_search_failed_continuing_with_dense",
                 error=str(exc),
+                collection=collection_name,
+                repo_name=context.repo_name,
             )
-            print("SPARSE SEARCH FAILED — CONTINUING WITH DENSE RESULTS")
+
+            print(
+                "SPARSE SEARCH FAILED — "
+                "CONTINUING WITH DENSE RESULTS"
+            )
+            print("ERROR:", exc)
+
             return []
 
-    def _build_terms(
-        self,
-        context: SearchContext,
-    ) -> list[str]:
-        """
-        Build a unique list of identifiers and keywords.
 
-        Identifiers are preferred because code symbols are usually
-        more useful than generic natural-language words.
-        """
-
-        raw_terms = (
-            (context.identifiers or [])
-            + (context.keywords or [])
-        )
-
-        if not raw_terms and context.query:
-            raw_terms = [
-                word.strip()
-                for word in context.query.split()
-                if len(word.strip()) > 2
-            ]
-
-        terms: list[str] = []
-        seen: set[str] = set()
-
-        for term in raw_terms:
-
-            if not isinstance(term, str):
-                continue
-
-            normalized = term.strip()
-
-            if not normalized:
-                continue
-
-            key = normalized.lower()
-
-            if key in seen:
-                continue
-
-            seen.add(key)
-            terms.append(normalized)
-
-            if len(terms) >= self._MAX_TERMS:
-                break
-
-        return terms
-
-    @staticmethod
-    def _deduplicate_chunks(
-        chunks: list[RetrievedChunk],
-    ) -> list[RetrievedChunk]:
-        """
-        Remove duplicate chunks.
-
-        Preferred identity:
-            chunk_hash
-
-        Fallback identity:
-            collection + file_path + content
-
-        Highest-scoring copy is retained.
-        """
-
-        unique_chunks: dict[str, RetrievedChunk] = {}
-
-        for chunk in chunks:
-
-            collection = str(
-                chunk.metadata.get(
-                    "_qdrant_collection",
-                    "",
-                )
-            )
-
-            chunk_hash = str(
-                chunk.chunk_hash or "",
-            )
-
-            if chunk_hash:
-                key = f"hash:{chunk_hash}"
-            else:
-                key = (
-                    f"fallback:"
-                    f"{collection}:"
-                    f"{chunk.file_path}:"
-                    f"{chunk.content}"
-                )
-
-            existing = unique_chunks.get(key)
-
-            if existing is None:
-                unique_chunks[key] = chunk
-                continue
-
-            if chunk.score > existing.score:
-                unique_chunks[key] = chunk
-
-        return list(unique_chunks.values())
+# ---------------------------------------------------------------------------
+# Query term construction
+# ---------------------------------------------------------------------------
 
 
-def _weighted_lexical_score(
-    function_name: str,
-    class_name: str,
-    code: str,
-    terms: list[str],
-) -> float:
+def _build_terms(context: SearchContext) -> list[str]:
     """
-    Calculate a weighted lexical relevance score.
+    Build code-aware query terms.
 
     Priority:
+        1. Explicit identifiers
+        2. Extracted keywords
+        3. Raw query words
 
-        function_name -> 1.0
-        class_name    -> 0.8
-        code          -> 0.4
+    Both phrases and code identifiers are split into searchable tokens.
 
-    The score is normalized by the number of query terms.
+    Example:
 
-    This is NOT BM25.
+        "Add functionality to reset the file status tracking."
+
+    becomes approximately:
+
+        ["add", "functionality", "reset", "file", "status", "tracking"]
+
+    An identifier such as:
+
+        "getFileProcessStatus"
+
+    becomes:
+
+        ["getfileprocessstatus", "get", "file", "process", "status"]
     """
 
-    if not terms:
+    raw_terms: list[str] = []
+
+    raw_terms.extend(
+        term
+        for term in (context.identifiers or [])
+        if isinstance(term, str)
+    )
+
+    raw_terms.extend(
+        term
+        for term in (context.keywords or [])
+        if isinstance(term, str)
+    )
+
+    # Always include the raw query as a fallback/additional lexical signal.
+    if context.query:
+        raw_terms.append(context.query)
+
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    for raw_term in raw_terms:
+        if not isinstance(raw_term, str):
+            continue
+
+        for token in _tokenize(raw_term):
+            if len(token) <= 1:
+                continue
+
+            if token in seen:
+                continue
+
+            seen.add(token)
+            terms.append(token)
+
+            if len(terms) >= _MAX_TERMS:
+                return terms
+
+    return terms
+
+
+# ---------------------------------------------------------------------------
+# Code-aware tokenizer
+# ---------------------------------------------------------------------------
+
+
+def _tokenize(text: str) -> list[str]:
+    """
+    Convert natural language and source-code identifiers into tokens.
+
+    Examples:
+
+        getFileProcessStatus
+        ->
+        getfileprocessstatus
+        get
+        file
+        process
+        status
+
+        fileStatusMap
+        ->
+        filestatusmap
+        file
+        status
+        map
+    """
+
+    if not text:
+        return []
+
+    text = str(text)
+
+    # Handle acronyms before camelCase splitting.
+    # HTTPServer -> HTTP Server
+    text = re.sub(
+        r"([A-Z]+)([A-Z][a-z])",
+        r"\1 \2",
+        text,
+    )
+
+    # camelCase / PascalCase:
+    # getFile -> get File
+    text = re.sub(
+        r"([a-z0-9])([A-Z])",
+        r"\1 \2",
+        text,
+    )
+
+    # Replace separators with spaces.
+    text = re.sub(
+        r"[^a-zA-Z0-9]+",
+        " ",
+        text,
+    )
+
+    raw_tokens = [
+        token.lower()
+        for token in text.split()
+        if len(token) > 1
+    ]
+
+    tokens: list[str] = []
+
+    for token in raw_tokens:
+        # Preserve the complete identifier token.
+        tokens.append(token)
+
+        # Add useful subparts from long code identifiers.
+        if len(token) > 3:
+            parts = _split_identifier_token(token)
+
+            for part in parts:
+                if len(part) > 1 and part not in tokens:
+                    tokens.append(part)
+
+    return tokens
+
+
+def _split_identifier_token(token: str) -> list[str]:
+    """
+    Split common concatenated identifier words.
+
+    This is intentionally conservative. The complete identifier remains
+    in the token list, while common code words are extracted where possible.
+    """
+
+    common_parts = (
+        "process",
+        "status",
+        "file",
+        "user",
+        "record",
+        "service",
+        "controller",
+        "repository",
+        "repo",
+        "create",
+        "update",
+        "delete",
+        "remove",
+        "reset",
+        "clear",
+        "get",
+        "set",
+        "find",
+        "save",
+        "upload",
+        "download",
+        "validate",
+        "check",
+        "handle",
+        "create",
+        "add",
+    )
+
+    parts: list[str] = []
+    remaining = token
+
+    # Longest terms first prevents smaller terms from consuming the
+    # identifier prematurely.
+    for part in sorted(
+        set(common_parts),
+        key=len,
+        reverse=True,
+    ):
+        if part in remaining:
+            parts.append(part)
+
+    return parts
+
+
+# ---------------------------------------------------------------------------
+# BM25 scoring
+# ---------------------------------------------------------------------------
+
+
+def _bm25_score(
+    item: _IndexedChunk,
+    query_terms: list[str],
+    n_docs: int,
+    fn_df: Counter[str],
+    class_df: Counter[str],
+    code_df: Counter[str],
+    avg_fn_len: float,
+    avg_class_len: float,
+    avg_code_len: float,
+) -> float:
+    """
+    Calculate weighted BM25 for one indexed chunk.
+
+    Each field is scored independently:
+
+        function_name -> weight 4.0
+        class_name    -> weight 3.0
+        code          -> weight 1.0
+
+    The field scores are then combined.
+    """
+
+    if not query_terms or n_docs <= 0:
         return 0.0
 
-    function_lower = function_name.lower()
-    class_lower = class_name.lower()
-    code_lower = code.lower()
+    total = 0.0
 
-    total_score = 0.0
+    for term in query_terms:
+        term = term.lower()
 
-    for term in terms:
+        # ---------------------------------------------------------------
+        # Function name
+        # ---------------------------------------------------------------
 
-        term_lower = term.lower()
+        total += _field_bm25(
+            tokens=item.function_tokens,
+            term=term,
+            document_frequency=fn_df.get(term, 0),
+            n_docs=n_docs,
+            average_length=avg_fn_len,
+            weight=_WEIGHT_FUNCTION_NAME,
+        )
 
-        # Strongest signal:
-        # exact/lexical match in function name.
-        if term_lower in function_lower:
-            total_score += 1.0
+        # ---------------------------------------------------------------
+        # Class name
+        # ---------------------------------------------------------------
 
-        # Second strongest signal:
-        # match in class name.
-        elif term_lower in class_lower:
-            total_score += 0.8
+        total += _field_bm25(
+            tokens=item.class_tokens,
+            term=term,
+            document_frequency=class_df.get(term, 0),
+            n_docs=n_docs,
+            average_length=avg_class_len,
+            weight=_WEIGHT_CLASS_NAME,
+        )
 
-        # Fallback:
-        # match anywhere in source code.
-        elif term_lower in code_lower:
-            total_score += 0.4
+        # ---------------------------------------------------------------
+        # Code
+        # ---------------------------------------------------------------
 
-    return total_score / len(terms)
+        total += _field_bm25(
+            tokens=item.code_tokens,
+            term=term,
+            document_frequency=code_df.get(term, 0),
+            n_docs=n_docs,
+            average_length=avg_code_len,
+            weight=_WEIGHT_CODE,
+        )
+
+    return total
+
+
+def _field_bm25(
+    tokens: list[str],
+    term: str,
+    document_frequency: int,
+    n_docs: int,
+    average_length: float,
+    weight: float,
+) -> float:
+    """Calculate one weighted BM25 field contribution."""
+
+    if not tokens:
+        return 0.0
+
+    tf = tokens.count(term)
+
+    if tf <= 0:
+        return 0.0
+
+    if document_frequency <= 0:
+        return 0.0
+
+    # Standard BM25 IDF.
+    idf = math.log(
+        1.0
+        + (
+            (n_docs - document_frequency + 0.5)
+            / (document_frequency + 0.5)
+        )
+    )
+
+    document_length = len(tokens)
+
+    length_ratio = (
+        document_length / average_length
+        if average_length > 0
+        else 1.0
+    )
+
+    denominator = (
+        tf
+        + _BM25_K1
+        * (
+            (1.0 - _BM25_B)
+            + (_BM25_B * length_ratio)
+        )
+    )
+
+    if denominator <= 0:
+        return 0.0
+
+    tf_component = (
+        tf * (_BM25_K1 + 1.0)
+    ) / denominator
+
+    return weight * idf * tf_component
+
+
+# ---------------------------------------------------------------------------
+# Utility
+# ---------------------------------------------------------------------------
+
+
+def _as_string(value: Any) -> str:
+    """Safely convert payload values to strings."""
+
+    if value is None:
+        return ""
+
+    if isinstance(value, str):
+        return value
+
+    return str(value)
+
