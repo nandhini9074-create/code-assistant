@@ -222,6 +222,10 @@ class SearchService:
                     repo_name=context.repo_name,
                 )
 
+                # Snapshot early_exit before execution so we can
+                # detect whether this stage newly triggered it.
+                early_exit_before = context.early_exit
+
                 try:
 
                     await stage.execute(context)
@@ -236,10 +240,11 @@ class SearchService:
 
 
                     # ---------------------------------------------
-                    # Log early exit if this stage triggered one.
+                    # Log early exit only when this stage is the
+                    # one that newly triggered it.
                     # ---------------------------------------------
 
-                    if context.early_exit:
+                    if context.early_exit and not early_exit_before:
 
                         logger.warning(
                             "search_pipeline_early_exit",

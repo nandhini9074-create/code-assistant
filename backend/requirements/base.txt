@@ -54,3 +54,5 @@ aiofiles>=23.2.0                   # Async file I/O
 
 # ── ML Reranker ───────────────────────────────────────────────────────────────
 sentence-transformers>=3.0.0,<4.0.0
+
+toons>=0.7.0

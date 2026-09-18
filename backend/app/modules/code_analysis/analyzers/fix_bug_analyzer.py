@@ -1,5 +1,7 @@
+
 """
 app/modules/code_analysis/analyzers/fix_bug_analyzer.py
+
 Analyzer for FIX_BUG intent.
 """
 
@@ -7,7 +9,10 @@ from __future__ import annotations
 
 from app.core.logging import get_logger
 from app.modules.code_analysis.analyzers.base_analyzer import BaseAnalyzer
-from app.modules.code_analysis.domain.analysis_domain import AnalysisResult, ValidationResult
+from app.modules.code_analysis.domain.analysis_domain import (
+    AnalysisResult,
+    ValidationResult,
+)
 from app.modules.code_analysis.prompts.fix_bug_prompt import (
     FIX_BUG_SYSTEM_PROMPT,
     FIX_BUG_USER_PROMPT,
@@ -17,15 +22,39 @@ from app.modules.search.domain.search_domain import SearchContext
 
 logger = get_logger(__name__)
 
+
+# Keep the output bounded so the model does not spend the entire
+# completion budget generating a large code response.
+MAX_OUTPUT_TOKENS = 2048
+
+# Maximum repository-context characters sent to the FIX_BUG analyzer.
+#
+# This is a safety limit for the analysis prompt. The retrieved context
+# should already have been selected by the search pipeline.
+MAX_CONTEXT_CHARS = 12000
+
+
 _SCHEMA = {
     "type": "object",
     "properties": {
-        "current_behavior": {"type": "string"},
-        "problematic_code": {"type": "string"},
-        "likely_cause": {"type": "string"},
-        "proposed_fix": {"type": "string"},
-        "proposed_change": {"type": "string"},
-        "suggested_code": {"type": "string"},
+        "current_behavior": {
+            "type": "string",
+        },
+        "problematic_code": {
+            "type": "string",
+        },
+        "likely_cause": {
+            "type": "string",
+        },
+        "proposed_fix": {
+            "type": "string",
+        },
+        "proposed_change": {
+            "type": "string",
+        },
+        "suggested_code": {
+            "type": "string",
+        },
     },
     "required": [
         "current_behavior",
@@ -43,22 +72,66 @@ class FixBugAnalyzer(BaseAnalyzer):
         self.llm_service = llm_service
 
     async def analyze(self, context: SearchContext) -> AnalysisResult:
-        """Analyze fixing a bug using the LLM and the retrieved code context."""
+        """
+        Analyze a FIX_BUG request using the retrieved repository context.
+
+        The analyzer:
+        1. Uses the original bug query.
+        2. Adds validation feedback when retrying.
+        3. Limits the repository context sent to the LLM.
+        4. Requests a compact structured JSON response.
+        5. Marks failed LLM analysis as invalid.
+        """
+
         query_text = context.query
+
+        # Add validation feedback only when a previous validation attempt
+        # has provided concrete feedback.
         if context.validation_feedback:
-            feedback_str = "\n".join(f"- {err}" for err in context.validation_feedback)
-            query_text += f"\n\n[VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT - FIX THESE ISSUES]:\n{feedback_str}"
+            feedback_str = "\n".join(
+                f"- {error}"
+                for error in context.validation_feedback
+            )
+
+            query_text += (
+                "\n\n"
+                "[VALIDATION FEEDBACK FROM PREVIOUS ATTEMPT - "
+                "FIX THESE ISSUES]:\n"
+                f"{feedback_str}"
+            )
+
+        # Limit the context before constructing the final LLM prompt.
+        repository_context = _limit_context(
+            context.llm_context or ""
+        )
 
         user_prompt = FIX_BUG_USER_PROMPT.format(
-            context=context.llm_context or "",
+            context=repository_context,
             query=query_text,
         )
+
+        # Useful diagnostic information for token/prompt debugging.
+        logger.info(
+            "fix_bug_prompt_size",
+            prompt_chars=len(user_prompt),
+            context_chars=len(repository_context),
+            query_chars=len(query_text),
+            validation_feedback_count=len(context.validation_feedback),
+        )
+
         try:
             raw = await self.llm_service.provider.complete_json(
                 prompt=user_prompt,
                 system_prompt=FIX_BUG_SYSTEM_PROMPT,
                 schema=_SCHEMA,
+                max_tokens=MAX_OUTPUT_TOKENS,
             )
+
+            if not isinstance(raw, dict):
+                raise ValueError(
+                    "FIX_BUG LLM response was not a JSON object."
+                )
+
             analysis = _coerce(
                 raw,
                 [
@@ -70,20 +143,90 @@ class FixBugAnalyzer(BaseAnalyzer):
                     "suggested_code",
                 ],
             )
-        except Exception as exc:
-            logger.error("fix_bug_analyzer_failed", exc_info=exc)
-            analysis = {"error": str(exc)}
 
-        return AnalysisResult(
-            intent="FIX_BUG",
-            analysis=analysis,
-            validation_result=ValidationResult(is_valid=True),
-        )
+            logger.info(
+                "fix_bug_analysis_completed",
+                suggested_code_chars=len(
+                    analysis.get("suggested_code", "")
+                ),
+                problematic_code_chars=len(
+                    analysis.get("problematic_code", "")
+                ),
+            )
+
+            return AnalysisResult(
+                intent="FIX_BUG",
+                analysis=analysis,
+                validation_result=ValidationResult(
+                    is_valid=True,
+                ),
+            )
+
+        except Exception as exc:
+            logger.error(
+                "fix_bug_analyzer_failed",
+                exc_info=exc,
+            )
+
+            # IMPORTANT:
+            # Do not mark an analysis as valid when the LLM request failed.
+            return AnalysisResult(
+                intent="FIX_BUG",
+                analysis={
+                    "error": str(exc),
+                    "current_behavior": "",
+                    "problematic_code": "",
+                    "likely_cause": "",
+                    "proposed_fix": "",
+                    "proposed_change": "",
+                    "suggested_code": "",
+                },
+                validation_result=ValidationResult(
+                    is_valid=False,
+                ),
+            )
+
+
+def _limit_context(context_text: str) -> str:
+    """
+    Limit repository context sent to the FIX_BUG LLM.
+
+    The search pipeline may retrieve several chunks. Sending all of them
+    can unnecessarily increase prompt size and make structured JSON
+    generation harder.
+
+    The beginning of the context is preserved because ContextBuilder
+    normally places the most relevant/primary code there.
+    """
+
+    if not context_text:
+        return ""
+
+    if len(context_text) <= MAX_CONTEXT_CHARS:
+        return context_text
+
+    logger.warning(
+        "fix_bug_context_truncated",
+        original_chars=len(context_text),
+        max_chars=MAX_CONTEXT_CHARS,
+    )
+
+    return (
+        context_text[:MAX_CONTEXT_CHARS]
+        + "\n\n"
+        "[CONTEXT TRUNCATED FOR FIX_BUG ANALYSIS]\n"
+        "Only the provided context above may be used."
+    )
 
 
 def _coerce(raw: dict, required_keys: list[str]) -> dict:
-    """Return raw if all keys present; add missing keys as empty defaults."""
-    for k in required_keys:
-        if k not in raw:
-            raw[k] = ""
+    """
+    Return raw with missing required keys added as empty strings.
+    """
+
+    for key in required_keys:
+        if key not in raw:
+            raw[key] = ""
+
     return raw
+

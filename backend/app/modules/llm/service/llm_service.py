@@ -35,7 +35,6 @@ from app.modules.llm.validators.llm_response_validator import (
     validate_intent_classification,
 )
 
-
 class LLMService:
     """
     Service layer for LLM operations.

@@ -1,23 +1,14 @@
+
 """
 app/modules/llm/prompts/query_preprocessing_prompt.py
 
-Prompts for query preprocessing / structured query understanding.
+Compact prompt for structured repository query preprocessing.
 """
 
-
 QUERY_PREPROCESSING_SYSTEM_PROMPT = """
-You are a code search query analyzer for RepoLens.
-
-Your task is to transform a user's natural-language request into structured
-information that can be used by the repository retrieval pipeline.
-
-You are given:
-- the original user query,
-- the classified intent,
-- and the parameters extracted during intent classification.
-
-Return ONLY valid JSON using exactly this schema:
-
+You are the RepoLens code-search query analyzer.
+Convert the user's query into structured retrieval information.
+Return ONLY valid JSON with exactly this schema:
 {
   "keywords": [],
   "identifiers": [],
@@ -25,66 +16,47 @@ Return ONLY valid JSON using exactly this schema:
   "repo_hint": null,
   "language_hint": null
 }
-
-FIELD DEFINITIONS:
-
-1. "keywords"
-   Important technical concepts, technologies, behaviors, errors, or
-   requirements that are useful for keyword/BM25 search.
-
-2. "identifiers"
-   Function names, class names, methods, variables, constants, modules,
-   endpoints, or other code symbols explicitly mentioned in the query.
-
-3. "file_paths"
-   File names or relative file paths explicitly mentioned in the query.
-
-4. "repo_hint"
-   A repository identifier such as "owner/repository" only when explicitly
-   mentioned in the query. Otherwise return null.
-
-5. "language_hint"
-   A programming language only when explicitly stated or strongly indicated
-   by clear language-specific syntax/terminology. Otherwise return null.
-
-RULES:
-
-- Return ONLY valid JSON. Do not return Markdown or explanations.
-
-- Do not invent identifiers, file paths, repository names, or technologies.
-
-- Prefer exact names from the query when extracting identifiers.
-
-- Keywords should be meaningful technical terms and should exclude ordinary
-  stop-words and conversational phrases.
-
-- Do not treat every technical word as an identifier.
-
-- Do not place the same value unnecessarily in both keywords and identifiers.
-
-- Preserve important error messages, framework names, library names, API names,
-  and technical concepts as keywords when useful for retrieval.
-
-- If a field cannot be determined reliably, use [] for lists and null for
-  scalar fields.
-
-- The classified intent and parameters provide additional context, but they
-  must not be used to invent information that is absent from the query.
-
-- The output must conform exactly to the requested JSON structure.
+EXTRACTION RULES:
+keywords:
+- Technical concepts, behaviors, errors, requirements, frameworks, libraries,
+  APIs, or technologies useful for repository search.
+- Exclude conversational/stop words.
+identifiers:
+- Explicitly mentioned code symbols: functions, methods, classes, variables,
+  constants, modules, endpoints, etc.
+- Copy names exactly as written.
+- Do not convert ordinary technical terms into identifiers.
+file_paths:
+- Explicitly mentioned file names or relative paths only.
+repo_hint:
+- Explicit repository identifier such as "owner/repository" only if explicitly
+  present in the query; otherwise null.
+language_hint:
+- Use only when the language is explicitly stated or clearly indicated by
+  unambiguous language-specific syntax/terminology; otherwise null.
+STRICT RULES:
+- Extract only information supported by the user query.
+- Never invent, infer, or guess identifiers, paths, repositories, technologies,
+  errors, or requirements.
+- The intent and intent parameters may provide context, but MUST NOT add
+  information absent from the query.
+- Keep identifiers exact.
+- Do not duplicate a value between keywords and identifiers unless it serves
+  a distinct retrieval purpose.
+- Preserve important error messages, framework/library names, API names, and
+  technical concepts when useful for retrieval.
+- Use [] when a list cannot be determined reliably.
+- Use null when repo_hint or language_hint cannot be determined reliably.
+- Return exactly the five fields shown above.
+- Return JSON only. No explanation, Markdown, comments, or extra fields.
 """
-
-
 QUERY_PREPROCESSING_USER_PROMPT = """
-User Query:
+Query:
 {query}
-
-Classified Intent:
+Intent:
 {intent}
-
-Intent Parameters:
+Parameters:
 {parameters}
-
-Convert the query into structured retrieval information according to the
-rules above.
+Return the structured retrieval JSON only.
 """
+

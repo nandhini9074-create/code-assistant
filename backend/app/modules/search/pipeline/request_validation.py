@@ -34,4 +34,3 @@ class RequestValidationStage:
             raise ValidationError(
                 "query must be at least 3 characters"
             )
-

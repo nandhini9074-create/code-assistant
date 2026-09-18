@@ -80,4 +80,3 @@ class SearchResponse(BaseSchema):
     confidence: str | None = None
 
     early_exit: dict[str, Any] | None = None
-

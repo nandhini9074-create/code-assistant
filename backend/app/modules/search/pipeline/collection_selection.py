@@ -161,4 +161,3 @@ class CollectionSelectionStage:
             normalized_repo_name=normalized_repo_name,
             collection=selected_collection,
         )
-

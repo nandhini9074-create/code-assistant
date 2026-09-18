@@ -1,4 +1,3 @@
-
 """
 app/modules/search/retrieval/reranker.py
 
@@ -46,13 +45,28 @@ class Reranker:
         """
 
         if top_k <= 0:
+            logger.warning(
+                "reranking_skipped_invalid_top_k",
+                top_k=top_k,
+            )
             return []
 
         if not candidates:
+            logger.info(
+                "reranking_skipped_no_candidates",
+            )
             return []
 
         identifiers = self._normalize_terms(context.identifiers)
         keywords = self._normalize_terms(context.keywords)
+
+        logger.info(
+            "reranking_started",
+            candidate_count=len(candidates),
+            top_k=top_k,
+            identifier_count=len(identifiers),
+            keyword_count=len(keywords),
+        )
 
         scored_candidates: list[tuple[float, int, RetrievedChunk]] = []
 
@@ -93,10 +107,18 @@ class Reranker:
             reverse=True,
         )
 
-        return [
+        results = [
             chunk
             for _, _, chunk in scored_candidates[:top_k]
         ]
+
+        logger.info(
+            "reranking_completed",
+            candidate_count=len(candidates),
+            returned_count=len(results),
+        )
+
+        return results
 
     def _calculate_score(
         self,

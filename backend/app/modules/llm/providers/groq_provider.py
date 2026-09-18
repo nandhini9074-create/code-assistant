@@ -1,3 +1,4 @@
+
 """
 app/modules/llm/providers/groq_provider.py
 
@@ -9,6 +10,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import structlog
+import structlog.contextvars
 from openai import AsyncOpenAI
 
 from app.config import get_settings
@@ -20,6 +23,26 @@ from app.modules.llm.schemas.llm_schema import LLMResponse
 
 
 logger = get_logger(__name__)
+
+
+def _extract_tokens(usage: Any) -> tuple[int, int, int]:
+    """Safely extract prompt, completion, and total token counts."""
+
+    if not usage:
+        return 0, 0, 0
+
+    if isinstance(usage, dict):
+        return (
+            int(usage.get("prompt_tokens") or 0),
+            int(usage.get("completion_tokens") or 0),
+            int(usage.get("total_tokens") or 0),
+        )
+
+    return (
+        int(getattr(usage, "prompt_tokens", 0) or 0),
+        int(getattr(usage, "completion_tokens", 0) or 0),
+        int(getattr(usage, "total_tokens", 0) or 0),
+    )
 
 
 class GroqProvider(BaseLLMProvider):
@@ -51,7 +74,7 @@ class GroqProvider(BaseLLMProvider):
         temperature: float = 0.0,
     ) -> LLMResponse:
         """
-        Generate a text completion using the configured Groq model.
+        Generate a normal text completion using Groq.
         """
 
         messages: list[dict[str, str]] = []
@@ -79,20 +102,39 @@ class GroqProvider(BaseLLMProvider):
                 max_tokens=max_tokens,
             )
 
+            if not response.choices:
+                raise LLMError("LLM returned an empty response")
+
             content = response.choices[0].message.content
 
             if not content:
-                raise LLMError(
-                    "LLM returned an empty response"
-                )
+                raise LLMError("LLM returned an empty response")
+
+            # Extract and log token usage.
+            ctx_vars = structlog.contextvars.get_contextvars()
+
+            inp_t, out_t, total_t = _extract_tokens(
+                getattr(response, "usage", None)
+            )
+
+            logger.info(
+                "groq_token_usage",
+                provider="groq",
+                model=self.settings.groq_model,
+                stage=ctx_vars.get("stage"),
+                request_id=ctx_vars.get("request_id"),
+                input_tokens=inp_t,
+                output_tokens=out_t,
+                total_tokens=total_t,
+            )
 
             usage: dict[str, int] = {}
 
-            if response.usage:
+            if getattr(response, "usage", None):
                 usage = {
-                    "prompt_tokens": response.usage.prompt_tokens,
-                    "completion_tokens": response.usage.completion_tokens,
-                    "total_tokens": response.usage.total_tokens,
+                    "prompt_tokens": inp_t,
+                    "completion_tokens": out_t,
+                    "total_tokens": total_t,
                 }
 
             return LLMResponse(
@@ -102,10 +144,10 @@ class GroqProvider(BaseLLMProvider):
                 usage=usage,
             )
 
-        except Exception as exc:
-            if isinstance(exc, LLMError):
-                raise
+        except LLMError:
+            raise
 
+        except Exception as exc:
             logger.error(
                 "groq_generation_failed",
                 exc_info=exc,
@@ -126,34 +168,29 @@ class GroqProvider(BaseLLMProvider):
         """
         Generate a structured JSON object using Groq.
 
-        The Groq API is configured with json_object response format,
-        so all structured responses must have a JSON object at the
-        top level.
+        Groq is requested to return a JSON object through the
+        OpenAI-compatible response_format option.
         """
 
-        sys_prompt = (
+        base_prompt = (
             system_prompt
             or "You are a helpful assistant."
         )
 
         if schema:
             enhanced_system_prompt = (
-                f"{sys_prompt}\n\n"
-                "You MUST output raw, valid JSON only. "
-                "Do not use markdown code blocks. "
-                "Do not add explanations before or after the JSON. "
-                "Your response must strictly conform to "
-                "the following JSON schema:\n"
-                f"{json.dumps(schema, indent=2)}"
+                f"{base_prompt}\n\n"
+                "Return only valid JSON.\n"
+                "The response must conform to this schema:\n"
+                f"{json.dumps(schema, separators=(',', ':'))}"
             )
         else:
             enhanced_system_prompt = (
-                f"{sys_prompt}\n\n"
-                "You MUST output raw, valid JSON only. "
-                "Do not use markdown formatting."
+                f"{base_prompt}\n\n"
+                "Return only valid JSON."
             )
 
-        messages = [
+        messages: list[dict[str, str]] = [
             {
                 "role": "system",
                 "content": enhanced_system_prompt,
@@ -171,24 +208,24 @@ class GroqProvider(BaseLLMProvider):
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_format={
-                    "type": "json_object"
+                    "type": "json_object",
                 },
             )
+
+            if not response.choices:
+                raise LLMError("LLM returned an empty response")
 
             content = response.choices[0].message.content
 
             if not content:
-                raise LLMError(
-                    "LLM returned an empty response"
-                )
+                raise LLMError("LLM returned an empty response")
 
+            # Parse JSON separately from the API request.
             try:
                 parsed = json.loads(content)
-
             except json.JSONDecodeError as exc:
                 raise LLMParseError(
-                    "Failed to parse Groq response as JSON: "
-                    f"{exc}"
+                    f"Failed to parse Groq response as JSON: {exc}"
                 ) from exc
 
             if not isinstance(parsed, dict):
@@ -196,16 +233,33 @@ class GroqProvider(BaseLLMProvider):
                     "Groq JSON response must be an object"
                 )
 
+            # Log token usage only after successful response parsing.
+            ctx_vars = structlog.contextvars.get_contextvars()
+
+            inp_t, out_t, total_t = _extract_tokens(
+                getattr(response, "usage", None)
+            )
+
+            logger.info(
+                "groq_token_usage",
+                provider="groq",
+                model=self.settings.groq_model,
+                stage=ctx_vars.get("stage"),
+                request_id=ctx_vars.get("request_id"),
+                input_tokens=inp_t,
+                output_tokens=out_t,
+                total_tokens=total_t,
+            )
+
             return parsed
 
+        except LLMParseError:
+            raise
+
+        except LLMError:
+            raise
+
         except Exception as exc:
-
-            if isinstance(
-                exc,
-                (LLMError, LLMParseError),
-            ):
-                raise
-
             logger.error(
                 "groq_structured_generation_failed",
                 exc_info=exc,
@@ -272,3 +326,6 @@ class GroqProvider(BaseLLMProvider):
             max_tokens=max_tokens,
             temperature=temp,
         )
+
+
+

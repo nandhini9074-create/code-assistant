@@ -208,8 +208,11 @@ class CodeAnalysisService:
 
         user_prompt = (
             f"User Query:\n{context.query}\n\n"
-            f"Retrieved Repository Context:\n"
-            f"{context.llm_context or '(No context)'}"
+            f"TOON-Encoded Repository Context:\n"
+            f"{context.llm_context or '(No context)'}\n\n"
+            f"The context above is encoded in TOON format: the metadata table "
+            f"identifies each snippet by repository, file_path, function/class name, "
+            f"and line range. Source code follows in CODE BLOCKS."
         )
 
         system_prompt = (
@@ -217,6 +220,13 @@ class CodeAnalysisService:
             "codebase analyzer.\n"
             "Your task is to answer the user query based ONLY on the "
             "provided retrieved repository context.\n\n"
+            "The repository Context is encoded in TOON (Token-Oriented Object "
+            "Notation) format. TOON uses a compact tabular layout: the header row "
+            "lists field names once, and each subsequent row is the corresponding "
+            "comma-separated values for one code snippet. Fields: repository, "
+            "file_path, function_name, class_name, chunk_type, start_line, "
+            "end_line, language. The actual source code for each snippet "
+            "follows in the CODE BLOCKS section.\n\n"
             "CRITICAL RULES:\n"
             "1. Base your answer only on the supplied repository context.\n"
             "2. Identify the relevant repository, file path, "
@@ -230,7 +240,13 @@ class CodeAnalysisService:
             "6. This is a RETRIEVE request. Do NOT propose bug fixes, "
             "feature changes, refactoring, optimization, or replacement code "
             "unless the user explicitly asks for a modification.\n"
-            "7. The answer should focus on identifying and explaining the "
+            "7. If multiple retrieved snippets contain the same function or "
+            "method name, do not assume one is the target based on retrieval "
+            "order, ranking, or any primary/relevance marker. Use the file "
+            "path, class name, source code, and user query together to identify "
+            "the relevant code. If the target cannot be determined reliably, "
+            "state the ambiguity instead of guessing.\n"
+            "8. The answer should focus on identifying and explaining the "
             "existing code."
         )
 

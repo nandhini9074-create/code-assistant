@@ -13,17 +13,13 @@ Provides:
 """
 
 from __future__ import annotations
-
 import logging
 import logging.handlers
 import os
 import sys
 from pathlib import Path
 from typing import Any
-
 import structlog
-
-
 # ============================================================
 # LOG FILE CONFIGURATION
 # ============================================================
@@ -77,6 +73,16 @@ _SECRET_KEYS: frozenset[str] = frozenset(
     }
 )
 
+_EXEMPT_KEYS: frozenset[str] = frozenset(
+    {
+        "input_tokens",
+        "output_tokens",
+        "total_tokens",
+        "prompt_tokens",
+        "completion_tokens",
+    }
+)
+
 
 def _scrub_secrets(
     _logger: Any,
@@ -88,11 +94,11 @@ def _scrub_secrets(
     Prevents accidental credential leakage in logs.
     """
     for key in list(event_dict.keys()):
+        if key.lower() in _EXEMPT_KEYS:
+            continue
         if any(secret in key.lower() for secret in _SECRET_KEYS):
             event_dict[key] = "***REDACTED***"
     return event_dict
-
-
 # ============================================================
 # CONFIGURE LOGGING
 # ============================================================
