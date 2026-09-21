@@ -43,10 +43,8 @@ class RepositoryRepository:
 
     async def get_by_full_name(self, full_name: str) -> Repository | None:
         """Get repository by full name (owner/repo) or by matching URL."""
-        # full_name is "owner/repo" from GitHub. Extract the repo slug for name comparison.
-        slug = full_name.split("/")[-1] if "/" in full_name else full_name
+        # Ensure we only match by URL endings that represent the exact owner/repo to avoid cross-owner collisions.
         stmt = select(Repository).where(
-            (Repository.repo_name == slug) |
             (Repository.repo_url.endswith(f"/{full_name}")) |
             (Repository.repo_url.endswith(f"/{full_name}.git"))
         )
