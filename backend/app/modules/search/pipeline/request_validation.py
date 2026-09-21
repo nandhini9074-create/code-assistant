@@ -1,4 +1,3 @@
-
 """
 app/modules/search/pipeline/request_validation.py
 
@@ -12,6 +11,9 @@ from __future__ import annotations
 
 from app.core.exceptions import ValidationError
 from app.modules.search.domain.search_domain import SearchContext
+
+
+MAX_QUERY_LENGTH = 10_000
 
 
 class RequestValidationStage:
@@ -30,7 +32,14 @@ class RequestValidationStage:
                 "query is required"
             )
 
-        if len(context.query.strip()) < 3:
+        query = context.query.strip()
+
+        if len(query) < 3:
             raise ValidationError(
                 "query must be at least 3 characters"
+            )
+
+        if len(query) > MAX_QUERY_LENGTH:
+            raise ValidationError(
+                f"query must not exceed {MAX_QUERY_LENGTH} characters"
             )
