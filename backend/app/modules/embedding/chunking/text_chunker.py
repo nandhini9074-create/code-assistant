@@ -69,8 +69,39 @@ def chunk_text(
             current_chunk_size = overlap_len
             current_start_line = i - len(overlap_lines)
             
-        current_chunk_lines.append(line)
-        current_chunk_size += line_len
+        # If the line itself is larger than the max chunk size, we MUST force a split.
+        if line_len > max_chunk_size:
+            offset = 0
+            while offset < line_len:
+                end_offset = min(offset + max_chunk_size, line_len)
+                sub_line = line[offset:end_offset]
+                
+                chunk_dict = {
+                    "content": sub_line,
+                    "start_line": i,
+                    "end_line": i,
+                    "type": "text",
+                    "function_name": None,
+                    "class_name": None,
+                    "docstring": None,
+                    "metadata": dict(base_meta),
+                }
+                chunks.append(chunk_dict)
+                
+                # If we've reached the end of the line, break
+                if end_offset == line_len:
+                    break
+                    
+                # Advance with overlap
+                offset += max_chunk_size - overlap_size
+                
+            # Reset the current chunk tracker since we just emitted this entire line
+            current_chunk_lines = []
+            current_chunk_size = 0
+            current_start_line = i + 1
+        else:
+            current_chunk_lines.append(line)
+            current_chunk_size += line_len
         
     if current_chunk_lines:
         chunk_dict = {
