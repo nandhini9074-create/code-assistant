@@ -38,6 +38,9 @@ from app.modules.search.pipeline.intent_classification import (
 from app.modules.search.pipeline.query_preprocessing import (
     QueryPreprocessingStage,
 )
+from app.modules.search.pipeline.repository_identification import (
+    RepositoryIdentificationStage,
+)
 from app.modules.search.pipeline.collection_selection import (
     CollectionSelectionStage,
 )
@@ -86,6 +89,7 @@ class SearchService:
         val_stage: RequestValidationStage,
         intent_stage: IntentClassificationStage,
         query_prep_stage: QueryPreprocessingStage,
+        repository_identification_stage: RepositoryIdentificationStage,
         coll_sel_stage: CollectionSelectionStage,
         code_ret_stage: CodeRetrievalStage,
         code_ident_stage: CodeIdentificationStage,
@@ -100,6 +104,7 @@ class SearchService:
         self.val_stage = val_stage
         self.intent_stage = intent_stage
         self.query_prep_stage = query_prep_stage
+        self.repository_identification_stage = repository_identification_stage
         self.coll_sel_stage = coll_sel_stage
         self.code_ret_stage = code_ret_stage
         self.code_ident_stage = code_ident_stage
@@ -129,21 +134,23 @@ class SearchService:
             self.val_stage,              # 1
             self.intent_stage,           # 2
             self.query_prep_stage,       # 3
-            self.coll_sel_stage,         # 4
-            self.code_ret_stage,         # 5
-            self.code_ident_stage,       # 6
-            self.ctx_build_stage,        # 7
-            self.code_analysis_stage,    # 8
-            self.ev_val_stage,           # 9
-            self.action_analysis_stage,  # 10
-            self.final_triage_stage,     # 11
-            self.resp_gen_stage,         # 12
+            self.repository_identification_stage, # 4
+            self.coll_sel_stage,         # 5
+            self.code_ret_stage,         # 6
+            self.code_ident_stage,       # 7
+            self.ctx_build_stage,        # 8
+            self.code_analysis_stage,    # 9
+            self.ev_val_stage,           # 10
+            self.action_analysis_stage,  # 11
+            self.final_triage_stage,     # 12
+            self.resp_gen_stage,         # 13
         ]
 
     async def run_pipeline(
         self,
-        repo_name: str,
+        repo_name: str | None,
         query: str,
+        repo_id: str | None = None,
     ) -> SearchResult:
 
         # ---------------------------------------------------------
@@ -160,8 +167,9 @@ class SearchService:
         # ---------------------------------------------------------
 
         context = SearchContext(
-            repo_name=repo_name,
+            repo_name=repo_name or "",
             query=query,
+            repo_id=repo_id,
         )
 
         logger.info(

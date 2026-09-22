@@ -46,6 +46,17 @@ class CodeRetrievalStage:
             )
             return
 
+        if not context.qdrant_collection:
+            context.early_exit = "EARLY_EXIT_A"
+            context.early_exit_message = (
+                f"No Qdrant collection resolved for repository '{context.repo_name}'."
+            )
+            logger.warning(
+                "code_retrieval_skipped_no_collection",
+                repo_name=context.repo_name,
+            )
+            return
+
         if limit <= 0:
             raise ValueError(
                 "Code retrieval limit must be greater than zero."

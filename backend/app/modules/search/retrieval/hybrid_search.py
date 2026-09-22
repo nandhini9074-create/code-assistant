@@ -215,6 +215,13 @@ class HybridSearch:
             )
             return []
 
+        if not context.qdrant_collection:
+            logger.warning(
+                "hybrid_search_missing_qdrant_collection",
+                repo_name=context.repo_name,
+            )
+            return []
+
         if limit <= 0:
             logger.warning(
                 "hybrid_search_invalid_limit",

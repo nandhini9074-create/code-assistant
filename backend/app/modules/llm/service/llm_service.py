@@ -29,6 +29,7 @@ from app.modules.llm.prompts.query_preprocessing_prompt import (
 
 from app.modules.llm.providers.base import BaseLLMProvider
 from app.modules.llm.providers.groq_provider import GroqProvider
+#from app.modules.llm.providers.ollama_provider import OllamaProvider
 
 from app.modules.llm.schemas.llm_schema import IntentClassificationResult
 from app.modules.llm.validators.llm_response_validator import (
@@ -42,15 +43,16 @@ class LLMService:
     The service depends on BaseLLMProvider so that the concrete LLM provider
     can be replaced without changing the service logic.
 
-    GroqProvider is used as the default provider for the current RepoLens
-    implementation.
+    OllamaProvider is used as the active provider (configured with qwen3:8b).
+    GroqProvider is preserved for future fallback.
     """
 
     def __init__(self, provider: BaseLLMProvider | None = None) -> None:
         self.provider = (
             provider
             if provider is not None
-            else GroqProvider()
+              else GroqProvider()
+            #else OllamaProvider()
         )
 
     async def classify_intent(
@@ -167,6 +169,7 @@ class LLMService:
         intent: IntentType | None = None,
         parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        
         """
         Extract structured information from the user's query.
 
@@ -278,6 +281,8 @@ class LLMService:
         query: str,
         retrieved_chunks: list[dict[str, Any] | str],
     ) -> list[dict[str, Any]]:
+
+        
         """
         Identify code elements relevant to the query from retrieved chunks.
 
@@ -450,6 +455,7 @@ class LLMService:
         intent: IntentType,
         prompt: str,
     ) -> dict[str, Any]:
+        raise RuntimeError("TEST_CODE_ANALYSIS_LLM_FAILURE")
         """
         Analyze retrieved code using the analysis prompt.
 

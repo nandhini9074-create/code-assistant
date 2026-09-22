@@ -26,39 +26,6 @@ from app.modules.search.service.search_service import SearchService
 router = APIRouter(prefix="/search", tags=["Search"])
 
 
-@router.post(
-    "/understand",
-    response_model=QueryUnderstandingResponse,
-)
-async def understand_query(
-    request: SearchRequest,
-    query_service: QueryUnderstandingService = Depends(
-        get_query_understanding_service
-    ),
-) -> QueryUnderstandingResponse:
-    """
-    Test the initial query-understanding pipeline.
-
-    Runs only:
-    1. Request validation
-    2. Intent classification
-    3. Query preprocessing
-
-    Does not access the repository, database, Qdrant, or retrieval pipeline.
-    """
-    result = await query_service.understand(
-        repo_name=request.repo_name,
-        query=request.query,
-    )
-
-    if not result.success:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=result.error or "Query understanding failed",
-        )
-
-    return result
-
 
 @router.post("/", response_model=SearchResponse)
 async def search_repository(
@@ -70,6 +37,7 @@ async def search_repository(
     Runs the complete retrieval + LLM analysis pipeline.
     """
     result = await search_service.run_pipeline(
+        repo_id=request.repo_id,
         repo_name=request.repo_name,
         query=request.query,
     )

@@ -1,3 +1,4 @@
+
 """
 app/modules/search/pipeline/action_analysis.py
 
@@ -7,6 +8,9 @@ Converts validated code analysis into a structured description
 of the proposed action.
 
 This stage is advisory only and does not modify repository files.
+
+If Step 9 analysis or Step 10 validation is unavailable, this stage
+uses a deterministic fallback and does not invent a proposed action.
 """
 
 from __future__ import annotations
@@ -29,8 +33,41 @@ class ActionAnalysisStage:
         if context.early_exit:
             return
 
+        # No analysis available.
         if not context.analysis_result:
             context.action_analysis = None
+
+            logger.warning(
+                "action_analysis_unavailable",
+                repo_id=context.repo_id,
+                reason="No code analysis result available.",
+            )
+            return
+
+        # ---------------------------------------------------------
+        # Fallback when Step 10 validation is unavailable.
+        # ---------------------------------------------------------
+        #
+        # Do not generate a proposed action from unvalidated or
+        # unavailable analysis. The pipeline continues with an
+        # explicit unavailable state.
+        #
+        if context.validation_status == "unavailable":
+            context.action_analysis = {
+                "action_status": "UNAVAILABLE",
+                "action_available": False,
+                "action_type": None,
+                "proposed_change": None,
+                "affected_target": _build_affected_target(context),
+                "rationale": None,
+                "risk_level": "unknown",
+                "is_applied": False,
+            }
+
+            logger.warning(
+                "action_analysis_validation_unavailable",
+                repo_id=context.repo_id,
+            )
             return
 
         if not context.validated:
@@ -136,7 +173,7 @@ def _build_affected_target(
     elif context.retrieved_chunks:
         file_path = context.retrieved_chunks[0].file_path
 
-    repository = context.repo_id
+    repository = context.repo_name or context.repo_id
 
     if context.repo_owner and context.repo_name:
         repository = (

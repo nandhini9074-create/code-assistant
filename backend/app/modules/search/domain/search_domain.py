@@ -93,6 +93,13 @@ class SearchContext:
 
     primary_chunk: RetrievedChunk | None = None
 
+    # Populated when multiple functions/classes share the same name
+    # across different files and the query cannot be disambiguated.
+    # Each entry: {name, file_path, class_name, start_line, end_line, score}
+    ambiguous_candidates: list[dict[str, Any]] = field(
+        default_factory=list
+    )
+
     # ---------------------------------------------------------
     # Analysis context
     # ---------------------------------------------------------
@@ -136,6 +143,14 @@ class SearchContext:
     # ---------------------------------------------------------
 
     insufficient_evidence: bool = False
+
+    ambiguous: bool = False
+
+    is_ambiguous: bool = False
+
+    # When True, the ambiguity is specifically a same-name-multiple-files conflict.
+    # Downstream response generation uses this to produce a helpful listing response.
+    symbol_conflict: bool = False
 
     early_exit: str | None = None
 

@@ -6,11 +6,10 @@ and Qdrant similarity search.
 
 The current architecture uses multiple Qdrant collections.
 Each repository has its own collection following the convention:
+    - Remote / GitHub: repo_owner_repositoryname
+    - Local: repo_local_repositoryname
 
-    repo_owner_repositoryname
-
-For global search, all Qdrant collections are searched.
-
+Search is performed only against the resolved Qdrant collection.
 PostgreSQL repository identification is not required.
 """
 
@@ -37,11 +36,9 @@ class DenseSearch:
         """
         Retrieve the most similar code chunks from Qdrant.
 
-        When context.qdrant_collection is None, search_vectors()
-        performs a global search across all Qdrant collections.
+        Search is performed only against the resolved collection
+        specified in context.qdrant_collection.
 
-        Each repository has its own Qdrant collection using the
-        repo_owner_repositoryname naming convention.
 
         Example payload:
 

@@ -22,9 +22,11 @@ class RequestValidationStage:
     async def execute(self, context: SearchContext) -> None:
         """Validate the minimum required search request fields."""
 
-        if not context.repo_name or not context.repo_name.strip():
+        if not context.repo_id and (
+            not context.repo_name or not context.repo_name.strip()
+        ):
             raise ValidationError(
-                "repo_name is required"
+                "repo_id or repo_name is required"
             )
 
         if not context.query or not context.query.strip():

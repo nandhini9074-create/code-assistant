@@ -1,23 +1,26 @@
-
 """
 app/modules/search/pipeline/collection_selection.py
 
 Pipeline stage: Collection Selection.
 
-The current search architecture uses multiple Qdrant collections,
-where each repository has its own collection.
+Resolves and selects the target Qdrant collection based on the requested repository.
+Each repository has its own collection following the conventions:
+    - Remote / GitHub: repo_ownername_repositoryname
+    - Local: repo_local_repositoryname
 
-Collection names follow the convention:
+Normalization Rules:
+1. If the user provides `ownername_repositoryname` (or `ownername/repositoryname`):
+   Normalized to: `repo_ownername_repositoryname`
+   Owner and repository details are extracted directly from the `repo_name` input:
+     - owner: ownername
+     - repository: repositoryname
 
-    repo_owner_repositoryname
+2. If the user provides only `repositoryname`:
+   Normalized to: `repo_local_repositoryname`
+   - owner: None
+   - repository: repositoryname
 
-For global search, this stage does NOT select a specific collection.
-Instead, it marks the search as a global Qdrant search by leaving
-context.qdrant_collection as None.
-
-The retrieval layer is responsible for enumerating all Qdrant
-collections and searching across them.
-
+Search is performed only against the resolved Qdrant collection.
 This stage does not depend on PostgreSQL or RepositoryIdentificationStage.
 """
 
@@ -28,6 +31,89 @@ from app.infrastructure.qdrant.client import get_qdrant_client
 from app.modules.search.domain.search_domain import SearchContext
 
 logger = get_logger(__name__)
+
+
+def clean_name(val: str) -> str:
+    """Normalize a name component by stripping, lowercasing, and replacing hyphens/dots/slashes with underscores."""
+    return val.strip().lower().replace("-", "_").replace(".", "_").replace("/", "_")
+
+
+def parse_and_normalize_repo_input(
+    repo_name_input: str,
+    available_collections: list[str] | None = None,
+) -> tuple[str, str | None, str]:
+    """
+    Parse the repo_name input and normalize it according to rules:
+
+    1. ownername_repositoryname -> repo_ownername_repositoryname
+       (extracts owner: ownername, repo: repositoryname)
+    2. repositoryname -> repo_local_repositoryname
+       (extracts owner: None, repo: repositoryname)
+
+    Returns:
+        (normalized_collection_name, owner, repo_name)
+    """
+    raw = repo_name_input.strip()
+
+    # Case 1: Slash provided (e.g. owner/repo)
+    if "/" in raw:
+        parts = raw.split("/", 1)
+        owner = clean_name(parts[0])
+        repo = clean_name(parts[1])
+        collection = f"repo_{owner}_{repo}"
+        return collection, owner, repo
+
+    # Clean the input string
+    cleaned = clean_name(raw)
+
+    # Case 2: Already prefixed with repo_local_
+    if cleaned.startswith("repo_local_"):
+        repo = cleaned[len("repo_local_"):]
+        return cleaned, None, repo
+
+    # Case 3: Prefixed with local_
+    if cleaned.startswith("local_"):
+        repo = cleaned[len("local_"):]
+        return f"repo_local_{repo}", None, repo
+
+    # Case 4: Already prefixed with repo_
+    if cleaned.startswith("repo_"):
+        rest = cleaned[len("repo_"):]
+        if "_" in rest:
+            owner, repo = rest.split("_", 1)
+            return cleaned, owner, repo
+        else:
+            return f"repo_local_{rest}", None, rest
+
+    # Case 5: Plain input without repo_ prefix
+    # Could be ownername_repositoryname OR repositoryname
+    available_set = (
+        {c.lower() for c in available_collections}
+        if available_collections is not None
+        else set()
+    )
+
+    candidate_owner = f"repo_{cleaned}"
+    candidate_local = f"repo_local_{cleaned}"
+
+    # If available collections exist, check against them to resolve ambiguity
+    if available_set:
+        if candidate_owner.lower() in available_set:
+            parts = cleaned.split("_", 1)
+            owner = parts[0]
+            repo = parts[1] if len(parts) > 1 else cleaned
+            return candidate_owner, owner, repo
+
+        if candidate_local.lower() in available_set:
+            return candidate_local, None, cleaned
+
+    # Fallback when not matched against known collections or collections unavailable:
+    # If the input contains an underscore, it is treated as ownername_repositoryname
+    if "_" in cleaned:
+        owner, repo = cleaned.split("_", 1)
+        return candidate_owner, owner, repo
+    else:
+        return candidate_local, None, cleaned
 
 
 class CollectionSelectionStage:
@@ -41,10 +127,12 @@ class CollectionSelectionStage:
         - Skip when an earlier stage triggered an early exit.
         - Validate that the search request contains a repository name.
         - Retrieve all Qdrant collection names.
-        - Normalize the requested repo name by replacing '-' with '_'.
-        - Find the collection whose name contains the normalized repo name.
+        - Normalize the requested repo name according to the two supported formats:
+            1. ownername_repositoryname -> repo_ownername_repositoryname
+            2. repositoryname -> repo_local_repositoryname
+        - Extract owner and repository details directly from the repo_name input when
+          ownername_repositoryname format is provided. Do not require repo_id.
         - Set context.qdrant_collection to the selected collection.
-        - Extract the repository owner from the selected collection name.
         - If no collection matches, trigger EARLY_EXIT_A repository not found.
         """
 
@@ -56,7 +144,17 @@ class CollectionSelectionStage:
             )
             return
 
-        if not context.repo_name:
+        # A repository resolved by UUID already carries the authoritative
+        # collection name from PostgreSQL; do not reconstruct it from input.
+        if context.qdrant_collection:
+            logger.info(
+                "collection_selection_resolved_from_repository",
+                repo_id=context.repo_id,
+                collection=context.qdrant_collection,
+            )
+            return
+
+        if not context.repo_name or not context.repo_name.strip():
             logger.error(
                 "collection_selection_missing_repo_name",
             )
@@ -65,14 +163,6 @@ class CollectionSelectionStage:
                 "Repository name is required for this search."
             )
             return
-
-        normalized_repo_name = context.repo_name.replace("-", "_")
-
-        logger.debug(
-            "collection_selection_normalizing",
-            repo_name=context.repo_name,
-            normalized=normalized_repo_name,
-        )
 
         client = get_qdrant_client()
 
@@ -91,28 +181,34 @@ class CollectionSelectionStage:
             )
             collection_names = []
 
-        selected_collection = None
+        # Parse and normalize repo_name input
+        normalized_collection, extracted_owner, extracted_repo = (
+            parse_and_normalize_repo_input(
+                context.repo_name,
+                available_collections=collection_names,
+            )
+        )
 
+        logger.debug(
+            "collection_selection_normalized",
+            input_repo=context.repo_name,
+            normalized_collection=normalized_collection,
+            extracted_owner=extracted_owner,
+            extracted_repo=extracted_repo,
+        )
+
+        # Match against Qdrant collection names (case-insensitive)
+        selected_collection = None
         for coll in collection_names:
-            if normalized_repo_name in coll:
+            if coll.lower() == normalized_collection.lower():
                 selected_collection = coll
                 break
-
-        if not selected_collection:
-            target = normalized_repo_name.split("/")[-1].lower()
-
-            for coll in collection_names:
-                if (
-                    normalized_repo_name.lower() in coll.lower()
-                    or target in coll.lower()
-                ):
-                    selected_collection = coll
-                    break
 
         if not selected_collection:
             logger.warning(
                 "repository_not_found",
                 identifier=context.repo_name,
+                normalized_collection=normalized_collection,
             )
 
             context.early_exit = "EARLY_EXIT_A"
@@ -127,37 +223,17 @@ class CollectionSelectionStage:
         # ---------------------------------------------------------
         # SELECT QDRANT COLLECTION
         # ---------------------------------------------------------
-
         context.qdrant_collection = selected_collection
 
         # ---------------------------------------------------------
-        # EXTRACT REPOSITORY OWNER
-        #
-        # Collection format:
-        #
-        # repo_<owner>_<repository_name>
-        #
-        # Example:
-        # repo_nandhini9074_create_demo10_transaction
-        #
-        # Result:
-        # context.repo_owner = "nandhini9074"
-        #
-        # split("_", 2) ensures everything after the owner is
-        # preserved as the repository-name portion.
+        # EXTRACT OWNER AND REPOSITORY DETAILS DIRECTLY FROM INPUT
         # ---------------------------------------------------------
-
-        if selected_collection.startswith("repo_"):
-            collection_parts = selected_collection.split("_", 2)
-
-            if len(collection_parts) == 3:
-                context.repo_owner = collection_parts[1]
-
+        context.repo_owner = extracted_owner
+        context.repo_name = extracted_repo
 
         logger.info(
             "repository_collection_selected",
             repo_name=context.repo_name,
             repo_owner=context.repo_owner,
-            normalized_repo_name=normalized_repo_name,
-            collection=selected_collection,
+            collection=context.qdrant_collection,
         )

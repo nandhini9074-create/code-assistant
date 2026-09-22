@@ -1,8 +1,7 @@
-
 """
-app/modules/llm/providers/groq_provider.py
+app/modules/llm/providers/ollama_provider.py
 
-Groq LLM provider using Groq's OpenAI-compatible API.
+Ollama LLM provider using Ollama's OpenAI-compatible API.
 """
 
 from __future__ import annotations
@@ -45,25 +44,22 @@ def _extract_tokens(usage: Any) -> tuple[int, int, int]:
     )
 
 
-class GroqProvider(BaseLLMProvider):
+class OllamaProvider(BaseLLMProvider):
     """
-    Implementation of the LLM provider using the Groq API.
+    Implementation of the LLM provider using Ollama's OpenAI-compatible API.
 
-    Groq provides an OpenAI-compatible API, so AsyncOpenAI can be used
-    as the client while the model and credentials come from settings.
+    Ollama provides an OpenAI-compatible endpoint at /v1, allowing AsyncOpenAI
+    to be used as the client.
     """
 
     def __init__(self) -> None:
         self.settings = get_settings()
 
-        if not self.settings.groq_api_key:
-            logger.warning("groq_api_key_missing")
-
         self.client = AsyncOpenAI(
-            api_key=self.settings.groq_api_key or "dummy-key-for-tests",
-            base_url=self.settings.groq_base_url,
-            timeout=float(self.settings.groq_timeout_seconds),
-            max_retries=self.settings.groq_max_retries,
+            api_key="ollama",  # Ollama does not require an API key, but AsyncOpenAI requires a non-empty string
+            base_url=self.settings.ollama_base_url,
+            timeout=float(self.settings.ollama_timeout_seconds),
+            max_retries=self.settings.ollama_max_retries,
         )
 
     async def complete(
@@ -74,7 +70,7 @@ class GroqProvider(BaseLLMProvider):
         temperature: float = 0.0,
     ) -> LLMResponse:
         """
-        Generate a normal text completion using Groq.
+        Generate a text completion using Ollama.
         """
 
         messages: list[dict[str, str]] = []
@@ -94,12 +90,17 @@ class GroqProvider(BaseLLMProvider):
             }
         )
 
+        extra_body: dict[str, Any] = {}
+        if not self.settings.ollama_think:
+            extra_body["think"] = False
+
         try:
             response = await self.client.chat.completions.create(
-                model=self.settings.groq_model,
+                model=self.settings.ollama_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
+                extra_body=extra_body if extra_body else None,
             )
 
             if not response.choices:
@@ -110,6 +111,7 @@ class GroqProvider(BaseLLMProvider):
             if not content:
                 raise LLMError("LLM returned an empty response")
 
+            # Extract and log token usage.
             ctx_vars = structlog.contextvars.get_contextvars()
 
             inp_t, out_t, total_t = _extract_tokens(
@@ -117,9 +119,9 @@ class GroqProvider(BaseLLMProvider):
             )
 
             logger.info(
-                "groq_token_usage",
-                provider="groq",
-                model=self.settings.groq_model,
+                "ollama_token_usage",
+                provider="ollama",
+                model=self.settings.ollama_model,
                 stage=ctx_vars.get("stage"),
                 request_id=ctx_vars.get("request_id"),
                 input_tokens=inp_t,
@@ -138,8 +140,8 @@ class GroqProvider(BaseLLMProvider):
 
             return LLMResponse(
                 text=content,
-                provider="groq",
-                model=self.settings.groq_model,
+                provider="ollama",
+                model=self.settings.ollama_model,
                 usage=usage,
             )
 
@@ -148,15 +150,12 @@ class GroqProvider(BaseLLMProvider):
 
         except Exception as exc:
             logger.error(
-                "groq_generation_failed",
+                "ollama_generation_failed",
                 exc_info=exc,
             )
 
-            # Propagate the failure to the calling pipeline stage.
-            # The stage is responsible for applying its deterministic
-            # fallback instead of the provider inventing a response.
             raise LLMError(
-                f"Groq API request failed: {exc}"
+                f"Ollama API request failed: {exc}"
             ) from exc
 
     async def complete_json(
@@ -164,16 +163,13 @@ class GroqProvider(BaseLLMProvider):
         prompt: str,
         system_prompt: str | None = None,
         schema: dict[str, Any] | None = None,
-        max_tokens: int = 300,
+        max_tokens: int = 1024,
         temperature: float = 0.0,
     ) -> dict[str, Any]:
-
-
-         # TEMPORARY TEST
         """
-        Generate a structured JSON object using Groq.
+        Generate a structured JSON object using Ollama.
 
-        Groq is requested to return a JSON object through the
+        Ollama is requested to return a JSON object through the
         OpenAI-compatible response_format option.
         """
 
@@ -206,15 +202,20 @@ class GroqProvider(BaseLLMProvider):
             },
         ]
 
+        extra_body: dict[str, Any] = {}
+        if not self.settings.ollama_think:
+            extra_body["think"] = False
+
         try:
             response = await self.client.chat.completions.create(
-                model=self.settings.groq_model,
+                model=self.settings.ollama_model,
                 messages=messages,
                 temperature=temperature,
                 max_tokens=max_tokens,
                 response_format={
                     "type": "json_object",
                 },
+                extra_body=extra_body if extra_body else None,
             )
 
             if not response.choices:
@@ -225,19 +226,20 @@ class GroqProvider(BaseLLMProvider):
             if not content:
                 raise LLMError("LLM returned an empty response")
 
+            # Parse JSON separately from the API request.
             try:
                 parsed = json.loads(content)
-
             except json.JSONDecodeError as exc:
                 raise LLMParseError(
-                    f"Failed to parse Groq response as JSON: {exc}"
+                    f"Failed to parse Ollama response as JSON: {exc}"
                 ) from exc
 
             if not isinstance(parsed, dict):
                 raise LLMParseError(
-                    "Groq JSON response must be an object"
+                    "Ollama JSON response must be an object"
                 )
 
+            # Log token usage only after successful response parsing.
             ctx_vars = structlog.contextvars.get_contextvars()
 
             inp_t, out_t, total_t = _extract_tokens(
@@ -245,9 +247,9 @@ class GroqProvider(BaseLLMProvider):
             )
 
             logger.info(
-                "groq_token_usage",
-                provider="groq",
-                model=self.settings.groq_model,
+                "ollama_token_usage",
+                provider="ollama",
+                model=self.settings.ollama_model,
                 stage=ctx_vars.get("stage"),
                 request_id=ctx_vars.get("request_id"),
                 input_tokens=inp_t,
@@ -265,14 +267,12 @@ class GroqProvider(BaseLLMProvider):
 
         except Exception as exc:
             logger.error(
-                "groq_structured_generation_failed",
+                "ollama_structured_generation_failed",
                 exc_info=exc,
             )
 
-            # Propagate the failure to the calling pipeline stage.
-            # The stage handles the appropriate deterministic fallback.
             raise LLMError(
-                f"Groq API request failed: {exc}"
+                f"Ollama API request failed: {exc}"
             ) from exc
 
     async def generate_response(
@@ -283,19 +283,19 @@ class GroqProvider(BaseLLMProvider):
         max_tokens: int | None = None,
     ) -> str:
         """
-        Generate a normal text response.
+        Generate a text response.
         """
 
         temp = (
             temperature
             if temperature is not None
-            else LLM_DEFAULT_TEMPERATURE
+            else self.settings.ollama_temperature
         )
 
         max_t = (
             max_tokens
             if max_tokens is not None
-            else self.settings.groq_max_tokens
+            else self.settings.ollama_max_tokens
         )
 
         response = await self.complete(
@@ -313,7 +313,7 @@ class GroqProvider(BaseLLMProvider):
         user_prompt: str,
         schema: dict[str, Any],
         temperature: float | None = None,
-        max_tokens: int = 300,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """
         Generate a structured JSON response.
@@ -322,14 +322,19 @@ class GroqProvider(BaseLLMProvider):
         temp = (
             temperature
             if temperature is not None
-            else LLM_DEFAULT_TEMPERATURE
+            else self.settings.ollama_temperature
+        )
+
+        max_t = (
+            max_tokens
+            if max_tokens is not None
+            else self.settings.ollama_max_tokens
         )
 
         return await self.complete_json(
             prompt=user_prompt,
             system_prompt=system_prompt,
             schema=schema,
-            max_tokens=max_tokens,
+            max_tokens=max_t,
             temperature=temp,
         )
-

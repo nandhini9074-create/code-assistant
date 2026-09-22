@@ -9,6 +9,9 @@ by the previous pipeline stages.
 
 This stage only assembles/presents results. It does not perform new
 retrieval, analysis, validation, or repository modifications.
+
+Unavailable analysis/validation states are presented explicitly
+without inventing recommendations or code changes.
 """
 
 from __future__ import annotations
@@ -18,7 +21,10 @@ import json
 from typing import Any
 
 from app.modules.search.domain.search_domain import SearchContext
-from app.modules.search.schemas.search_schema import SearchResponse
+from app.modules.search.schemas.search_schema import (
+    AmbiguousCandidate,
+    SearchResponse,
+)
 
 
 class ResponseGenerationStage:
@@ -34,7 +40,11 @@ class ResponseGenerationStage:
     async def execute(self, context: SearchContext) -> None:
         """Build and store the final compact SearchResponse."""
 
-        intent_str = context.intent.value if context.intent else "unknown"
+        intent_str = (
+            context.intent.value
+            if context.intent
+            else "unknown"
+        )
 
         repo_info = {
             "owner": context.repo_owner,
@@ -53,6 +63,7 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # EARLY EXIT
         # ---------------------------------------------------------
+
         if context.early_exit in self._EARLY_EXITS:
             context.final_response = self._build_early_exit_response(
                 context=context,
@@ -65,6 +76,7 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # NORMAL RESPONSE
         # ---------------------------------------------------------
+
         requirement = None
         current_behavior = None
         suggestion: Any = None
@@ -75,6 +87,7 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # STEP 11 - TRIAGE RESULT
         # ---------------------------------------------------------
+
         if context.triage_result:
             requirement = (
                 context.triage_result.get("issue_summary")
@@ -103,10 +116,35 @@ class ResponseGenerationStage:
 
             confidence = context.triage_result.get("confidence")
 
+            # -----------------------------------------------------
+            # Do not manufacture a recommendation when Step 12
+            # explicitly reports unavailable analysis/validation.
+            # -----------------------------------------------------
+
+            if (
+                context.triage_result.get("validation_status")
+                == "unavailable"
+            ):
+                suggestion = (
+                    context.triage_result.get("ai_suggestion")
+                    or (
+                        "Code analysis or validation was unavailable. "
+                        "No recommendation can be safely generated."
+                    )
+                )
+
+                proposed_change = None
+                suggested_code = None
+
         # ---------------------------------------------------------
         # STEP 8 - CODE ANALYSIS RESULT
         # ---------------------------------------------------------
-        if context.analysis_result:
+
+        if (
+            context.analysis_result
+            and context.analysis_result.get("analysis_status")
+            != "UNAVAILABLE"
+        ):
             if requirement is None:
                 requirement = (
                     context.analysis_result.get("requirement")
@@ -142,35 +180,29 @@ class ResponseGenerationStage:
 
             # -----------------------------------------------------
             # RETRIEVE intent
-            #
-            # CodeAnalysisService generates "answer" for RETRIEVE.
-            # Use it as the user-facing suggestion when no other
-            # suggestion was produced.
             # -----------------------------------------------------
+
             if suggestion is None:
                 suggestion = context.analysis_result.get("answer")
 
         # ---------------------------------------------------------
         # NORMALIZE VALUES
         # ---------------------------------------------------------
+
         suggestion = self._normalize_suggestion(suggestion)
 
-        # IMPORTANT:
-        # proposed_change may be returned by the LLM as a dictionary,
-        # for example:
-        #
-        # {
-        #     "description": "Add logging to database operations."
-        # }
-        #
-        # SearchResponse expects proposed_change to be a string.
-        proposed_change = self._normalize_suggestion(proposed_change)
+        proposed_change = self._normalize_suggestion(
+            proposed_change
+        )
 
-        suggested_code = self._normalize_code(suggested_code)
+        suggested_code = self._normalize_code(
+            suggested_code
+        )
 
         # ---------------------------------------------------------
         # BUILD FINAL RESPONSE
         # ---------------------------------------------------------
+
         context.final_response = SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -182,6 +214,7 @@ class ResponseGenerationStage:
             suggested_code=suggested_code,
             confidence=confidence,
             early_exit=None,
+            ambiguous_candidates=[],
         )
 
     # =============================================================
@@ -207,6 +240,7 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # TRIAGE RESULT
         # ---------------------------------------------------------
+
         if context.triage_result:
             requirement = (
                 context.triage_result.get("issue_summary")
@@ -238,7 +272,12 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # CODE ANALYSIS RESULT
         # ---------------------------------------------------------
-        if context.analysis_result:
+
+        if (
+            context.analysis_result
+            and context.analysis_result.get("analysis_status")
+            != "UNAVAILABLE"
+        ):
             if requirement is None:
                 requirement = (
                     context.analysis_result.get("requirement")
@@ -276,14 +315,59 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # NORMALIZE VALUES
         # ---------------------------------------------------------
+
         suggestion = self._normalize_suggestion(suggestion)
 
-        # IMPORTANT:
-        # Normalize proposed_change here as well because an early-exit
-        # response can also receive a dictionary from the analyzer.
-        proposed_change = self._normalize_suggestion(proposed_change)
+        proposed_change = self._normalize_suggestion(
+            proposed_change
+        )
 
-        suggested_code = self._normalize_code(suggested_code)
+        suggested_code = self._normalize_code(
+            suggested_code
+        )
+
+        early_exit_payload: dict[str, Any] = {
+            "code": context.early_exit,
+            "message": context.early_exit_message,
+        }
+
+        if (
+            getattr(context, "ambiguous", False)
+            or getattr(context, "is_ambiguous", False)
+        ):
+            early_exit_payload["ambiguous"] = True
+
+        if getattr(context, "symbol_conflict", False):
+            early_exit_payload["symbol_conflict"] = True
+
+        # Build structured candidate list for consumers.
+        raw_candidates = (
+            getattr(
+                context,
+                "ambiguous_candidates",
+                [],
+            )
+            or []
+        )
+
+        structured_candidates: list[AmbiguousCandidate] = []
+
+        for c in raw_candidates:
+            try:
+                structured_candidates.append(
+                    AmbiguousCandidate(
+                        name=str(c.get("name") or ""),
+                        file_path=str(
+                            c.get("file_path") or ""
+                        ),
+                        class_name=c.get("class_name") or None,
+                        start_line=c.get("start_line"),
+                        end_line=c.get("end_line"),
+                        score=c.get("score"),
+                    )
+                )
+            except Exception:
+                pass
 
         return SearchResponse(
             intent=intent_str,
@@ -295,10 +379,8 @@ class ResponseGenerationStage:
             proposed_change=proposed_change,
             suggested_code=suggested_code,
             confidence=confidence,
-            early_exit={
-                "code": context.early_exit,
-                "message": context.early_exit_message,
-            },
+            early_exit=early_exit_payload,
+            ambiguous_candidates=structured_candidates,
         )
 
     # =============================================================
@@ -306,7 +388,9 @@ class ResponseGenerationStage:
     # =============================================================
 
     @staticmethod
-    def _normalize_suggestion(suggestion: Any) -> str | None:
+    def _normalize_suggestion(
+        suggestion: Any,
+    ) -> str | None:
         """
         Convert any suggestion value into the string expected by
         SearchResponse.suggestion and SearchResponse.proposed_change.
@@ -365,7 +449,11 @@ class ResponseGenerationStage:
                         ensure_ascii=False,
                     )
 
-            except (json.JSONDecodeError, TypeError, ValueError):
+            except (
+                json.JSONDecodeError,
+                TypeError,
+                ValueError,
+            ):
                 pass
 
             # Try Python repr.
@@ -392,7 +480,11 @@ class ResponseGenerationStage:
                         ensure_ascii=False,
                     )
 
-            except (ValueError, SyntaxError, TypeError):
+            except (
+                ValueError,
+                SyntaxError,
+                TypeError,
+            ):
                 pass
 
             return value
@@ -404,7 +496,9 @@ class ResponseGenerationStage:
     # =============================================================
 
     @staticmethod
-    def _normalize_code(code: Any) -> str | None:
+    def _normalize_code(
+        code: Any,
+    ) -> str | None:
         """
         Normalize the suggested code returned by the LLM.
 
@@ -427,7 +521,8 @@ class ResponseGenerationStage:
 
         if isinstance(code, list):
             return "\n".join(
-                str(item) for item in code
+                str(item)
+                for item in code
             ).strip() or None
 
         return str(code)
@@ -476,6 +571,7 @@ class ResponseGenerationStage:
         # If target_symbol is meaningful and is not just the file path,
         # keep it.
         # ---------------------------------------------------------
+
         if target_symbol:
             normalized = target_symbol.strip()
 
@@ -500,16 +596,19 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # Prefer class name from chunk metadata.
         # ---------------------------------------------------------
+
         if class_name:
             return class_name
 
         # ---------------------------------------------------------
         # Fall back to function/method name.
         # ---------------------------------------------------------
+
         if function_name:
             return function_name
 
         # ---------------------------------------------------------
         # Last fallback.
         # ---------------------------------------------------------
+
         return target_symbol
