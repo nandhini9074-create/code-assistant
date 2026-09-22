@@ -18,7 +18,7 @@ import json
 from typing import Any
 
 from app.modules.search.domain.search_domain import SearchContext
-from app.modules.search.schemas.search_schema import SearchResponse
+from app.modules.search.schemas.search_schema import AmbiguousCandidate, SearchResponse
 
 
 class ResponseGenerationStage:
@@ -182,6 +182,7 @@ class ResponseGenerationStage:
             suggested_code=suggested_code,
             confidence=confidence,
             early_exit=None,
+            ambiguous_candidates=[],
         )
 
     # =============================================================
@@ -285,6 +286,33 @@ class ResponseGenerationStage:
 
         suggested_code = self._normalize_code(suggested_code)
 
+        early_exit_payload: dict[str, Any] = {
+            "code": context.early_exit,
+            "message": context.early_exit_message,
+        }
+        if getattr(context, "ambiguous", False) or getattr(context, "is_ambiguous", False):
+            early_exit_payload["ambiguous"] = True
+        if getattr(context, "symbol_conflict", False):
+            early_exit_payload["symbol_conflict"] = True
+
+        # Build structured candidate list for consumers
+        raw_candidates = getattr(context, "ambiguous_candidates", []) or []
+        structured_candidates: list[AmbiguousCandidate] = []
+        for c in raw_candidates:
+            try:
+                structured_candidates.append(
+                    AmbiguousCandidate(
+                        name=str(c.get("name") or ""),
+                        file_path=str(c.get("file_path") or ""),
+                        class_name=c.get("class_name") or None,
+                        start_line=c.get("start_line"),
+                        end_line=c.get("end_line"),
+                        score=c.get("score"),
+                    )
+                )
+            except Exception:
+                pass
+
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -295,10 +323,8 @@ class ResponseGenerationStage:
             proposed_change=proposed_change,
             suggested_code=suggested_code,
             confidence=confidence,
-            early_exit={
-                "code": context.early_exit,
-                "message": context.early_exit_message,
-            },
+            early_exit=early_exit_payload,
+            ambiguous_candidates=structured_candidates,
         )
 
     # =============================================================

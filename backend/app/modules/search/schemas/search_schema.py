@@ -45,6 +45,17 @@ class QueryUnderstandingResponse(BaseSchema):
     error: str | None = None
 
 
+class AmbiguousCandidate(BaseSchema):
+    """Describes one candidate when a symbol name exists in multiple files."""
+
+    name: str
+    file_path: str
+    class_name: str | None = None
+    start_line: int | None = None
+    end_line: int | None = None
+    score: float | None = None
+
+
 class EvidenceItem(BaseSchema):
     """An item of evidence used to generate the response."""
 
@@ -80,3 +91,8 @@ class SearchResponse(BaseSchema):
     confidence: str | None = None
 
     early_exit: dict[str, Any] | None = None
+
+    # Populated when the query symbol exists in multiple files and
+    # cannot be uniquely resolved. Lists every matching candidate so
+    # the caller can prompt the user to be more specific.
+    ambiguous_candidates: list[AmbiguousCandidate] = Field(default_factory=list)

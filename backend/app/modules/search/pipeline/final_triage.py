@@ -309,6 +309,9 @@ def _compute_confidence(
     if validation_status == "failed":
         return ConfidenceLevel.LOW.value
 
+    if getattr(context, "ambiguous", False) or getattr(context, "is_ambiguous", False):
+        return ConfidenceLevel.LOW.value
+
     if context.early_exit == "EARLY_EXIT_D":
         return ConfidenceLevel.LOW.value
 

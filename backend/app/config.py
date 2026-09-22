@@ -218,7 +218,7 @@ class EmbeddingSettings(BaseSettings):
 
 
 class LLMSettings(BaseSettings):
-    """Groq LLM settings using Groq's OpenAI-compatible API."""
+    """LLM provider settings for Ollama (active) and Groq (preserved)."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -227,6 +227,43 @@ class LLMSettings(BaseSettings):
         populate_by_name=True,
     )
 
+    # Active Provider Selection
+    llm_provider: str = Field(
+        default="ollama",
+        alias="LLM_PROVIDER",
+    )
+
+    # Ollama Settings (Active)
+    ollama_base_url: str = Field(
+        default="http://localhost:11434/v1",
+        alias="OLLAMA_BASE_URL",
+    )
+    ollama_model: str = Field(
+        default="qwen3:8b",
+        alias="OLLAMA_MODEL",
+    )
+    ollama_temperature: float = Field(
+        default=0.0,
+        alias="OLLAMA_TEMPERATURE",
+    )
+    ollama_max_tokens: int = Field(
+        default=1024,
+        alias="OLLAMA_MAX_TOKENS",
+    )
+    ollama_timeout_seconds: int = Field(
+        default=120,
+        alias="OLLAMA_TIMEOUT_SECONDS",
+    )
+    ollama_max_retries: int = Field(
+        default=3,
+        alias="OLLAMA_MAX_RETRIES",
+    )
+    ollama_think: bool = Field(
+        default=False,
+        alias="OLLAMA_THINK",
+    )
+
+    # Groq Settings (Preserved for future fallback)
     groq_api_key: str | None = Field(
         default=None,
         alias="GROQ_API_KEY",

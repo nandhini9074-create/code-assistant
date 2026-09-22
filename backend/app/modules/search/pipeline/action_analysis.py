@@ -136,7 +136,7 @@ def _build_affected_target(
     elif context.retrieved_chunks:
         file_path = context.retrieved_chunks[0].file_path
 
-    repository = context.repo_id
+    repository = context.repo_name or context.repo_id
 
     if context.repo_owner and context.repo_name:
         repository = (

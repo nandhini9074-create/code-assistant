@@ -108,6 +108,8 @@ def get_ingestion_service(
 def get_llm_provider():
     from app.modules.llm.providers.groq_provider import GroqProvider
     return GroqProvider()
+    #from app.modules.llm.providers.ollama_provider import OllamaProvider
+    #return OllamaProvider()
 
 
 def get_llm_service(
