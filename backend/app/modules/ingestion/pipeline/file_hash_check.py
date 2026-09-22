@@ -51,12 +51,12 @@ class FileHashCheckStage:
             seen_paths.add(file.file_path)
             
             existing = active_paths.get(file.file_path)
-            if existing and existing.file_hash == file.file_hash and not context.full_reindex:
-                # File is unchanged and we are not doing a full reindex
+            if existing and existing.file_hash == file.file_hash:
+                # File is unchanged
                 file.is_new_or_modified = False
                 skipped_count += 1
             else:
-                # File is new, modified, or a full reindex was requested
+                # File is new, modified
                 file.is_new_or_modified = True
                 new_modified_count += 1
                 

@@ -22,22 +22,6 @@ class ChunkDeduplicationStage:
         reused_count = 0
         new_count = 0
 
-        if context.full_reindex:
-            logger.info("stage_7_chunk_deduplication_skipped_full_reindex_mode")
-            for file in context.files:
-                if not file.is_new_or_modified or not file.chunks:
-                    continue
-                for chunk in file.chunks:
-                    chunk.is_new = True
-                    chunk.point_id = generate_point_id(context.repo_id, file.file_path, chunk.chunk_hash)
-                    new_count += 1
-            logger.info(
-                "stage_7_chunk_deduplication_completed",
-                new_chunks_to_embed=new_count,
-                reused_existing_chunks=0,
-            )
-            return
-
         for file in context.files:
             if not file.is_new_or_modified or not file.chunks:
                 continue
