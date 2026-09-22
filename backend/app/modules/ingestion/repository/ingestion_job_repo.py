@@ -33,6 +33,17 @@ class IngestionJobRepository:
         uid = uuid.UUID(job_id) if isinstance(job_id, str) else job_id
         return await self.session.get(IngestionJob, uid)
 
+    async def has_active_job_for_repo(self, repo_id: JobId | str) -> bool:
+        import uuid
+        from sqlalchemy import select
+        uid = uuid.UUID(repo_id) if isinstance(repo_id, str) else repo_id
+        stmt = select(IngestionJob).where(
+            IngestionJob.repo_id == uid,
+            IngestionJob.status.in_([JobStatus.QUEUED.value, JobStatus.RUNNING.value])
+        )
+        result = await self.session.execute(stmt)
+        return result.scalars().first() is not None
+
     async def update_status(
         self,
         job_id: JobId | str,

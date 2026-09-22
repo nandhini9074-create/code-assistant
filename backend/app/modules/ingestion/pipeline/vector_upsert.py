@@ -94,9 +94,15 @@ class VectorUpsertStage:
         await ensure_collection_exists(coll_name)
 
         if points:
-            logger.info("stage_10_upserting_to_qdrant", points_count=len(points), collection=coll_name)
-            await upsert_vectors(coll_name, points)
-            logger.info("stage_10_qdrant_upsert_success", points_count=len(points))
+            unique_points = {}
+            for point in points:
+                if point.id not in unique_points:
+                    unique_points[point.id] = point
+            deduped_points = list(unique_points.values())
+            
+            logger.info("stage_10_upserting_to_qdrant", points_count=len(deduped_points), original_count=len(points), collection=coll_name)
+            await upsert_vectors(coll_name, deduped_points)
+            logger.info("stage_10_qdrant_upsert_success", points_count=len(deduped_points))
 
         modified_files = [f.file_path for f in context.files if f.is_new_or_modified]
         if modified_files:
@@ -114,8 +120,14 @@ class VectorUpsertStage:
             await self.chunk_repo.delete_by_file_paths(uuid.UUID(context.repo_id), modified_files)
 
         if db_chunks:
-            logger.info("stage_10_saving_to_postgresql", db_chunks_count=len(db_chunks))
-            await self.chunk_repo.bulk_create(db_chunks)
-            logger.info("stage_10_postgresql_save_success", db_chunks_count=len(db_chunks))
+            unique_db_chunks = {}
+            for chunk in db_chunks:
+                if chunk.chunk_hash not in unique_db_chunks:
+                    unique_db_chunks[chunk.chunk_hash] = chunk
+            deduped_db_chunks = list(unique_db_chunks.values())
+            
+            logger.info("stage_10_saving_to_postgresql", db_chunks_count=len(deduped_db_chunks), original_count=len(db_chunks))
+            await self.chunk_repo.bulk_create(deduped_db_chunks)
+            logger.info("stage_10_postgresql_save_success", db_chunks_count=len(deduped_db_chunks))
         else:
             logger.info("stage_10_no_new_chunks_to_save", reason="All chunks reused from previous index")

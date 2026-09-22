@@ -99,7 +99,11 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
             
             # Fetch the repo to get the per-repository token if it exists
             repo = await repo_repo.get_by_id(repo_id)
-            github_token = repo.access_token_ref if repo else None
+            if repo and repo.access_token_ref:
+                from app.shared.utils.encryption import decrypt_token
+                github_token = decrypt_token(repo.access_token_ref)
+            else:
+                github_token = None
             
             # Mark the job as RUNNING and record the previous commit SHA before the new pipeline run
             from app.core.enums import JobStatus
@@ -120,6 +124,16 @@ async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str
                 full_reindex=full_reindex,
                 webhook_diff=webhook_diff,
             )
+            
+            # If the pipeline failed before reaching the CheckpointUpdateStage (Stage 12),
+            # we need to manually update the database here so the job isn't stuck as RUNNING forever.
+            if not result.success:
+                logger.warning("pipeline_failed_updating_job_status_to_failed", job_id=job_id, error=result.error_message)
+                await job_repo.update_status(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    stage="pipeline_aborted_early"
+                )
             
             return {
                 "status": "success" if result.success else "failed",

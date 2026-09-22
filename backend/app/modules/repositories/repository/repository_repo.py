@@ -41,6 +41,12 @@ class RepositoryRepository:
         result = await self.session.execute(stmt)
         return result.scalar_one_or_none()
 
+    async def get_by_github_id(self, github_id: int) -> Repository | None:
+        """Get repository by its numeric GitHub ID."""
+        stmt = select(Repository).where(Repository.github_repo_id == github_id)
+        result = await self.session.execute(stmt)
+        return result.scalar_one_or_none()
+
     async def get_by_full_name(self, full_name: str) -> Repository | None:
         """Get repository by full name (owner/repo) or by matching URL."""
         # Ensure we only match by URL endings that represent the exact owner/repo to avoid cross-owner collisions.

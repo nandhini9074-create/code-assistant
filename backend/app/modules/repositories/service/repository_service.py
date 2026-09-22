@@ -88,31 +88,40 @@ class RepositoryService:
                 )
 
         # --- Synchronous GitHub API Validation ---
+        github_repo_id = None
         try:
             from app.infrastructure.github.github_client import get_github_client
             from app.core.exceptions import GitHubAPIError, ValidationError
             client = get_github_client()
-            await client.request(
+            response = await client.request(
                 "GET", 
                 f"/repos/{owner}/{name}",
                 github_token=request.pat_token
             )
-            logger.info("repository_github_access_verified", full_name=full_name)
+            
+            repo_data = response.json()
+            if isinstance(repo_data, dict):
+                github_repo_id = repo_data.get("id")
+            logger.info("repository_github_access_verified", full_name=full_name, github_repo_id=github_repo_id)
         except GitHubAPIError as exc:
             logger.warning("repository_github_access_denied", full_name=full_name, error=str(exc))
             raise ValidationError(
                 f"Could not access repository on GitHub. It may not exist or the token is invalid. Details: {exc.message}"
             )
             
+        from app.shared.utils.encryption import encrypt_token
+        encrypted_token = encrypt_token(request.pat_token)
+
         collection_name = f"repo_{owner}_{name}".lower().replace("-", "_").replace(".", "_")
         repo_record = Repository(
             repo_name=name,
             repo_url=request.repo_url,
             source_type="github",
             default_branch=request.branch or "main",
-            access_token_ref=request.pat_token,
+            access_token_ref=encrypted_token,
             is_private=bool(request.pat_token),
             qdrant_collection_name=collection_name,
+            github_repo_id=github_repo_id,
         )
         
         # Ensure the repository collection is created in Qdrant immediately
@@ -294,7 +303,9 @@ class RepositoryService:
         if request.branch is not None:
             update_data["default_branch"] = request.branch
         if request.pat_token is not None:
-            update_data["github_token"] = request.pat_token
+            from app.shared.utils.encryption import encrypt_token
+            update_data["access_token_ref"] = encrypt_token(request.pat_token)
+            update_data["is_private"] = bool(request.pat_token)
             
         if update_data:
             await self.repo.update_fields(repo_id, update_data)
@@ -310,6 +321,9 @@ class RepositoryService:
 
         # --- Step 1: Delete GitHub webhook if we have one ---
         if repo.github_webhook_id is not None and repo.access_token_ref:
+            from app.shared.utils.encryption import decrypt_token
+            plaintext_token = decrypt_token(repo.access_token_ref)
+            
             owner = repo.owner
             repo_name = repo.repo_name
             webhook_id = repo.github_webhook_id
@@ -326,7 +340,7 @@ class RepositoryService:
                     owner=owner,
                     repo=repo_name,
                     webhook_id=webhook_id,
-                    github_token=repo.access_token_ref,  # NOT logged
+                    github_token=plaintext_token,  # NOT logged
                 )
             except Exception as exc:
                 # Non-fatal: log and continue with local deletion

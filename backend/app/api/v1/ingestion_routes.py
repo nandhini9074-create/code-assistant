@@ -38,6 +38,9 @@ async def trigger_ingestion(
     if not repo:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Repository not found.")
 
+    if await job_repo.has_active_job_for_repo(repo.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An ingestion job is already queued or running for this repository.")
+
     job = IngestionJob(
         repo_id=repo.id,
         job_type="full",
@@ -77,6 +80,9 @@ async def reindex_repository(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Repository not found.",
         )
+
+    if await job_repo.has_active_job_for_repo(repo.id):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="An ingestion job is already queued or running for this repository.")
 
     # 2. Create an ingestion job
     job = IngestionJob(

@@ -44,6 +44,7 @@ class Repository(Base, TimestampMixin):
     qdrant_collection_name: Mapped[str] = mapped_column(String(255), nullable=False)
     last_indexed_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     github_webhook_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    github_repo_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Relationships
     ingestion_jobs: Mapped[list["IngestionJob"]] = relationship(  # noqa: F821
