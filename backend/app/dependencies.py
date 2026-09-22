@@ -160,6 +160,7 @@ def get_code_analysis_service(
 def get_search_service(
     llm_service=Depends(get_llm_service),
     code_analysis_service=Depends(get_code_analysis_service),
+    repo_repo=Depends(get_repository_repo),
 ):
     from app.modules.search.pipeline.action_analysis import ActionAnalysisStage
     from app.modules.search.pipeline.code_analysis import CodeAnalysisStage
@@ -172,6 +173,7 @@ def get_search_service(
     from app.modules.search.pipeline.intent_classification import IntentClassificationStage
     from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingStage
     from app.modules.search.pipeline.request_validation import RequestValidationStage
+    from app.modules.search.pipeline.repository_identification import RepositoryIdentificationStage
     from app.modules.search.pipeline.response_generation import ResponseGenerationStage
 
     from app.modules.search.retrieval.dense_search import DenseSearch
@@ -196,6 +198,8 @@ def get_search_service(
     # Step 3: Query preprocessing
     # ---------------------------------------------------------------
     query_prep_stage = QueryPreprocessingStage(llm_service)
+
+    repository_identification_stage = RepositoryIdentificationStage(repo_repo)
 
     # ---------------------------------------------------------------
     # Step 4: Collection selection
@@ -226,7 +230,6 @@ def get_search_service(
     # ---------------------------------------------------------------
     code_ident_stage = CodeIdentificationStage(
         llm_service,
-        code_ret_stage=code_ret_stage,
     )
 
     # ---------------------------------------------------------------
@@ -270,6 +273,7 @@ def get_search_service(
         val_stage=val_stage,
         intent_stage=intent_stage,
         query_prep_stage=query_prep_stage,
+        repository_identification_stage=repository_identification_stage,
         coll_sel_stage=coll_sel_stage,
         code_ret_stage=code_ret_stage,
         code_ident_stage=code_ident_stage,

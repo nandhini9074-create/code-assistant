@@ -110,7 +110,6 @@ class GroqProvider(BaseLLMProvider):
             if not content:
                 raise LLMError("LLM returned an empty response")
 
-            # Extract and log token usage.
             ctx_vars = structlog.contextvars.get_contextvars()
 
             inp_t, out_t, total_t = _extract_tokens(
@@ -153,6 +152,9 @@ class GroqProvider(BaseLLMProvider):
                 exc_info=exc,
             )
 
+            # Propagate the failure to the calling pipeline stage.
+            # The stage is responsible for applying its deterministic
+            # fallback instead of the provider inventing a response.
             raise LLMError(
                 f"Groq API request failed: {exc}"
             ) from exc
@@ -165,6 +167,9 @@ class GroqProvider(BaseLLMProvider):
         max_tokens: int = 300,
         temperature: float = 0.0,
     ) -> dict[str, Any]:
+
+
+         # TEMPORARY TEST
         """
         Generate a structured JSON object using Groq.
 
@@ -220,9 +225,9 @@ class GroqProvider(BaseLLMProvider):
             if not content:
                 raise LLMError("LLM returned an empty response")
 
-            # Parse JSON separately from the API request.
             try:
                 parsed = json.loads(content)
+
             except json.JSONDecodeError as exc:
                 raise LLMParseError(
                     f"Failed to parse Groq response as JSON: {exc}"
@@ -233,7 +238,6 @@ class GroqProvider(BaseLLMProvider):
                     "Groq JSON response must be an object"
                 )
 
-            # Log token usage only after successful response parsing.
             ctx_vars = structlog.contextvars.get_contextvars()
 
             inp_t, out_t, total_t = _extract_tokens(
@@ -265,6 +269,8 @@ class GroqProvider(BaseLLMProvider):
                 exc_info=exc,
             )
 
+            # Propagate the failure to the calling pipeline stage.
+            # The stage handles the appropriate deterministic fallback.
             raise LLMError(
                 f"Groq API request failed: {exc}"
             ) from exc
@@ -326,6 +332,4 @@ class GroqProvider(BaseLLMProvider):
             max_tokens=max_tokens,
             temperature=temp,
         )
-
-
 

@@ -72,11 +72,15 @@ class CodeAnalysisService:
         Run intent-specific code analysis.
 
         RETRIEVE:
-            Only explains the retrieved code. It does not generate
-            a proposed change or suggested code.
+            Explain the retrieved code only.
 
         FIX_BUG / ADD_FEATURE / OPTIMIZE / REFACTOR:
             Delegate to the corresponding intent-specific analyzer.
+
+        If LLM-based analysis fails, the error is propagated to
+        CodeAnalysisStage, where the stage-level UNAVAILABLE fallback
+        is created. This keeps failure handling centralized at the
+        pipeline stage boundary.
         """
 
         if context.intent is None:
@@ -88,13 +92,12 @@ class CodeAnalysisService:
         # RETRIEVE
         # ---------------------------------------------------------
         #
-        # RETRIEVE is only a code lookup/explanation request.
-        # Do NOT populate:
-        #   - current_behavior
-        #   - proposed_change
-        #   - suggested_code
-        #
-        # Those fields are intended for modification-oriented intents.
+        # RETRIEVE only explains existing code.
+        # It must not generate:
+        #   - proposed changes
+        #   - suggested code
+        #   - bug fixes
+        #   - optimization recommendations
         #
         if context.intent == IntentType.RETRIEVE:
             ai_answer = await self._analyze_retrieve(context)
@@ -131,25 +134,35 @@ class CodeAnalysisService:
                 f"{context.intent.value}"
             )
 
-        result = await analyzer.analyze(context)
+        try:
+            result = await analyzer.analyze(context)
 
-        if result is None:
-            raise ValueError(
-                f"Analyzer returned no result for intent: "
-                f"{context.intent.value}"
-            )
+            if result is None:
+                raise ValueError(
+                    f"Analyzer returned no result for intent: "
+                    f"{context.intent.value}"
+                )
 
-        analysis = getattr(result, "analysis", None)
+            analysis = getattr(result, "analysis", None)
 
-        if not isinstance(analysis, dict):
-            raise ValueError(
-                "Code analyzer returned an invalid analysis result. "
-                "Expected result.analysis to be a dictionary."
-            )
+            if not isinstance(analysis, dict):
+                raise ValueError(
+                    "Code analyzer returned an invalid analysis result. "
+                    "Expected result.analysis to be a dictionary."
+                )
 
-        context.analysis_result = analysis
+            context.analysis_result = analysis
 
-        return analysis
+            return analysis
+
+        except Exception as exc:
+            # Do not invent an analysis when the LLM/analyzer fails.
+            # Propagate the failure to CodeAnalysisStage, which owns
+            # the deterministic UNAVAILABLE fallback.
+            raise RuntimeError(
+                f"Code analysis failed for intent "
+                f"{context.intent.value}: {exc}"
+            ) from exc
 
     def validate_analysis(
         self,
@@ -198,6 +211,9 @@ class CodeAnalysisService:
 
         The response is based only on the retrieved repository context.
         No code modification or fix should be proposed here.
+
+        If the LLM fails, the exception is propagated to
+        CodeAnalysisStage so the stage-level fallback can be applied.
         """
 
         if not context.llm_context and not context.code_snippets:
@@ -211,8 +227,8 @@ class CodeAnalysisService:
             f"TOON-Encoded Repository Context:\n"
             f"{context.llm_context or '(No context)'}\n\n"
             f"The context above is encoded in TOON format: the metadata table "
-            f"identifies each snippet by repository, file_path, function/class name, "
-            f"and line range. Source code follows in CODE BLOCKS."
+            f"identifies each snippet by repository, file_path, function/class "
+            f"name, and line range. Source code follows in CODE BLOCKS."
         )
 
         system_prompt = (
@@ -270,9 +286,11 @@ class CodeAnalysisService:
             )
 
         except Exception as exc:
-            return (
-                "Code identified in repository: "
-                f"{context.target_symbol or 'target'} "
-                f"({exc})"
-            )
+            # Important:
+            # Do NOT return a fabricated/partial answer here.
+            # Propagate the failure to CodeAnalysisStage so that it
+            # creates the standard UNAVAILABLE fallback.
+            raise RuntimeError(
+                f"Retrieve code analysis failed: {exc}"
+            ) from exc
 

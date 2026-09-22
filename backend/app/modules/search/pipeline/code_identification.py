@@ -1,7 +1,17 @@
+
 """
 app/modules/search/pipeline/code_identification.py
 
-Pipeline stage: Code Identification (Step 7).
+Pipeline stage: Code Identification.
+
+Identifies the target code element from retrieved chunks.
+
+Design:
+- Use the LLM when available.
+- If the LLM fails, use deterministic identification.
+- Never guess a target when deterministic evidence is insufficient.
+- Preserve ambiguity when the same symbol exists in multiple files.
+- Retrieval score alone must never resolve a same-symbol conflict.
 """
 
 from __future__ import annotations
@@ -19,13 +29,23 @@ from app.modules.search.domain.search_domain import (
 
 logger = get_logger(__name__)
 
-MAX_BROADEN_ATTEMPTS = 2
-INITIAL_BROADEN_LIMIT = 20
+
+_IDENTIFIER_RE = re.compile(
+    r"\b[A-Za-z_][A-Za-z0-9_]*\b"
+)
+
+_FILE_PATH_RE = re.compile(
+    r"(?:[\w.-]+[\\/])*[\w.-]+\."
+    r"(?:ts|tsx|js|jsx|py|java|go|rs|cpp|c|h|hpp|cs|"
+    r"json|yaml|yml|xml|html|css|scss|sql|md|env)"
+    r"\b",
+    re.IGNORECASE,
+)
 
 
 @dataclass
 class _CandidateTarget:
-    """Represents a unique candidate code target extracted from retrieved chunks."""
+    """Represents a unique candidate code target."""
 
     symbol_name: str
     file_path: str
@@ -42,10 +62,8 @@ class CodeIdentificationStage:
     def __init__(
         self,
         llm_service: LLMService,
-        code_ret_stage=None,
     ) -> None:
         self.llm_service = llm_service
-        self.code_ret_stage = code_ret_stage
 
     async def execute(self, context: SearchContext) -> None:
         if context.early_exit:
@@ -61,42 +79,26 @@ class CodeIdentificationStage:
 
         elements = await self._identify(context)
 
-        broaden_attempt = 0
-
-        while (
-            not elements
-            and broaden_attempt < MAX_BROADEN_ATTEMPTS
-        ):
-            broaden_attempt += 1
-
-            await self._broaden_retrieval(
-                context,
-                broaden_attempt,
-            )
-
-            if context.retrieved_chunks:
-                elements = await self._identify(context)
-
         if not elements:
             conflict_detected = self._detect_symbol_conflict(
                 context,
                 valid_elements=[],
             )
+
             if conflict_detected and context.ambiguous_candidates:
-                context.symbol_conflict = True
-                context.ambiguous = True
-                context.is_ambiguous = True
-                context.early_exit = "EARLY_EXIT_C"
-                context.early_exit_message = (
-                    "Ambiguous code target: multiple candidates with the same symbol "
-                    "were found across different files."
+                self._mark_ambiguous(
+                    context,
+                    (
+                        "Ambiguous code target: multiple candidates with "
+                        "the same symbol were found across different files."
+                    ),
                 )
                 return
 
             context.early_exit = "EARLY_EXIT_C"
             context.early_exit_message = (
                 "Could not identify specific code elements matching "
-                "your query after broadened retrieval."
+                "your query in retrieved code."
             )
             return
 
@@ -104,7 +106,7 @@ class CodeIdentificationStage:
             element
             for element in elements
             if isinstance(element, dict)
-            and element.get("name")
+            and str(element.get("name") or "").strip()
         ]
 
         if not valid_elements:
@@ -112,14 +114,14 @@ class CodeIdentificationStage:
                 context,
                 valid_elements=[],
             )
+
             if conflict_detected and context.ambiguous_candidates:
-                context.symbol_conflict = True
-                context.ambiguous = True
-                context.is_ambiguous = True
-                context.early_exit = "EARLY_EXIT_C"
-                context.early_exit_message = (
-                    "Ambiguous code target: multiple candidates with the same symbol "
-                    "were found across different files."
+                self._mark_ambiguous(
+                    context,
+                    (
+                        "Ambiguous code target: multiple candidates with "
+                        "the same symbol were found across different files."
+                    ),
                 )
                 return
 
@@ -132,23 +134,7 @@ class CodeIdentificationStage:
         context.identified_elements = valid_elements
 
         # ---------------------------------------------------------
-        # SAME-NAME-MULTIPLE-FILES CANDIDATE DISCOVERY
-        #
-        # IMPORTANT:
-        # Multiple occurrences of the same symbol do NOT
-        # automatically mean ambiguity.
-        #
-        # Example:
-        #
-        #   ProductService.search()
-        #   UserService.search()
-        #   TransactionService.search()
-        #
-        # The query may still clearly identify ProductService.
-        #
-        # Therefore this method only discovers the conflict and
-        # stores all candidates. _resolve_target() makes the
-        # final identification decision.
+        # SAME-SYMBOL CANDIDATE DISCOVERY
         # ---------------------------------------------------------
         conflict_detected = self._detect_symbol_conflict(
             context,
@@ -161,7 +147,9 @@ class CodeIdentificationStage:
             logger.info(
                 "code_identification_symbol_candidates_found",
                 query=context.query,
-                candidate_count=len(context.ambiguous_candidates),
+                candidate_count=len(
+                    context.ambiguous_candidates
+                ),
                 candidates=[
                     {
                         "name": candidate["name"],
@@ -174,15 +162,6 @@ class CodeIdentificationStage:
 
         # ---------------------------------------------------------
         # RESOLVE TARGET
-        #
-        # Resolution priority:
-        #
-        # 1. Explicit file/path
-        # 2. Explicit class
-        # 3. Domain/context clues
-        # 4. Explicit symbol
-        # 5. Retrieval score only when there is no same-symbol
-        #    conflict
         # ---------------------------------------------------------
         (
             selected_element,
@@ -195,18 +174,13 @@ class CodeIdentificationStage:
         )
 
         if is_ambiguous:
-            context.ambiguous = True
-            context.is_ambiguous = True
-            context.target_symbol = None
-            context.primary_chunk = None
-            context.early_exit = "EARLY_EXIT_C"
-
-            context.early_exit_message = (
+            self._mark_ambiguous(
+                context,
                 reason
                 or (
-                    "Could not uniquely identify code target "
-                    "due to multiple ambiguous candidates."
-                )
+                    "Could not uniquely identify the code target "
+                    "because multiple plausible candidates were found."
+                ),
             )
 
             logger.warning(
@@ -215,7 +189,6 @@ class CodeIdentificationStage:
                 query=context.query,
                 reason=context.early_exit_message,
             )
-
             return
 
         if not selected_element or not primary_chunk:
@@ -231,20 +204,10 @@ class CodeIdentificationStage:
         # ---------------------------------------------------------
         context.ambiguous = False
         context.is_ambiguous = False
+
         context.target_symbol = selected_element.get("name")
         context.primary_chunk = primary_chunk
 
-        # IMPORTANT:
-        #
-        # Do NOT reset symbol_conflict here.
-        #
-        # symbol_conflict=True can mean:
-        #
-        # "The same symbol existed in multiple files, but the
-        #  query contained enough information to identify one."
-        #
-        # This is different from ambiguous=True.
-        #
         logger.info(
             "code_identification_complete",
             repo_id=context.repo_id,
@@ -262,6 +225,13 @@ class CodeIdentificationStage:
         self,
         context: SearchContext,
     ) -> list[dict[str, Any]]:
+        """
+        Identify code elements using the LLM.
+
+        If LLM identification fails, use deterministic fallback.
+        The fallback is intentionally conservative.
+        """
+
         chunks = context.retrieved_chunks
 
         if not chunks:
@@ -278,11 +248,16 @@ class CodeIdentificationStage:
                     element
                     for element in elements
                     if isinstance(element, dict)
-                    and element.get("name")
+                    and str(element.get("name") or "").strip()
                 ]
 
                 if valid_elements:
                     return valid_elements
+
+                logger.warning(
+                    "code_identification_llm_returned_no_valid_elements",
+                    repo_id=context.repo_id,
+                )
 
         except Exception:
             logger.exception(
@@ -295,38 +270,20 @@ class CodeIdentificationStage:
             chunks,
         )
 
-    async def _broaden_retrieval(
-        self,
-        context: SearchContext,
-        attempt: int,
-    ) -> None:
-        if self.code_ret_stage is None:
-            return
-
-        broader_limit = INITIAL_BROADEN_LIMIT * (2 ** attempt)
-
-        await self.code_ret_stage.execute(
-            context,
-            limit=broader_limit,
-        )
-
     def _detect_symbol_conflict(
         self,
         context: SearchContext,
         valid_elements: list[dict[str, Any]],
     ) -> bool:
         """
-        Discover whether a queried symbol exists in multiple files.
+        Discover whether the same exact symbol exists in multiple files.
 
-        IMPORTANT:
-        This method DOES NOT decide ambiguity.
+        This method does NOT decide whether the query is ambiguous.
 
         It only:
-        - finds all exact symbol matches
-        - stores them in context.ambiguous_candidates
-        - returns True when the same symbol exists in multiple files
-
-        Final resolution is handled by _resolve_target().
+        - discovers exact symbol/file matches
+        - stores candidates
+        - reports whether a same-symbol multi-file conflict exists
         """
 
         chunks = context.retrieved_chunks
@@ -334,46 +291,44 @@ class CodeIdentificationStage:
         if not chunks:
             return False
 
-        # If the user already specified a file, there is no
-        # unresolved file conflict.
-        #
-        # _resolve_target() will still use the file information.
+        # An explicit file already resolves the file dimension.
         if context.file_paths:
             return False
 
-        # ---------------------------------------------------------
-        # Collect symbol names returned by the LLM/fallback
-        # as well as all symbols present in retrieved chunks.
-        # ---------------------------------------------------------
         queried_names: set[str] = set()
 
+        # Symbols returned by LLM/deterministic identification.
         for element in valid_elements:
             name = str(
-                element.get("name", "")
+                element.get("name") or ""
             ).strip().lower()
 
             if name:
                 queried_names.add(name)
 
+        # Symbols present in retrieved metadata.
         for chunk in chunks:
             metadata = chunk.metadata or {}
-            for key in ("function_name", "class_name", "symbol"):
-                val = str(metadata.get(key) or "").strip().lower()
-                if val and val not in {"none", "unknown", "anonymous", ""}:
-                    queried_names.add(val)
+
+            for key in (
+                "function_name",
+                "class_name",
+                "symbol",
+            ):
+                value = str(
+                    metadata.get(key) or ""
+                ).strip().lower()
+
+                if value and value not in {
+                    "none",
+                    "unknown",
+                    "anonymous",
+                }:
+                    queried_names.add(value)
 
         if not queried_names:
             return False
 
-        # ---------------------------------------------------------
-        # Find exact symbol matches.
-        #
-        # Key:
-        #   (symbol_name, file_path)
-        #
-        # Keep only the highest-scoring chunk for the same
-        # symbol/file pair.
-        # ---------------------------------------------------------
         matches_by_file: dict[
             tuple[str, str],
             dict[str, Any],
@@ -382,29 +337,30 @@ class CodeIdentificationStage:
         for chunk in chunks:
             metadata = chunk.metadata or {}
 
-            chunk_file = (
-                str(chunk.file_path or "")
-                .strip()
-                .lower()
-                .replace("\\", "/")
+            chunk_file = _normalize_path(
+                chunk.file_path
             )
 
-            function_name = str(
-                metadata.get("function_name") or ""
-            ).strip().lower()
+            function_name = _normalize_name(
+                metadata.get("function_name")
+            )
 
-            class_name = str(
-                metadata.get("class_name") or ""
-            ).strip().lower()
+            class_name = _normalize_name(
+                metadata.get("class_name")
+            )
 
-            symbol = str(
-                metadata.get("symbol") or ""
-            ).strip().lower()
+            symbol = _normalize_name(
+                metadata.get("symbol")
+            )
 
             metadata_symbols = {
-                function_name,
-                class_name,
-                symbol,
+                value
+                for value in (
+                    function_name,
+                    class_name,
+                    symbol,
+                )
+                if value
             }
 
             for queried_name in queried_names:
@@ -418,22 +374,25 @@ class CodeIdentificationStage:
 
                 candidate = {
                     "name": (
-                        str(
-                            metadata.get("function_name")
-                            or metadata.get("class_name")
-                            or metadata.get("symbol")
-                            or queried_name
-                        )
+                        metadata.get("function_name")
+                        or metadata.get("class_name")
+                        or metadata.get("symbol")
+                        or queried_name
                     ),
                     "file_path": chunk.file_path,
                     "class_name": (
                         str(
-                            metadata.get("class_name") or ""
-                        )
+                            metadata.get("class_name")
+                            or ""
+                        ).strip()
                         or None
                     ),
-                    "start_line": metadata.get("start_line"),
-                    "end_line": metadata.get("end_line"),
+                    "start_line": metadata.get(
+                        "start_line"
+                    ),
+                    "end_line": metadata.get(
+                        "end_line"
+                    ),
                     "score": chunk.score,
                 }
 
@@ -447,9 +406,6 @@ class CodeIdentificationStage:
         if not matches_by_file:
             return False
 
-        # ---------------------------------------------------------
-        # Group candidates by symbol.
-        # ---------------------------------------------------------
         by_name: dict[
             str,
             list[dict[str, Any]],
@@ -459,24 +415,20 @@ class CodeIdentificationStage:
             name_lower,
             _file_lower,
         ), candidate in matches_by_file.items():
-
             by_name.setdefault(
                 name_lower,
                 [],
             ).append(candidate)
 
-        # ---------------------------------------------------------
-        # A symbol conflict exists only when the same symbol
-        # exists in at least two different files.
-        # ---------------------------------------------------------
-        conflict_candidates: list[dict[str, Any]] = []
+        conflict_candidates: list[
+            dict[str, Any]
+        ] = []
 
-        for _name_lower, file_matches in by_name.items():
+        for file_matches in by_name.values():
             unique_files = {
-                str(candidate["file_path"])
-                .strip()
-                .lower()
-                .replace("\\", "/")
+                _normalize_path(
+                    candidate["file_path"]
+                )
                 for candidate in file_matches
             }
 
@@ -488,14 +440,17 @@ class CodeIdentificationStage:
         if not conflict_candidates:
             return False
 
-        # Highest retrieval score first.
         conflict_candidates.sort(
-            key=lambda candidate: candidate["score"],
+            key=lambda candidate: (
+                candidate.get("score") or 0.0
+            ),
             reverse=True,
         )
 
         context.ambiguous_candidates = (
-            conflict_candidates
+            _deduplicate_candidate_dicts(
+                conflict_candidates
+            )
         )
 
         return True
@@ -513,41 +468,16 @@ class CodeIdentificationStage:
         """
         Resolve the requested code target.
 
-        Resolution priority:
+        Resolution order:
 
-        1. Explicit file/path match
-        2. Explicit class name match
-        3. Strong domain/context match
-        4. Explicit symbol match
-        5. Retrieval score only when there is no same-symbol
-           conflict
+        1. Explicit file/path
+        2. Explicit class
+        3. Strong contextual/domain evidence
+        4. Explicit symbol
+        5. Retrieval score only when there is no same-symbol conflict
 
-        Multiple candidates do NOT automatically mean ambiguity.
-
-        Example:
-
-            "Add a feature to the ProductService to support
-             product search by category."
-
-        If search() exists in:
-
-            product_service.ts
-            user_service.ts
-            transaction_service.ts
-
-        ProductService is a strong discriminator.
-
-        Therefore:
-
-            product_service.ts::ProductService.search
-
-        should be selected.
-
-        But:
-
-            "Add a feature to improve the search function."
-
-        has no discriminator and should remain ambiguous.
+        Same-symbol candidates across different files are never
+        resolved by retrieval score alone.
         """
 
         chunks = context.retrieved_chunks
@@ -563,15 +493,6 @@ class CodeIdentificationStage:
         if not candidates:
             return None, None, False, None
 
-        # ---------------------------------------------------------
-        # IMPORTANT:
-        #
-        # When the same symbol exists in multiple files, preserve
-        # ALL symbol-matched candidates.
-        #
-        # Do NOT let retrieval-score filtering remove candidates
-        # before disambiguation.
-        # ---------------------------------------------------------
         if context.symbol_conflict:
             plausible = [
                 candidate
@@ -581,7 +502,6 @@ class CodeIdentificationStage:
 
             if not plausible:
                 plausible = candidates
-
         else:
             plausible = self._filter_plausible_candidates(
                 candidates
@@ -591,7 +511,7 @@ class CodeIdentificationStage:
             return None, None, False, None
 
         # ---------------------------------------------------------
-        # Only one candidate
+        # Single candidate
         # ---------------------------------------------------------
         if len(plausible) == 1:
             chosen = plausible[0]
@@ -604,17 +524,20 @@ class CodeIdentificationStage:
                 }
             )
 
+            primary_chunk = self._find_primary_chunk(
+                chunks,
+                element,
+            ) or chosen.primary_chunk
+
             return (
                 element,
-                chosen.primary_chunk,
+                primary_chunk,
                 False,
                 None,
             )
 
         # ---------------------------------------------------------
-        # Multiple candidates.
-        #
-        # Use query/context information to resolve them.
+        # Multiple candidates
         # ---------------------------------------------------------
         scored = [
             (
@@ -644,9 +567,7 @@ class CodeIdentificationStage:
         )
 
         # ---------------------------------------------------------
-        # Strong explicit/context discriminator.
-        #
-        # This is preferred over retrieval score.
+        # Strong contextual discriminator.
         # ---------------------------------------------------------
         if (
             top_context_score > 0
@@ -660,20 +581,20 @@ class CodeIdentificationStage:
                 }
             )
 
+            primary_chunk = self._find_primary_chunk(
+                chunks,
+                element,
+            ) or top_candidate.primary_chunk
+
             return (
                 element,
-                top_candidate.primary_chunk,
+                primary_chunk,
                 False,
                 None,
             )
 
         # ---------------------------------------------------------
-        # Retrieval score fallback.
-        #
-        # ONLY allowed when there is no same-symbol conflict.
-        #
-        # If search() exists in multiple files, retrieval score
-        # alone must never decide which search() the user meant.
+        # Retrieval score can only resolve NON-CONFLICT cases.
         # ---------------------------------------------------------
         if not context.symbol_conflict:
             score_diff = (
@@ -697,97 +618,54 @@ class CodeIdentificationStage:
                     }
                 )
 
+                primary_chunk = self._find_primary_chunk(
+                    chunks,
+                    element,
+                ) or top_candidate.primary_chunk
+
                 return (
                     element,
-                    top_candidate.primary_chunk,
+                    primary_chunk,
                     False,
                     None,
                 )
 
         # ---------------------------------------------------------
-        # Still ambiguous.
+        # Ambiguous
         # ---------------------------------------------------------
+        context.ambiguous_candidates = (
+            self._build_ambiguity_candidates(
+                scored,
+                context,
+            )
+        )
+
         candidate_descriptions = []
 
-        if context.symbol_conflict and context.ambiguous_candidates:
-            for cand in context.ambiguous_candidates[:10]:
-                description = f"'{cand.get('name')}'"
-                if cand.get("class_name"):
-                    description += f" in class '{cand.get('class_name')}'"
-                description += f" ({cand.get('file_path')})"
-                candidate_descriptions.append(description)
-        else:
-            for _, candidate in scored[:10]:
-                description = (
-                    f"'{candidate.symbol_name}'"
-                )
+        for candidate in context.ambiguous_candidates[:10]:
+            description = (
+                f"'{candidate.get('name')}'"
+            )
 
-                if candidate.class_name:
-                    description += (
-                        f" in class "
-                        f"'{candidate.class_name}'"
-                    )
-
+            if candidate.get("class_name"):
                 description += (
-                    f" ({candidate.file_path})"
+                    f" in class "
+                    f"'{candidate.get('class_name')}'"
                 )
 
-                candidate_descriptions.append(
-                    description
-                )
+            description += (
+                f" ({candidate.get('file_path')})"
+            )
 
-        # ---------------------------------------------------------
-        # Populate structured ambiguity candidates.
-        # ---------------------------------------------------------
-        if context.symbol_conflict and context.ambiguous_candidates:
-            # Preserve the conflicting candidates identified across multiple files
-            seen_cand: set[tuple[str, str]] = set()
-            deduped_candidates: list[dict[str, Any]] = []
-            for cand in context.ambiguous_candidates:
-                cand_key = (
-                    str(cand.get("name") or "").lower(),
-                    str(cand.get("file_path") or "").lower(),
-                )
-                if cand_key not in seen_cand:
-                    seen_cand.add(cand_key)
-                    deduped_candidates.append(cand)
-            context.ambiguous_candidates = deduped_candidates
-        else:
-            context.ambiguous_candidates = [
-                {
-                    "name": candidate.symbol_name,
-                    "file_path": candidate.file_path,
-                    "class_name": candidate.class_name,
-                    "start_line": (
-                        candidate.primary_chunk.metadata.get(
-                            "start_line"
-                        )
-                        if (
-                            candidate.primary_chunk
-                            and candidate.primary_chunk.metadata
-                        )
-                        else None
-                    ),
-                    "end_line": (
-                        candidate.primary_chunk.metadata.get(
-                            "end_line"
-                        )
-                        if (
-                            candidate.primary_chunk
-                            and candidate.primary_chunk.metadata
-                        )
-                        else None
-                    ),
-                    "score": candidate.score,
-                }
-                for _, candidate in scored[:10]
-            ]
+            candidate_descriptions.append(
+                description
+            )
 
         reason = (
             "Ambiguous code target: multiple plausible "
             "candidates were found and the query does not "
             "provide enough information to uniquely identify "
-            f"the target: "
+            "the target: "
             f"{'; '.join(candidate_descriptions)}."
         )
 
@@ -804,10 +682,9 @@ class CodeIdentificationStage:
         valid_elements: list[dict[str, Any]],
     ) -> list[_CandidateTarget]:
         """
-        Extract unique candidate targets from retrieved chunks.
+        Extract unique candidate targets.
 
-        A candidate is identified by:
-
+        Candidate identity:
             symbol + file + class
         """
 
@@ -818,16 +695,11 @@ class CodeIdentificationStage:
 
         for element in valid_elements:
             element_name = str(
-                element.get("name", "")
+                element.get("name") or ""
             ).strip()
 
-            element_file = (
-                str(
-                    element.get("file_path", "")
-                )
-                .strip()
-                .lower()
-                .replace("\\", "/")
+            element_file = _normalize_path(
+                element.get("file_path")
             )
 
             if not element_name:
@@ -836,23 +708,23 @@ class CodeIdentificationStage:
             for chunk in chunks:
                 metadata = chunk.metadata or {}
 
-                chunk_file = (
-                    str(chunk.file_path or "")
-                    .strip()
-                    .lower()
-                    .replace("\\", "/")
+                chunk_file = _normalize_path(
+                    chunk.file_path
                 )
 
                 function_name = str(
-                    metadata.get("function_name") or ""
+                    metadata.get("function_name")
+                    or ""
                 ).strip()
 
                 class_name = str(
-                    metadata.get("class_name") or ""
+                    metadata.get("class_name")
+                    or ""
                 ).strip()
 
                 symbol = str(
-                    metadata.get("symbol") or ""
+                    metadata.get("symbol")
+                    or ""
                 ).strip()
 
                 metadata_symbols = {
@@ -868,10 +740,9 @@ class CodeIdentificationStage:
 
                 is_file_match = bool(
                     element_file
-                    and (
-                        element_file == chunk_file
-                        or chunk_file.endswith(element_file)
-                        or element_file in chunk_file
+                    and _paths_match(
+                        element_file,
+                        chunk_file,
                     )
                 )
 
@@ -894,101 +765,35 @@ class CodeIdentificationStage:
                     class_name.lower(),
                 )
 
-                if key not in candidates_by_key:
+                existing = candidates_by_key.get(
+                    key
+                )
+
+                if existing is None:
                     candidates_by_key[key] = (
                         _CandidateTarget(
                             symbol_name=chosen_symbol,
                             file_path=chunk.file_path,
-                            class_name=class_name or None,
+                            class_name=(
+                                class_name
+                                or None
+                            ),
                             primary_chunk=chunk,
                             element=element,
                             score=chunk.score,
-                            has_symbol_match=is_symbol_match,
+                            has_symbol_match=(
+                                is_symbol_match
+                            ),
                         )
                     )
+                    continue
 
-                else:
-                    existing = candidates_by_key[key]
+                if chunk.score > existing.score:
+                    existing.primary_chunk = chunk
+                    existing.score = chunk.score
 
-                    if chunk.score > existing.score:
-                        existing.primary_chunk = chunk
-                        existing.score = chunk.score
-
-                    if is_symbol_match:
-                        existing.has_symbol_match = True
-
-        # ---------------------------------------------------------
-        # Fallback:
-        #
-        # If nothing matched the identified symbol, construct
-        # candidates from retrieved chunks.
-        # ---------------------------------------------------------
-        if not candidates_by_key:
-            default_element = (
-                valid_elements[0]
-                if valid_elements
-                else None
-            )
-
-            for chunk in chunks:
-                metadata = chunk.metadata or {}
-
-                chunk_file = (
-                    str(chunk.file_path or "")
-                    .strip()
-                    .lower()
-                    .replace("\\", "/")
-                )
-
-                function_name = str(
-                    metadata.get("function_name") or ""
-                ).strip()
-
-                class_name = str(
-                    metadata.get("class_name") or ""
-                ).strip()
-
-                symbol = str(
-                    metadata.get("symbol") or ""
-                ).strip()
-
-                chosen_symbol = (
-                    function_name
-                    or class_name
-                    or symbol
-                    or (
-                        default_element.get("name")
-                        if default_element
-                        else None
-                    )
-                    or chunk.file_path
-                )
-
-                key = (
-                    chosen_symbol.lower(),
-                    chunk_file,
-                    class_name.lower(),
-                )
-
-                if key not in candidates_by_key:
-                    candidates_by_key[key] = (
-                        _CandidateTarget(
-                            symbol_name=chosen_symbol,
-                            file_path=chunk.file_path,
-                            class_name=class_name or None,
-                            primary_chunk=chunk,
-                            element=default_element,
-                            score=chunk.score,
-                            has_symbol_match=False,
-                        )
-                    )
-
-                else:
-                    existing = candidates_by_key[key]
-
-                    if chunk.score > existing.score:
-                        existing.primary_chunk = chunk
-                        existing.score = chunk.score
+                if is_symbol_match:
+                    existing.has_symbol_match = True
 
         return list(
             candidates_by_key.values()
@@ -999,11 +804,7 @@ class CodeIdentificationStage:
         candidates: list[_CandidateTarget],
     ) -> list[_CandidateTarget]:
         """
-        Filter weak candidates for normal non-conflict cases.
-
-        If the same exact symbol exists in multiple files,
-        preserve all symbol-matched candidates so that
-        _resolve_target() can perform proper disambiguation.
+        Filter weak candidates for non-conflict cases.
         """
 
         if not candidates:
@@ -1024,12 +825,10 @@ class CodeIdentificationStage:
         if not pool:
             return []
 
-        # ---------------------------------------------------------
-        # If the same symbol exists across multiple files,
-        # preserve every exact symbol candidate.
-        # ---------------------------------------------------------
         symbol_files = {
-            candidate.file_path.lower()
+            _normalize_path(
+                candidate.file_path
+            )
             for candidate in pool
         }
 
@@ -1041,9 +840,9 @@ class CodeIdentificationStage:
             for candidate in pool
         )
 
-        plausible = []
-
-        for candidate in pool:
+        plausible = [
+            candidate
+            for candidate in pool
             if (
                 candidate.score
                 >= max_score - 0.20
@@ -1053,8 +852,8 @@ class CodeIdentificationStage:
                     candidate.has_symbol_match
                     and candidate.score >= 0.30
                 )
-            ):
-                plausible.append(candidate)
+            )
+        ]
 
         return (
             plausible
@@ -1068,17 +867,9 @@ class CodeIdentificationStage:
         context: SearchContext,
     ) -> float:
         """
-        Calculate query/context evidence for a candidate.
+        Calculate deterministic query/context evidence.
 
-        Stronger evidence receives higher weight:
-
-        1. Explicit file/path
-        2. Class name
-        3. File/stem/domain
-        4. Explicit symbol
-        5. Keyword overlap
-
-        Retrieval score is intentionally NOT included here.
+        Retrieval score is intentionally excluded.
         """
 
         score = 0.0
@@ -1087,20 +878,15 @@ class CodeIdentificationStage:
             context.query or ""
         ).lower()
 
-        # ---------------------------------------------------------
-        # Correct identifier/token extraction.
-        # ---------------------------------------------------------
-        query_tokens = set(
-            re.findall(
-                r"\b[a-zA-Z_][a-zA-Z0-9_]*\b",
-                query_lower,
+        query_tokens = {
+            token.lower()
+            for token in _IDENTIFIER_RE.findall(
+                query_lower
             )
-        )
+        }
 
         ctx_keywords = {
-            str(keyword)
-            .strip()
-            .lower()
+            str(keyword).strip().lower()
             for keyword in (
                 context.keywords or []
             )
@@ -1109,9 +895,7 @@ class CodeIdentificationStage:
         }
 
         ctx_identifiers = {
-            str(identifier)
-            .strip()
-            .lower()
+            str(identifier).strip().lower()
             for identifier in (
                 context.identifiers or []
             )
@@ -1120,12 +904,7 @@ class CodeIdentificationStage:
         }
 
         ctx_file_paths = [
-            (
-                str(file_path)
-                .strip()
-                .lower()
-                .replace("\\", "/")
-            )
+            _normalize_path(file_path)
             for file_path in (
                 context.file_paths or []
             )
@@ -1133,10 +912,8 @@ class CodeIdentificationStage:
             and str(file_path).strip()
         ]
 
-        candidate_file = (
+        candidate_file = _normalize_path(
             candidate.file_path
-            .lower()
-            .replace("\\", "/")
         )
 
         candidate_filename = (
@@ -1144,7 +921,10 @@ class CodeIdentificationStage:
         )
 
         candidate_stem = (
-            candidate_filename.rsplit(".", 1)[0]
+            candidate_filename.rsplit(
+                ".",
+                1,
+            )[0]
             if "." in candidate_filename
             else candidate_filename
         )
@@ -1177,27 +957,27 @@ class CodeIdentificationStage:
         ).lower()
 
         # ---------------------------------------------------------
-        # 1. EXPLICIT FILE PATH
-        # Strongest discriminator.
+        # 1. Explicit file path
         # ---------------------------------------------------------
         for file_path in ctx_file_paths:
-            if (
-                file_path == candidate_file
-                or candidate_file.endswith(file_path)
-                or file_path in candidate_file
+            if _paths_match(
+                file_path,
+                candidate_file,
             ):
                 score += 20.0
                 break
 
+            file_name = file_path.split("/")[-1]
+
             if (
-                candidate_filename == file_path
-                or candidate_stem == file_path
+                candidate_filename == file_name
+                or candidate_stem == file_name
             ):
                 score += 16.0
                 break
 
         # ---------------------------------------------------------
-        # File name/stem mentioned in identifiers/keywords.
+        # File/stem mentioned in extracted terms
         # ---------------------------------------------------------
         if (
             candidate_filename in ctx_identifiers
@@ -1212,7 +992,7 @@ class CodeIdentificationStage:
             score += 10.0
 
         # ---------------------------------------------------------
-        # File name/stem directly mentioned in query.
+        # File/stem directly mentioned in query
         # ---------------------------------------------------------
         if candidate_filename in query_tokens:
             score += 10.0
@@ -1224,7 +1004,7 @@ class CodeIdentificationStage:
             score += 8.0
 
         # ---------------------------------------------------------
-        # Directory/domain match.
+        # Directory/domain
         # ---------------------------------------------------------
         for part in candidate_dir_parts:
             if part in ctx_file_paths:
@@ -1243,7 +1023,7 @@ class CodeIdentificationStage:
                 score += 4.0
 
         # ---------------------------------------------------------
-        # 2. CLASS NAME
+        # 2. Class name
         # ---------------------------------------------------------
         if candidate_class:
             if candidate_class in ctx_identifiers:
@@ -1255,15 +1035,8 @@ class CodeIdentificationStage:
             if candidate_class in query_tokens:
                 score += 12.0
 
-            # Handle ProductService vs "product service".
-            normalized_class = re.sub(
-                r"(?<!^)(?=[A-Z])",
-                " ",
-                candidate.class_name or "",
-            ).lower()
-
-            normalized_class_tokens = set(
-                normalized_class.split()
+            normalized_class = _split_camel_case(
+                candidate.class_name or ""
             )
 
             query_without_punctuation = re.sub(
@@ -1275,7 +1048,7 @@ class CodeIdentificationStage:
             if normalized_class in query_without_punctuation:
                 score += 10.0
 
-            for class_token in normalized_class_tokens:
+            for class_token in normalized_class.split():
                 if (
                     len(class_token) > 2
                     and class_token in query_tokens
@@ -1283,7 +1056,7 @@ class CodeIdentificationStage:
                     score += 3.0
 
         # ---------------------------------------------------------
-        # 3. SYMBOL MATCH
+        # 3. Symbol
         # ---------------------------------------------------------
         if candidate_symbol in ctx_identifiers:
             score += 8.0
@@ -1295,24 +1068,18 @@ class CodeIdentificationStage:
         # 4. LLM element file match
         # ---------------------------------------------------------
         if candidate.element:
-            element_file = (
-                str(
-                    candidate.element.get(
-                        "file_path"
-                    )
-                    or ""
+            element_file = _normalize_path(
+                candidate.element.get(
+                    "file_path"
                 )
-                .strip()
-                .lower()
-                .replace("\\", "/")
             )
 
-            if element_file and (
-                element_file == candidate_file
-                or candidate_file.endswith(
-                    element_file
+            if (
+                element_file
+                and _paths_match(
+                    element_file,
+                    candidate_file,
                 )
-                or element_file in candidate_file
             ):
                 score += 8.0
 
@@ -1334,51 +1101,186 @@ class CodeIdentificationStage:
         return score
 
     @staticmethod
-    def _select_best_element(
+    def _build_ambiguity_candidates(
+        scored: list[
+            tuple[float, _CandidateTarget]
+        ],
+        context: SearchContext,
+    ) -> list[dict[str, Any]]:
+        """
+        Convert internal candidates into the public ambiguity format.
+        """
+
+        if (
+            context.symbol_conflict
+            and context.ambiguous_candidates
+        ):
+            return _deduplicate_candidate_dicts(
+                context.ambiguous_candidates
+            )
+
+        candidates = []
+
+        for _, candidate in scored[:10]:
+            metadata = (
+                candidate.primary_chunk.metadata
+                or {}
+            )
+
+            candidates.append(
+                {
+                    "name": candidate.symbol_name,
+                    "file_path": candidate.file_path,
+                    "class_name": candidate.class_name,
+                    "start_line": metadata.get(
+                        "start_line"
+                    ),
+                    "end_line": metadata.get(
+                        "end_line"
+                    ),
+                    "score": candidate.score,
+                }
+            )
+
+        return _deduplicate_candidate_dicts(
+            candidates
+        )
+
+    @staticmethod
+    def _find_primary_chunk(
         chunks: list[RetrievedChunk],
-        elements: list[dict[str, Any]],
-    ) -> dict[str, Any]:
+        element: dict[str, Any],
+    ) -> RetrievedChunk | None:
         """
-        Prefer the LLM element whose symbol exactly matches
-        function/class metadata in retrieved chunks.
+        Find the primary retrieved chunk for the identified element.
+
+        Priority:
+        1. Exact file + symbol
+        2. Exact file
+        3. Exact symbol
+        4. Highest-scoring chunk
         """
 
-        for element in elements:
-            name = str(
-                element.get("name", "")
-            ).strip().lower()
+        if not chunks:
+            return None
 
-            if not name:
-                continue
+        name = str(
+            element.get("name") or ""
+        ).strip().lower()
+
+        file_hint = _normalize_path(
+            element.get("file_path")
+        )
+
+        # ---------------------------------------------------------
+        # 1. Exact file + symbol
+        # ---------------------------------------------------------
+        if file_hint and name:
+            for chunk in chunks:
+                chunk_file = _normalize_path(
+                    chunk.file_path
+                )
+
+                if chunk_file != file_hint:
+                    continue
+
+                metadata = chunk.metadata or {}
+
+                metadata_names = {
+                    str(
+                        metadata.get("function_name")
+                        or ""
+                    ).strip().lower(),
+                    str(
+                        metadata.get("class_name")
+                        or ""
+                    ).strip().lower(),
+                    str(
+                        metadata.get("symbol")
+                        or ""
+                    ).strip().lower(),
+                }
+
+                if name in metadata_names:
+                    return chunk
+
+        # ---------------------------------------------------------
+        # 2. Exact file
+        # ---------------------------------------------------------
+        if file_hint:
+            file_matches = [
+                chunk
+                for chunk in chunks
+                if _normalize_path(
+                    chunk.file_path
+                ) == file_hint
+            ]
+
+            if file_matches:
+                return max(
+                    file_matches,
+                    key=lambda chunk: chunk.score,
+                )
+
+        # ---------------------------------------------------------
+        # 3. Exact symbol
+        # ---------------------------------------------------------
+        if name:
+            matches = []
 
             for chunk in chunks:
                 metadata = chunk.metadata or {}
 
-                function_name = str(
-                    metadata.get(
-                        "function_name"
-                    )
-                    or ""
-                ).strip().lower()
+                metadata_names = {
+                    str(
+                        metadata.get("function_name")
+                        or ""
+                    ).strip().lower(),
+                    str(
+                        metadata.get("class_name")
+                        or ""
+                    ).strip().lower(),
+                    str(
+                        metadata.get("symbol")
+                        or ""
+                    ).strip().lower(),
+                }
 
-                class_name = str(
-                    metadata.get("class_name")
-                    or ""
-                ).strip().lower()
+                if name in metadata_names:
+                    matches.append(chunk)
 
-                symbol = str(
-                    metadata.get("symbol")
-                    or ""
-                ).strip().lower()
+            if matches:
+                return max(
+                    matches,
+                    key=lambda chunk: chunk.score,
+                )
 
-                if name in {
-                    function_name,
-                    class_name,
-                    symbol,
-                }:
-                    return element
+        # ---------------------------------------------------------
+        # 4. Final fallback
+        # ---------------------------------------------------------
+        return max(
+            chunks,
+            key=lambda chunk: chunk.score,
+        )
 
-        return elements[0]
+    @staticmethod
+    def _mark_ambiguous(
+        context: SearchContext,
+        message: str,
+    ) -> None:
+        """Set the context to the standard ambiguity state."""
+
+        context.symbol_conflict = (
+            context.symbol_conflict
+            or bool(context.ambiguous_candidates)
+        )
+
+        context.ambiguous = True
+        context.is_ambiguous = True
+        context.target_symbol = None
+        context.primary_chunk = None
+        context.early_exit = "EARLY_EXIT_C"
+        context.early_exit_message = message
 
 
 def _fallback_identification(
@@ -1386,24 +1288,48 @@ def _fallback_identification(
     chunks: list[RetrievedChunk],
 ) -> list[dict[str, Any]]:
     """
-    Deterministic fallback when LLM code identification fails.
+    Deterministic fallback when LLM identification fails.
+
+    Rules:
+    - Match explicit identifiers against metadata.
+    - Match explicit file paths against retrieved chunks.
+    - Match explicit class/function names.
+    - Do NOT select a random retrieved chunk.
+    - Do NOT infer a target merely from retrieval ranking.
     """
 
     if not query or not chunks:
         return []
 
-    # Correct identifier regex.
-    candidates = re.findall(
-        r"\b[A-Za-z_][A-Za-z0-9_]*\b",
-        query,
+    query = query.strip()
+
+    identifiers = _extract_query_identifiers(
+        query
     )
 
+    file_paths = _extract_query_file_paths(
+        query
+    )
+
+    # Remove generic natural-language terms.
     stop_words = {
         "find",
         "where",
+        "what",
+        "which",
+        "show",
+        "get",
+        "retrieve",
+        "locate",
+        "identify",
+        "fetch",
+        "list",
+        "search",
         "is",
         "are",
         "the",
+        "this",
+        "that",
         "a",
         "an",
         "in",
@@ -1418,6 +1344,7 @@ def _fallback_identification(
         "with",
         "used",
         "use",
+        "using",
         "service",
         "class",
         "function",
@@ -1431,12 +1358,23 @@ def _fallback_identification(
         "create",
         "update",
         "modify",
+        "fix",
+        "bug",
+        "issue",
+        "error",
+        "debug",
+        "optimize",
+        "optimise",
+        "optimization",
+        "optimisation",
+        "refactor",
+        "refactoring",
     }
 
-    candidates = [
-        candidate
-        for candidate in candidates
-        if candidate.lower()
+    identifiers = [
+        identifier
+        for identifier in identifiers
+        if identifier.lower()
         not in stop_words
     ]
 
@@ -1460,95 +1398,94 @@ def _fallback_identification(
             or ""
         ).strip()
 
-        for candidate in candidates:
-            candidate_lower = (
-                candidate.lower()
+        metadata_names = {
+            name.lower(): name
+            for name in (
+                function_name,
+                class_name,
+                symbol,
+            )
+            if name
+        }
+
+        # ---------------------------------------------------------
+        # 1. Explicit file path + metadata symbol
+        # ---------------------------------------------------------
+        file_match = False
+
+        chunk_file = _normalize_path(
+            chunk.file_path
+        )
+
+        for requested_file in file_paths:
+            if _paths_match(
+                requested_file,
+                chunk_file,
+            ):
+                file_match = True
+                break
+
+        if file_match:
+            target_name = (
+                _match_identifier_to_metadata(
+                    identifiers,
+                    metadata_names,
+                )
             )
 
-            if (
-                function_name.lower()
-                == candidate_lower
-            ):
+            if target_name:
                 matches.append(
-                    {
-                        "name": function_name,
-                        "file_path": chunk.file_path,
-                        "class_name": (
-                            class_name or None
-                        ),
-                        "start_line": metadata.get(
-                            "start_line"
-                        ),
-                        "end_line": metadata.get(
-                            "end_line"
-                        ),
-                        "chunk_type": metadata.get(
-                            "chunk_type"
-                        ),
-                        "identification_method": (
-                            "deterministic_fallback"
-                        ),
-                    }
+                    _build_fallback_element(
+                        target_name,
+                        chunk,
+                        "deterministic_fallback",
+                    )
                 )
-                break
+                continue
 
-            if (
-                class_name.lower()
-                == candidate_lower
-            ):
-                matches.append(
-                    {
-                        "name": class_name,
-                        "file_path": chunk.file_path,
-                        "class_name": (
-                            class_name or None
-                        ),
-                        "start_line": metadata.get(
-                            "start_line"
-                        ),
-                        "end_line": metadata.get(
-                            "end_line"
-                        ),
-                        "chunk_type": metadata.get(
-                            "chunk_type"
-                        ),
-                        "identification_method": (
-                            "deterministic_fallback"
-                        ),
-                    }
-                )
-                break
+            # Explicit file but no symbol:
+            # only return the file if the query clearly
+            # names that file and there is exactly one
+            # meaningful code element in it.
+            target_name = (
+                function_name
+                or class_name
+                or symbol
+            )
 
-            if (
-                symbol.lower()
-                == candidate_lower
-            ):
+            if target_name:
                 matches.append(
-                    {
-                        "name": symbol,
-                        "file_path": chunk.file_path,
-                        "class_name": (
-                            class_name or None
-                        ),
-                        "start_line": metadata.get(
-                            "start_line"
-                        ),
-                        "end_line": metadata.get(
-                            "end_line"
-                        ),
-                        "chunk_type": metadata.get(
-                            "chunk_type"
-                        ),
-                        "identification_method": (
-                            "deterministic_fallback"
-                        ),
-                    }
+                    _build_fallback_element(
+                        target_name,
+                        chunk,
+                        "deterministic_file_fallback",
+                    )
                 )
-                break
+
+                continue
+
+        # ---------------------------------------------------------
+        # 2. Exact identifier -> metadata symbol
+        # ---------------------------------------------------------
+        target_name = (
+            _match_identifier_to_metadata(
+                identifiers,
+                metadata_names,
+            )
+        )
+
+        if target_name:
+            matches.append(
+                _build_fallback_element(
+                    target_name,
+                    chunk,
+                    "deterministic_fallback",
+                )
+            )
 
     # ---------------------------------------------------------
     # If no explicit candidate token in query matched metadata symbols,
-    # extract code elements directly from retrieved chunks.
+    # extract code elements directly from retrieved chunks metadata.
     # ---------------------------------------------------------
     if not matches:
         for chunk in chunks:
@@ -1559,187 +1496,266 @@ def _fallback_identification(
             target_name = fname or cname or sym
             if target_name:
                 matches.append(
-                    {
-                        "name": target_name,
-                        "file_path": chunk.file_path,
-                        "class_name": cname or None,
-                        "start_line": metadata.get("start_line"),
-                        "end_line": metadata.get("end_line"),
-                        "chunk_type": metadata.get("chunk_type"),
-                        "identification_method": "chunk_metadata_fallback",
-                    }
+                    _build_fallback_element(
+                        target_name,
+                        chunk,
+                        "deterministic_chunk_fallback",
+                    )
                 )
 
     # ---------------------------------------------------------
-    # Deduplicate matches.
+    # Deduplicate.
     # ---------------------------------------------------------
-    unique_matches: list[
-        dict[str, Any]
-    ] = []
-
-    seen: set[
-        tuple[str, str]
-    ] = set()
-
-    for match in matches:
-        key = (
-            str(match["name"]).lower(),
-            str(match["file_path"]).lower(),
-        )
-
-        if key not in seen:
-            seen.add(key)
-            unique_matches.append(match)
+    unique_matches = _deduplicate_matches(
+        matches
+    )
 
     return unique_matches
 
 
-def _find_primary_chunk(
-    chunks: list[RetrievedChunk],
-    element: dict[str, Any],
-) -> RetrievedChunk | None:
+def _extract_query_identifiers(
+    query: str,
+) -> list[str]:
     """
-    Find the primary retrieved chunk for the identified element.
-
-    Priority:
-
-    1. Exact file path + exact function/class/symbol.
-    2. Exact file path.
-    3. Exact function/class/symbol across chunks.
-    4. Highest-scoring retrieved chunk.
-
-    The file-path fallback is important when the identified
-    symbol is something inside a function, such as a variable,
-    imported class, library call, or API usage.
+    Extract identifier-like tokens from a natural-language query.
     """
 
-    if not chunks:
-        return None
+    identifiers = _IDENTIFIER_RE.findall(
+        query
+    )
 
-    name = str(
-        element.get("name", "")
+    result: list[str] = []
+    seen: set[str] = set()
+
+    for identifier in identifiers:
+        normalized = identifier.lower()
+
+        if normalized in seen:
+            continue
+
+        seen.add(normalized)
+        result.append(identifier)
+
+    return result
+
+
+def _extract_query_file_paths(
+    query: str,
+) -> list[str]:
+    """Extract explicit source/config file paths."""
+
+    matches = _FILE_PATH_RE.findall(
+        query
+    )
+
+    result: list[str] = []
+    seen: set[str] = set()
+
+    for match in matches:
+        normalized = _normalize_path(
+            match
+        )
+
+        if normalized in seen:
+            continue
+
+        seen.add(normalized)
+        result.append(normalized)
+
+    return result
+
+
+def _match_identifier_to_metadata(
+    identifiers: list[str],
+    metadata_names: dict[str, str],
+) -> str | None:
+    """
+    Find an exact identifier-to-metadata match.
+
+    Exact matching is intentional. We do not use fuzzy matching
+    here because the fallback must not guess.
+    """
+
+    for identifier in identifiers:
+        normalized = identifier.lower()
+
+        if normalized in metadata_names:
+            return metadata_names[
+                normalized
+            ]
+
+    return None
+
+
+def _build_fallback_element(
+    name: str,
+    chunk: RetrievedChunk,
+    identification_method: str,
+) -> dict[str, Any]:
+    """Build a deterministic identification result."""
+
+    metadata = chunk.metadata or {}
+
+    return {
+        "name": name,
+        "file_path": chunk.file_path,
+        "class_name": (
+            str(
+                metadata.get("class_name")
+                or ""
+            ).strip()
+            or None
+        ),
+        "start_line": metadata.get(
+            "start_line"
+        ),
+        "end_line": metadata.get(
+            "end_line"
+        ),
+        "chunk_type": metadata.get(
+            "chunk_type"
+        ),
+        "identification_method": identification_method,
+    }
+
+
+def _deduplicate_matches(
+    matches: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deduplicate identified elements by name + file."""
+
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for match in matches:
+        key = (
+            str(
+                match.get("name") or ""
+            ).strip().lower(),
+            _normalize_path(
+                match.get("file_path")
+            ),
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(match)
+
+    return unique
+
+
+def _deduplicate_candidate_dicts(
+    candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Deduplicate ambiguity candidates."""
+
+    unique: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for candidate in candidates:
+        key = (
+            str(
+                candidate.get("name") or ""
+            ).strip().lower(),
+            _normalize_path(
+                candidate.get("file_path")
+            ),
+        )
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        unique.append(candidate)
+
+    return unique
+
+
+def _normalize_name(
+    value: Any,
+) -> str:
+    """Normalize a metadata symbol name."""
+
+    return str(
+        value or ""
     ).strip().lower()
 
-    file_hint = (
-        str(
-            element.get("file_path", "")
-        )
+
+def _normalize_path(
+    value: Any,
+) -> str:
+    """Normalize Windows/Unix paths."""
+
+    return (
+        str(value or "")
         .strip()
         .lower()
         .replace("\\", "/")
     )
 
-    # ---------------------------------------------------------
-    # 1. Exact file + exact function/class/symbol match
-    # ---------------------------------------------------------
-    if file_hint and name:
-        for chunk in chunks:
-            chunk_file = (
-                str(chunk.file_path or "")
-                .strip()
-                .lower()
-                .replace("\\", "/")
-            )
 
-            metadata = chunk.metadata or {}
+def _paths_match(
+    left: str,
+    right: str,
+) -> bool:
+    """
+    Determine whether two normalized paths refer to the same file.
 
-            function_name = str(
-                metadata.get(
-                    "function_name"
-                )
-                or ""
-            ).strip().lower()
+    Supports:
+    - exact path
+    - relative path suffix
+    - filename-only hints
+    """
 
-            class_name = str(
-                metadata.get(
-                    "class_name"
-                )
-                or ""
-            ).strip().lower()
+    left = _normalize_path(left)
+    right = _normalize_path(right)
 
-            symbol = str(
-                metadata.get("symbol")
-                or ""
-            ).strip().lower()
+    if not left or not right:
+        return False
 
-            if (
-                chunk_file == file_hint
-                and name in {
-                    function_name,
-                    class_name,
-                    symbol,
-                }
-            ):
-                return chunk
+    if left == right:
+        return True
 
-    # ---------------------------------------------------------
-    # 2. Exact file path match
-    # ---------------------------------------------------------
-    if file_hint:
-        file_matches = [
-            chunk
-            for chunk in chunks
-            if (
-                str(chunk.file_path or "")
-                .strip()
-                .lower()
-                .replace("\\", "/")
-                == file_hint
-            )
-        ]
+    if right.endswith("/" + left):
+        return True
 
-        if file_matches:
-            return max(
-                file_matches,
-                key=lambda chunk: chunk.score,
-            )
+    if left.endswith("/" + right):
+        return True
 
-    # ---------------------------------------------------------
-    # 3. Exact function/class/symbol match
-    # ---------------------------------------------------------
-    if name:
-        matches = []
-
-        for chunk in chunks:
-            metadata = chunk.metadata or {}
-
-            function_name = str(
-                metadata.get(
-                    "function_name"
-                )
-                or ""
-            ).strip().lower()
-
-            class_name = str(
-                metadata.get(
-                    "class_name"
-                )
-                or ""
-            ).strip().lower()
-
-            symbol = str(
-                metadata.get("symbol")
-                or ""
-            ).strip().lower()
-
-            if name in {
-                function_name,
-                class_name,
-                symbol,
-            }:
-                matches.append(chunk)
-
-        if matches:
-            return max(
-                matches,
-                key=lambda chunk: chunk.score,
-            )
-
-    # ---------------------------------------------------------
-    # 4. Final fallback:
-    # Highest-scoring retrieved chunk.
-    # ---------------------------------------------------------
-    return max(
-        chunks,
-        key=lambda chunk: chunk.score,
+    return (
+        left.split("/")[-1]
+        == right.split("/")[-1]
+        and (
+            "/" not in left
+            or "/" not in right
+        )
     )
+
+
+def _split_camel_case(
+    value: str,
+) -> str:
+    """
+    Convert ProductService -> product service.
+
+    This is only used for contextual scoring.
+    """
+
+    normalized = re.sub(
+        r"(?<!^)(?=[A-Z])",
+        " ",
+        value,
+    )
+
+    normalized = re.sub(
+        r"[_\-]+",
+        " ",
+        normalized,
+    )
+
+    return " ".join(
+        normalized.lower().split()
+    )
+

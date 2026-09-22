@@ -7,16 +7,31 @@ Schemas for the search module.
 
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, model_validator
 
 from app.shared.schemas.base import BaseSchema
 
 
 class SearchRequest(BaseSchema):
-    """Request containing the repository and user's query."""
+    """Request containing a stable repository identity and user's query."""
 
-    repo_name: str
+    repo_id: str | None = Field(
+        default=None,
+        description="UUID of a registered repository. Preferred identifier.",
+    )
+    repo_name: str | None = Field(
+        default=None,
+        description="Legacy repository name/full name accepted during migration.",
+    )
     query: str = Field(..., min_length=3, max_length=1000)
+
+    @model_validator(mode="after")
+    def require_repository_identifier(self) -> "SearchRequest":
+        if not (self.repo_id and self.repo_id.strip()) and not (
+            self.repo_name and self.repo_name.strip()
+        ):
+            raise ValueError("Either repo_id or repo_name is required")
+        return self
 
 
 class QueryUnderstandingResponse(BaseSchema):
@@ -95,4 +110,4 @@ class SearchResponse(BaseSchema):
     # Populated when the query symbol exists in multiple files and
     # cannot be uniquely resolved. Lists every matching candidate so
     # the caller can prompt the user to be more specific.
-    ambiguous_candidates: list[AmbiguousCandidate] = Field(default_factory=list)
+    ambiguous_candidates: list[AmbiguousCandidate] = Field(default_factory=list)

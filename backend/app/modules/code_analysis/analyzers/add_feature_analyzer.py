@@ -8,6 +8,7 @@ Analyzer for ADD_FEATURE intent.
 from __future__ import annotations
 
 from app.core.logging import get_logger
+
 from app.modules.code_analysis.analyzers.base_analyzer import BaseAnalyzer
 from app.modules.code_analysis.domain.analysis_domain import (
     AnalysisResult,
@@ -19,6 +20,7 @@ from app.modules.code_analysis.prompts.add_feature_prompt import (
 )
 from app.modules.llm.service.llm_service import LLMService
 from app.modules.search.domain.search_domain import SearchContext
+
 
 logger = get_logger(__name__)
 
@@ -80,6 +82,7 @@ _SCHEMA = {
 
 
 class AddFeatureAnalyzer(BaseAnalyzer):
+
     def __init__(self, llm_service: LLMService) -> None:
         self.llm_service = llm_service
 
@@ -113,8 +116,6 @@ class AddFeatureAnalyzer(BaseAnalyzer):
                 max_tokens=2048,
             )
 
-            # Log the raw LLM response so we can verify whether
-            # suggested_code was actually generated.
             logger.info(
                 "add_feature_raw_result",
                 raw=raw,
@@ -122,7 +123,6 @@ class AddFeatureAnalyzer(BaseAnalyzer):
 
             analysis = _coerce(raw)
 
-            # Log the normalized result after coercion.
             logger.info(
                 "add_feature_analysis_result",
                 suggested_code=analysis.get("suggested_code"),
@@ -137,18 +137,12 @@ class AddFeatureAnalyzer(BaseAnalyzer):
                 exc_info=True,
             )
 
-            analysis = {
-                "error": str(exc),
-                "existing_implementation": "",
-                "proposed_change": {
-                    "description": "",
-                    "implementation_steps": [],
-                },
-                "required_changes": [],
-                "affected_files": [],
-                "risks": "",
-                "suggested_code": "",
-            }
+            # Do not return an apparently valid analysis when the
+            # LLM failed. Propagate the failure to CodeAnalysisStage,
+            # which owns the standard UNAVAILABLE fallback.
+            raise RuntimeError(
+                f"ADD_FEATURE analysis failed: {exc}"
+            ) from exc
 
         return AnalysisResult(
             intent="ADD_FEATURE",
@@ -196,11 +190,11 @@ def _coerce(raw: dict) -> dict:
     # ---------------------------------------------------------
     # SUGGESTED CODE
     # ---------------------------------------------------------
+
     suggested_code = raw.get("suggested_code")
 
     if suggested_code is None:
         suggested_code = ""
-
     elif not isinstance(suggested_code, str):
         suggested_code = str(suggested_code)
 

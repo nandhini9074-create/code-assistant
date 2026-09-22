@@ -8,6 +8,7 @@ Analyzer for FIX_BUG intent.
 from __future__ import annotations
 
 from app.core.logging import get_logger
+
 from app.modules.code_analysis.analyzers.base_analyzer import BaseAnalyzer
 from app.modules.code_analysis.domain.analysis_domain import (
     AnalysisResult,
@@ -19,6 +20,7 @@ from app.modules.code_analysis.prompts.fix_bug_prompt import (
 )
 from app.modules.llm.service.llm_service import LLMService
 from app.modules.search.domain.search_domain import SearchContext
+
 
 logger = get_logger(__name__)
 
@@ -68,6 +70,7 @@ _SCHEMA = {
 
 
 class FixBugAnalyzer(BaseAnalyzer):
+
     def __init__(self, llm_service: LLMService) -> None:
         self.llm_service = llm_service
 
@@ -80,7 +83,8 @@ class FixBugAnalyzer(BaseAnalyzer):
         2. Adds validation feedback when retrying.
         3. Limits the repository context sent to the LLM.
         4. Requests a compact structured JSON response.
-        5. Marks failed LLM analysis as invalid.
+        5. Propagates LLM failures to CodeAnalysisStage so the
+           centralized UNAVAILABLE fallback can be applied.
         """
 
         query_text = context.query
@@ -165,26 +169,20 @@ class FixBugAnalyzer(BaseAnalyzer):
         except Exception as exc:
             logger.error(
                 "fix_bug_analyzer_failed",
-                exc_info=exc,
+                error=str(exc),
+                exc_info=True,
             )
 
-            # IMPORTANT:
-            # Do not mark an analysis as valid when the LLM request failed.
-            return AnalysisResult(
-                intent="FIX_BUG",
-                analysis={
-                    "error": str(exc),
-                    "current_behavior": "",
-                    "problematic_code": "",
-                    "likely_cause": "",
-                    "proposed_fix": "",
-                    "proposed_change": "",
-                    "suggested_code": "",
-                },
-                validation_result=ValidationResult(
-                    is_valid=False,
-                ),
-            )
+            # Do not return an empty AnalysisResult here.
+            #
+            # Returning AnalysisResult would make the failed LLM call
+            # look like a completed analysis to CodeAnalysisService.
+            #
+            # Propagate the failure so CodeAnalysisStage can create the
+            # standardized UNAVAILABLE fallback.
+            raise RuntimeError(
+                f"FIX_BUG analysis failed: {exc}"
+            ) from exc
 
 
 def _limit_context(context_text: str) -> str:
@@ -229,4 +227,3 @@ def _coerce(raw: dict, required_keys: list[str]) -> dict:
             raw[key] = ""
 
     return raw
-

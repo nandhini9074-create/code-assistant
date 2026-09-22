@@ -51,8 +51,8 @@ class LLMService:
         self.provider = (
             provider
             if provider is not None
-            # else GroqProvider()
-            else OllamaProvider()
+              else GroqProvider()
+            #else OllamaProvider()
         )
 
     async def classify_intent(
@@ -169,6 +169,7 @@ class LLMService:
         intent: IntentType | None = None,
         parameters: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        
         """
         Extract structured information from the user's query.
 
@@ -280,6 +281,8 @@ class LLMService:
         query: str,
         retrieved_chunks: list[dict[str, Any] | str],
     ) -> list[dict[str, Any]]:
+
+        
         """
         Identify code elements relevant to the query from retrieved chunks.
 
@@ -452,6 +455,7 @@ class LLMService:
         intent: IntentType,
         prompt: str,
     ) -> dict[str, Any]:
+        raise RuntimeError("TEST_CODE_ANALYSIS_LLM_FAILURE")
         """
         Analyze retrieved code using the analysis prompt.
 

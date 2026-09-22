@@ -13,6 +13,9 @@ Synthesizes:
 into a final triage assessment with confidence and safety checks.
 
 This stage does not modify repository files.
+
+If analysis or validation is unavailable, this stage produces a
+deterministic unavailable result without inventing recommendations.
 """
 
 from __future__ import annotations
@@ -55,6 +58,27 @@ class FinalTriageStage:
             validation_status = (
                 "passed" if context.validated else "failed"
             )
+
+        # ---------------------------------------------------------
+        # Deterministic fallback when analysis/validation is
+        # unavailable.
+        # ---------------------------------------------------------
+
+        if (
+            analysis.get("analysis_status") == "UNAVAILABLE"
+            or validation_status == "unavailable"
+        ):
+            context.triage_result = _build_unavailable_triage(
+                context,
+                validation_status,
+            )
+
+            logger.warning(
+                "final_triage_unavailable",
+                repo_id=context.repo_id,
+                validation_status=validation_status,
+            )
+            return
 
         # ---------------------------------------------------------
         # Build triage components
@@ -119,13 +143,6 @@ class FinalTriageStage:
         # ---------------------------------------------------------
         # Preserve intent-specific analyzer output
         # ---------------------------------------------------------
-        #
-        # FIX_BUG / ADD_FEATURE / OPTIMIZE / REFACTOR analyzers
-        # can generate these fields.
-        #
-        # RETRIEVE normally does not generate them, so they remain
-        # None for RETRIEVE requests.
-        #
 
         current_behavior = analysis.get("current_behavior")
         proposed_change = analysis.get("proposed_change")
@@ -156,18 +173,11 @@ class FinalTriageStage:
 
         triage_output: dict[str, Any] = {
             "issue_summary": issue_summary,
-
-            # Human-readable recommendation.
             "recommended_change": recommended_change,
-
-            # Concise public suggestion.
             "ai_suggestion": ai_suggestion,
-
-            # Preserve analyzer-specific information.
             "current_behavior": current_behavior,
             "proposed_change": proposed_change,
             "suggested_code": suggested_code,
-
             "confidence": confidence,
             "target": target,
             "proposed_diff": proposed_diff,
@@ -187,6 +197,59 @@ class FinalTriageStage:
             risk_level=risk_level,
             is_safe=is_safe,
         )
+
+
+def _build_unavailable_triage(
+    context: SearchContext,
+    validation_status: str,
+) -> dict[str, Any]:
+    """
+    Build a deterministic triage result when analysis or validation
+    is unavailable.
+
+    No recommendation, fix, optimization, or code change is invented.
+    """
+
+    target: dict[str, Any] = {
+        "repository": context.repo_name or context.repo_id,
+        "file_path": (
+            context.primary_chunk.file_path
+            if context.primary_chunk
+            else (
+                context.file_paths[0]
+                if context.file_paths
+                else "unknown"
+            )
+        ),
+        "symbol": context.target_symbol or "global",
+    }
+
+    if context.repo_owner and context.repo_name:
+        target["repository"] = (
+            f"{context.repo_owner}/{context.repo_name}"
+        )
+
+    return {
+        "issue_summary": context.query.strip(),
+        "recommended_change": None,
+        "ai_suggestion": (
+            "Code analysis or validation was unavailable. "
+            "No recommendation can be safely generated."
+        ),
+        "current_behavior": None,
+        "proposed_change": None,
+        "suggested_code": None,
+        "confidence": ConfidenceLevel.LOW.value,
+        "target": target,
+        "proposed_diff": None,
+        "validation_status": validation_status,
+        "is_safe_to_apply": False,
+        "warning": (
+            "Code analysis or validation was unavailable. "
+            "Manual verification is required before making any change."
+        ),
+        "risk_level": "unknown",
+    }
 
 
 def _build_issue_summary(
@@ -216,10 +279,6 @@ def _build_ai_suggestion(
     # ---------------------------------------------------------
     # RETRIEVE
     # ---------------------------------------------------------
-    #
-    # RETRIEVE requests should present the existing code/explanation,
-    # not invent a modification recommendation.
-    #
 
     if context.intent and context.intent.value == "RETRIEVE":
         answer = analysis.get("answer")
@@ -306,10 +365,13 @@ def _compute_confidence(
     - HIGH: retrieved evidence + primary target + passed validation.
     """
 
-    if validation_status == "failed":
+    if validation_status in ("failed", "unavailable"):
         return ConfidenceLevel.LOW.value
 
-    if getattr(context, "ambiguous", False) or getattr(context, "is_ambiguous", False):
+    if (
+        getattr(context, "ambiguous", False)
+        or getattr(context, "is_ambiguous", False)
+    ):
         return ConfidenceLevel.LOW.value
 
     if context.early_exit == "EARLY_EXIT_D":
@@ -333,6 +395,12 @@ def _build_warning(
     confidence: str,
 ) -> str | None:
     """Build a safety warning when triage confidence is insufficient."""
+
+    if validation_status == "unavailable":
+        return (
+            "Code analysis or validation was unavailable. "
+            "Manual verification is required before applying changes."
+        )
 
     if validation_status == "failed":
         return (
@@ -361,4 +429,3 @@ def _build_warning(
         )
 
     return None
-

@@ -144,6 +144,16 @@ class CollectionSelectionStage:
             )
             return
 
+        # A repository resolved by UUID already carries the authoritative
+        # collection name from PostgreSQL; do not reconstruct it from input.
+        if context.qdrant_collection:
+            logger.info(
+                "collection_selection_resolved_from_repository",
+                repo_id=context.repo_id,
+                collection=context.qdrant_collection,
+            )
+            return
+
         if not context.repo_name or not context.repo_name.strip():
             logger.error(
                 "collection_selection_missing_repo_name",
@@ -226,4 +236,4 @@ class CollectionSelectionStage:
             repo_name=context.repo_name,
             repo_owner=context.repo_owner,
             collection=context.qdrant_collection,
-        )
+        )
