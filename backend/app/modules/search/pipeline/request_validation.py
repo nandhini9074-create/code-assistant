@@ -22,11 +22,18 @@ class RequestValidationStage:
     async def execute(self, context: SearchContext) -> None:
         """Validate the minimum required search request fields."""
 
-        if not context.repo_id and (
-            not context.repo_name or not context.repo_name.strip()
-        ):
+        has_source = bool(
+            context.source_type
+            and context.source_location
+            and context.source_location.strip()
+        )
+        has_legacy_repository = bool(
+            context.repo_name and context.repo_name.strip()
+        )
+
+        if not has_source and not has_legacy_repository:
             raise ValidationError(
-                "repo_id or repo_name is required"
+                "source is required"
             )
 
         if not context.query or not context.query.strip():
@@ -36,9 +43,9 @@ class RequestValidationStage:
 
         query = context.query.strip()
 
-        if len(query) < 3:
+        if len(query) < 1:
             raise ValidationError(
-                "query must be at least 3 characters"
+                "query must be at least 1 character"
             )
 
         if len(query) > MAX_QUERY_LENGTH:

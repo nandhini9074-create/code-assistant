@@ -455,7 +455,6 @@ class LLMService:
         intent: IntentType,
         prompt: str,
     ) -> dict[str, Any]:
-        raise RuntimeError("TEST_CODE_ANALYSIS_LLM_FAILURE")
         """
         Analyze retrieved code using the analysis prompt.
 
@@ -490,11 +489,10 @@ class LLMService:
             }
 
         except Exception as exc:
-            return {
-                "analysis": "",
-                "intent": intent.value,
-                "error": str(exc),
-            }
+            raise RuntimeError(
+                f"Code analysis failed: {exc}"
+            ) from exc
+
 
     @staticmethod
     def _string_list(value: Any) -> list[str]:

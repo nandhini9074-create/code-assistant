@@ -229,17 +229,21 @@ def _build_unavailable_triage(
             f"{context.repo_owner}/{context.repo_name}"
         )
 
+    fallback_suggestion = _build_fallback_suggestion(context)
+    fallback_confidence = (
+        ConfidenceLevel.MEDIUM.value
+        if context.retrieved_chunks and context.primary_chunk
+        else ConfidenceLevel.LOW.value
+    )
+
     return {
         "issue_summary": context.query.strip(),
         "recommended_change": None,
-        "ai_suggestion": (
-            "Code analysis or validation was unavailable. "
-            "No recommendation can be safely generated."
-        ),
+        "ai_suggestion": fallback_suggestion,
         "current_behavior": None,
-        "proposed_change": None,
+        "proposed_change": fallback_suggestion,
         "suggested_code": None,
-        "confidence": ConfidenceLevel.LOW.value,
+        "confidence": fallback_confidence,
         "target": target,
         "proposed_diff": None,
         "validation_status": validation_status,
@@ -250,6 +254,21 @@ def _build_unavailable_triage(
         ),
         "risk_level": "unknown",
     }
+
+
+def _build_fallback_suggestion(context: SearchContext) -> str:
+    """Build a useful, non-prescriptive fallback from known context."""
+
+    target = context.target_symbol
+    if not target and context.primary_chunk:
+        target = context.primary_chunk.file_path
+    target = target or "the identified repository code"
+
+    return (
+        f"Review {target} against the reported requirement: "
+        f"{context.query.strip()}. The available evidence supports a "
+        "descriptive recommendation, but not a safe exact code change."
+    )
 
 
 def _build_issue_summary(

@@ -162,6 +162,24 @@ class CodeAnalysisStage:
                 ),
             )
 
+        # Some analyzers convert provider failures into an error-shaped
+        # result instead of raising. Treat that result as a failed LLM call
+        # here so validation does not retry the provider unnecessarily.
+        elif analysis.get("error"):
+            logger.warning(
+                "code_analysis_llm_failed_using_fallback",
+                intent=context.intent.value,
+                repo_id=context.repo_id,
+                error_type="AnalyzerErrorResult",
+            )
+            analysis = self._build_fallback_analysis(
+                context,
+                reason=(
+                    "Code analysis was unavailable. The available repository "
+                    "evidence was preserved for a conservative recommendation."
+                ),
+            )
+
         # ---------------------------------------------------------
         # Store the result in the shared pipeline context.
         # ---------------------------------------------------------
@@ -250,7 +268,28 @@ class CodeAnalysisStage:
                 if context.llm_context
                 else None
             ),
-            "suggestion": None,
-            "changes": None,
+            "suggestion": _build_fallback_suggestion(context),
+            "proposed_change": _build_fallback_suggestion(context),
+            "suggested_code": None,
+            "fallback_confidence": (
+                "medium"
+                if context.retrieved_chunks and target
+                else "low"
+            ),
         }
+
+
+def _build_fallback_suggestion(context: SearchContext) -> str:
+    """Describe a conservative next step without inventing a patch."""
+
+    target = context.target_symbol
+    if not target and context.primary_chunk:
+        target = context.primary_chunk.file_path
+    target = target or "the identified repository code"
+
+    return (
+        f"Review {target} against the reported requirement: "
+        f"{context.query.strip()}. The available evidence supports a "
+        "descriptive recommendation, but not a safe exact code change."
+    )
 

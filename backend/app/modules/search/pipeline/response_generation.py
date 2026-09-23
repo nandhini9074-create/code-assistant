@@ -1,4 +1,3 @@
-
 """
 app/modules/search/pipeline/response_generation.py
 
@@ -37,6 +36,49 @@ class ResponseGenerationStage:
         "EARLY_EXIT_D",
     }
 
+    @staticmethod
+    def build_failure_response(
+        context: SearchContext,
+        error: Exception,
+    ) -> SearchResponse:
+        """Build a safe response when final assembly unexpectedly fails."""
+
+        target = context.target_symbol
+        if not target and context.primary_chunk:
+            target = context.primary_chunk.file_path
+
+        suggestion = (
+            f"Review {target or 'the identified repository code'} against "
+            f"the reported requirement: {context.query.strip()}. "
+            "The available evidence does not support a safe exact code change."
+        )
+
+        return SearchResponse(
+            intent=(context.intent.value if context.intent else "unknown"),
+            repository={
+                "owner": context.repo_owner,
+                "name": context.repo_name,
+            },
+            target={
+                "file_path": (
+                    context.primary_chunk.file_path
+                    if context.primary_chunk
+                    else None
+                ),
+                "symbol": context.target_symbol,
+            },
+            requirement=context.query,
+            suggestion=suggestion,
+            proposed_change=suggestion,
+            suggested_code=None,
+            confidence="low",
+            early_exit={
+                "code": "SEARCH_RESPONSE_FALLBACK",
+                "message": "The search result could not be fully assembled.",
+            },
+            ambiguous_candidates=[],
+        )
+
     async def execute(self, context: SearchContext) -> None:
         """Build and store the final compact SearchResponse."""
 
@@ -63,7 +105,6 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # EARLY EXIT
         # ---------------------------------------------------------
-
         if context.early_exit in self._EARLY_EXITS:
             context.final_response = self._build_early_exit_response(
                 context=context,
@@ -76,7 +117,6 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # NORMAL RESPONSE
         # ---------------------------------------------------------
-
         requirement = None
         current_behavior = None
         suggestion: Any = None
@@ -87,7 +127,6 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # STEP 11 - TRIAGE RESULT
         # ---------------------------------------------------------
-
         if context.triage_result:
             requirement = (
                 context.triage_result.get("issue_summary")
@@ -114,13 +153,14 @@ class ResponseGenerationStage:
                 "suggested_code"
             )
 
-            confidence = context.triage_result.get("confidence")
+            confidence = context.triage_result.get(
+                "confidence"
+            )
 
             # -----------------------------------------------------
-            # Do not manufacture a recommendation when Step 12
-            # explicitly reports unavailable analysis/validation.
+            # Do not manufacture a recommendation when analysis or
+            # validation is explicitly unavailable.
             # -----------------------------------------------------
-
             if (
                 context.triage_result.get("validation_status")
                 == "unavailable"
@@ -133,13 +173,15 @@ class ResponseGenerationStage:
                     )
                 )
 
-                proposed_change = None
+                proposed_change = (
+                    context.triage_result.get("proposed_change")
+                    or suggestion
+                )
                 suggested_code = None
 
         # ---------------------------------------------------------
         # STEP 8 - CODE ANALYSIS RESULT
         # ---------------------------------------------------------
-
         if (
             context.analysis_result
             and context.analysis_result.get("analysis_status")
@@ -159,9 +201,15 @@ class ResponseGenerationStage:
             if suggestion is None:
                 suggestion = (
                     context.analysis_result.get("suggestion")
-                    or context.analysis_result.get("recommended_change")
-                    or context.analysis_result.get("recommendation")
-                    or context.analysis_result.get("proposed_fix")
+                    or context.analysis_result.get(
+                        "recommended_change"
+                    )
+                    or context.analysis_result.get(
+                        "recommendation"
+                    )
+                    or context.analysis_result.get(
+                        "proposed_fix"
+                    )
                 )
 
             if proposed_change is None:
@@ -176,20 +224,29 @@ class ResponseGenerationStage:
                 )
 
             if confidence is None:
-                confidence = context.analysis_result.get("confidence")
+                confidence = context.analysis_result.get(
+                    "confidence"
+                )
 
             # -----------------------------------------------------
             # RETRIEVE intent
             # -----------------------------------------------------
-
             if suggestion is None:
                 suggestion = context.analysis_result.get("answer")
 
         # ---------------------------------------------------------
         # NORMALIZE VALUES
         # ---------------------------------------------------------
+        if context.validation_status != "passed":
+            suggestion = suggestion or (
+                "Cannot be determined from the available evidence."
+            )
+            proposed_change = proposed_change or suggestion
+            suggested_code = None
 
-        suggestion = self._normalize_suggestion(suggestion)
+        suggestion = self._normalize_suggestion(
+            suggestion
+        )
 
         proposed_change = self._normalize_suggestion(
             proposed_change
@@ -202,7 +259,6 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # BUILD FINAL RESPONSE
         # ---------------------------------------------------------
-
         context.final_response = SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -240,7 +296,6 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # TRIAGE RESULT
         # ---------------------------------------------------------
-
         if context.triage_result:
             requirement = (
                 context.triage_result.get("issue_summary")
@@ -267,12 +322,35 @@ class ResponseGenerationStage:
                 "suggested_code"
             )
 
-            confidence = context.triage_result.get("confidence")
+            confidence = context.triage_result.get(
+                "confidence"
+            )
+
+            # -----------------------------------------------------
+            # Do not expose recommendations or code when analysis
+            # or validation is unavailable.
+            # -----------------------------------------------------
+            if (
+                context.triage_result.get("validation_status")
+                == "unavailable"
+            ):
+                suggestion = (
+                    context.triage_result.get("ai_suggestion")
+                    or (
+                        "Code analysis or validation was unavailable. "
+                        "No recommendation can be safely generated."
+                    )
+                )
+
+                proposed_change = (
+                    context.triage_result.get("proposed_change")
+                    or suggestion
+                )
+                suggested_code = None
 
         # ---------------------------------------------------------
         # CODE ANALYSIS RESULT
         # ---------------------------------------------------------
-
         if (
             context.analysis_result
             and context.analysis_result.get("analysis_status")
@@ -292,9 +370,15 @@ class ResponseGenerationStage:
             if suggestion is None:
                 suggestion = (
                     context.analysis_result.get("suggestion")
-                    or context.analysis_result.get("recommended_change")
-                    or context.analysis_result.get("recommendation")
-                    or context.analysis_result.get("proposed_fix")
+                    or context.analysis_result.get(
+                        "recommended_change"
+                    )
+                    or context.analysis_result.get(
+                        "recommendation"
+                    )
+                    or context.analysis_result.get(
+                        "proposed_fix"
+                    )
                     or context.analysis_result.get("answer")
                 )
 
@@ -310,13 +394,23 @@ class ResponseGenerationStage:
                 )
 
             if confidence is None:
-                confidence = context.analysis_result.get("confidence")
+                confidence = context.analysis_result.get(
+                    "confidence"
+                )
 
         # ---------------------------------------------------------
         # NORMALIZE VALUES
         # ---------------------------------------------------------
+        if context.validation_status != "passed":
+            suggestion = suggestion or (
+                "Cannot be determined from the available evidence."
+            )
+            proposed_change = proposed_change or suggestion
+            suggested_code = None
 
-        suggestion = self._normalize_suggestion(suggestion)
+        suggestion = self._normalize_suggestion(
+            suggestion
+        )
 
         proposed_change = self._normalize_suggestion(
             proposed_change
@@ -326,9 +420,16 @@ class ResponseGenerationStage:
             suggested_code
         )
 
+        # ---------------------------------------------------------
+        # EARLY EXIT PAYLOAD
+        # ---------------------------------------------------------
         early_exit_payload: dict[str, Any] = {
             "code": context.early_exit,
-            "message": context.early_exit_message,
+            "message": (
+                "The analysis could not be safely validated."
+                if context.early_exit == "EARLY_EXIT_D"
+                else context.early_exit_message
+            ),
         }
 
         if (
@@ -340,7 +441,9 @@ class ResponseGenerationStage:
         if getattr(context, "symbol_conflict", False):
             early_exit_payload["symbol_conflict"] = True
 
-        # Build structured candidate list for consumers.
+        # ---------------------------------------------------------
+        # STRUCTURED AMBIGUOUS CANDIDATES
+        # ---------------------------------------------------------
         raw_candidates = (
             getattr(
                 context,
@@ -356,11 +459,16 @@ class ResponseGenerationStage:
             try:
                 structured_candidates.append(
                     AmbiguousCandidate(
-                        name=str(c.get("name") or ""),
+                        name=str(
+                            c.get("name") or ""
+                        ),
                         file_path=str(
                             c.get("file_path") or ""
                         ),
-                        class_name=c.get("class_name") or None,
+                        class_name=(
+                            c.get("class_name")
+                            or None
+                        ),
                         start_line=c.get("start_line"),
                         end_line=c.get("end_line"),
                         score=c.get("score"),
@@ -369,6 +477,9 @@ class ResponseGenerationStage:
             except Exception:
                 pass
 
+        # ---------------------------------------------------------
+        # BUILD EARLY EXIT RESPONSE
+        # ---------------------------------------------------------
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -571,7 +682,6 @@ class ResponseGenerationStage:
         # If target_symbol is meaningful and is not just the file path,
         # keep it.
         # ---------------------------------------------------------
-
         if target_symbol:
             normalized = target_symbol.strip()
 
@@ -596,19 +706,16 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # Prefer class name from chunk metadata.
         # ---------------------------------------------------------
-
         if class_name:
             return class_name
 
         # ---------------------------------------------------------
         # Fall back to function/method name.
         # ---------------------------------------------------------
-
         if function_name:
             return function_name
 
         # ---------------------------------------------------------
         # Last fallback.
         # ---------------------------------------------------------
-
         return target_symbol

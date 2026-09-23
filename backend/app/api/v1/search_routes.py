@@ -37,8 +37,8 @@ async def search_repository(
     Runs the complete retrieval + LLM analysis pipeline.
     """
     result = await search_service.run_pipeline(
-        repo_id=request.repo_id,
-        repo_name=request.repo_name,
+        source_type=request.source.type,
+        source_location=request.source.location,
         query=request.query,
     )
 

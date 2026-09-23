@@ -80,25 +80,22 @@ class CodeIdentificationStage:
         elements = await self._identify(context)
 
         if not elements:
-            conflict_detected = self._detect_symbol_conflict(
-                context,
-                valid_elements=[],
+            # Retrieval evidence is still useful when the LLM cannot name a
+            # symbol. Preserve it for analysis and validation instead of
+            # stopping the complete pipeline at code identification.
+            primary_chunk = context.retrieved_chunks[0]
+            context.primary_chunk = primary_chunk
+            context.target_symbol = (
+                primary_chunk.metadata.get("function_name")
+                or primary_chunk.metadata.get("class_name")
+                or primary_chunk.metadata.get("symbol")
+                or None
             )
-
-            if conflict_detected and context.ambiguous_candidates:
-                self._mark_ambiguous(
-                    context,
-                    (
-                        "Ambiguous code target: multiple candidates with "
-                        "the same symbol were found across different files."
-                    ),
-                )
-                return
-
-            context.early_exit = "EARLY_EXIT_C"
-            context.early_exit_message = (
-                "Could not identify specific code elements matching "
-                "your query in retrieved code."
+            context.identified_elements = []
+            logger.warning(
+                "code_identification_unresolved_using_retrieved_context",
+                repo_id=context.repo_id,
+                file_path=primary_chunk.file_path,
             )
             return
 

@@ -33,6 +33,31 @@ class SuggestionValidator:
 
         errors: list[str] = []
 
+        # Models sometimes expose their internal debate instead of a
+        # resolved recommendation. Never treat that as a safe fix.
+        uncertainty_markers = (
+            "wait,",
+            "let me re-read",
+            "let's assume",
+            "this seems correct",
+            "i cannot determine",
+            "cannot determine",
+            "uncertain",
+        )
+        analysis_text = " ".join(
+            str(analysis.get(field) or "")
+            for field in (
+                "current_behavior",
+                "likely_cause",
+                "proposed_fix",
+                "proposed_change",
+            )
+        ).lower()
+        if any(marker in analysis_text for marker in uncertainty_markers):
+            errors.append(
+                "Analysis contains unresolved uncertainty or contradictory reasoning"
+            )
+
         # 1. ADD_FEATURE validation
         if "required_changes" in analysis:
             changes = analysis.get("required_changes")

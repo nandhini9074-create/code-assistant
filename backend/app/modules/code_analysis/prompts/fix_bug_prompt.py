@@ -58,6 +58,10 @@ CRITICAL RULES FOR "suggested_code":
 15. Keep every response concise.
 16. Do not repeat the same explanation across multiple fields.
 17. Do not generate unnecessary code just to make the response more complete.
+18. Do not include internal reasoning, self-corrections, alternatives, or
+  uncertainty in any field. Return one resolved conclusion only.
+19. If the code semantics are ambiguous, return an empty "suggested_code"
+  and state that the fix cannot be determined safely.
 The response must be valid JSON.
 """
 FIX_BUG_USER_PROMPT = """

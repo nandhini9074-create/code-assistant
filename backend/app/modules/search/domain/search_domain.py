@@ -29,8 +29,11 @@ class SearchContext:
     # Request
     # ---------------------------------------------------------
 
-    repo_name: str
     query: str
+
+    repo_name: str | None = None
+    source_type: str = ""
+    source_location: str = ""
 
     # ---------------------------------------------------------
     # Repository / Qdrant information

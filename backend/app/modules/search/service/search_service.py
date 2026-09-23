@@ -38,9 +38,6 @@ from app.modules.search.pipeline.intent_classification import (
 from app.modules.search.pipeline.query_preprocessing import (
     QueryPreprocessingStage,
 )
-from app.modules.search.pipeline.repository_identification import (
-    RepositoryIdentificationStage,
-)
 from app.modules.search.pipeline.collection_selection import (
     CollectionSelectionStage,
 )
@@ -89,7 +86,6 @@ class SearchService:
         val_stage: RequestValidationStage,
         intent_stage: IntentClassificationStage,
         query_prep_stage: QueryPreprocessingStage,
-        repository_identification_stage: RepositoryIdentificationStage,
         coll_sel_stage: CollectionSelectionStage,
         code_ret_stage: CodeRetrievalStage,
         code_ident_stage: CodeIdentificationStage,
@@ -104,7 +100,6 @@ class SearchService:
         self.val_stage = val_stage
         self.intent_stage = intent_stage
         self.query_prep_stage = query_prep_stage
-        self.repository_identification_stage = repository_identification_stage
         self.coll_sel_stage = coll_sel_stage
         self.code_ret_stage = code_ret_stage
         self.code_ident_stage = code_ident_stage
@@ -134,23 +129,22 @@ class SearchService:
             self.val_stage,              # 1
             self.intent_stage,           # 2
             self.query_prep_stage,       # 3
-            self.repository_identification_stage, # 4
-            self.coll_sel_stage,         # 5
-            self.code_ret_stage,         # 6
-            self.code_ident_stage,       # 7
-            self.ctx_build_stage,        # 8
-            self.code_analysis_stage,    # 9
-            self.ev_val_stage,           # 10
-            self.action_analysis_stage,  # 11
-            self.final_triage_stage,     # 12
-            self.resp_gen_stage,         # 13
+            self.coll_sel_stage,         # 4
+            self.code_ret_stage,         # 5
+            self.code_ident_stage,       # 6
+            self.ctx_build_stage,        # 7
+            self.code_analysis_stage,    # 8
+            self.ev_val_stage,           # 9
+            self.action_analysis_stage,  # 10
+            self.final_triage_stage,     # 11
+            self.resp_gen_stage,         # 12
         ]
 
     async def run_pipeline(
         self,
-        repo_name: str | None,
+        source_type: str,
+        source_location: str,
         query: str,
-        repo_id: str | None = None,
     ) -> SearchResult:
 
         # ---------------------------------------------------------
@@ -167,14 +161,15 @@ class SearchService:
         # ---------------------------------------------------------
 
         context = SearchContext(
-            repo_name=repo_name or "",
+            source_type=source_type,
+            source_location=source_location,
             query=query,
-            repo_id=repo_id,
         )
 
         logger.info(
             "search_pipeline_started",
-            repo_name=repo_name,
+            source_type=source_type,
+            source_location=source_location,
             query=query,
             total_stages=len(self.stages),
         )
@@ -273,6 +268,28 @@ class SearchService:
                         error=str(exc),
                     )
 
+                    if isinstance(stage, CodeAnalysisStage):
+                        context.analysis_result = (
+                            stage._build_fallback_analysis(
+                                context,
+                                "Code analysis was unavailable."
+                            )
+                        )
+                        context.validated = False
+                        context.validation_status = "unavailable"
+                        logger.warning(
+                            "code_analysis_stage_exception_using_fallback",
+                            stage=stage_name,
+                            error_type=type(exc).__name__,
+                        )
+                        continue
+
+                    if isinstance(stage, ResponseGenerationStage):
+                        context.final_response = (
+                            stage.build_failure_response(context, exc)
+                        )
+                        continue
+
                     raise RetrievalError(
                         f"Search stage '{stage_name}' failed: {exc}"
                     ) from exc
@@ -296,24 +313,30 @@ class SearchService:
 
             logger.error(
                 "search_pipeline_retrieval_error",
-                repo_name=repo_name,
+                source_location=source_location,
                 error=str(exc),
             )
 
             return SearchResult(
-                success=False,
-                error_message=str(exc),
+                success=True,
+                response=ResponseGenerationStage.build_failure_response(
+                    context,
+                    exc,
+                ),
             )
 
         except Exception as exc:
 
             logger.exception(
                 "search_pipeline_unexpected_error",
-                repo_name=repo_name,
+                source_location=source_location,
                 error=str(exc),
             )
 
             return SearchResult(
-                success=False,
-                error_message="Internal search error",
+                success=True,
+                response=ResponseGenerationStage.build_failure_response(
+                    context,
+                    exc,
+                ),
             )
