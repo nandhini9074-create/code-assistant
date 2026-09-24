@@ -9,8 +9,13 @@ of the proposed action.
 
 This stage is advisory only and does not modify repository files.
 
-If Step 9 analysis or Step 10 validation is unavailable, this stage
-uses a deterministic fallback and does not invent a proposed action.
+For code-change intents, this stage may carry an exact code_change
+specification containing:
+    file_path
+    old_code
+    new_code
+
+The actual patch is generated later by SuggestionPatchStage.
 """
 
 from __future__ import annotations
@@ -47,17 +52,13 @@ class ActionAnalysisStage:
         # ---------------------------------------------------------
         # Fallback when Step 10 validation is unavailable.
         # ---------------------------------------------------------
-        #
-        # Do not generate a proposed action from unvalidated or
-        # unavailable analysis. The pipeline continues with an
-        # explicit unavailable state.
-        #
         if context.validation_status == "unavailable":
             context.action_analysis = {
                 "action_status": "UNAVAILABLE",
                 "action_available": False,
                 "action_type": None,
                 "proposed_change": None,
+                "code_change": None,
                 "affected_target": _build_affected_target(context),
                 "rationale": None,
                 "risk_level": "unknown",
@@ -112,9 +113,28 @@ class ActionAnalysisStage:
             context,
         )
 
+        # ---------------------------------------------------------
+        # Extract exact source-code change.
+        #
+        # Expected:
+        #
+        # "code_change": {
+        #     "file_path": "...",
+        #     "old_code": "...",
+        #     "new_code": "..."
+        # }
+        #
+        # No patch is generated here.
+        # ---------------------------------------------------------
+        code_change = _extract_code_change(
+            analysis,
+            context,
+        )
+
         context.action_analysis = {
             "action_type": action_type,
             "proposed_change": proposed_change,
+            "code_change": code_change,
             "affected_target": affected_target,
             "rationale": rationale,
             "risk_level": risk_level,
@@ -127,6 +147,7 @@ class ActionAnalysisStage:
             action_type=action_type,
             target_file=affected_target.get("file_path"),
             risk_level=risk_level,
+            has_code_change=code_change is not None,
         )
 
 
@@ -146,6 +167,85 @@ def _determine_action_type(
         intent,
         "CODE_MODIFICATION",
     )
+
+
+def _extract_code_change(
+    analysis: dict[str, Any],
+    context: SearchContext,
+) -> dict[str, str] | None:
+    """
+    Extract an exact code-change specification from validated analysis.
+
+    Expected structure:
+
+        {
+            "file_path": "app/example.py",
+            "old_code": "old source code",
+            "new_code": "new source code"
+        }
+
+    This function deliberately does not construct old_code/new_code
+    from proposed_change or suggested_code.
+
+    The LLM must explicitly provide the source-code content.
+    """
+
+    value = analysis.get("code_change")
+
+    if not isinstance(value, dict):
+        return None
+
+    file_path = value.get("file_path")
+    old_code = value.get("old_code")
+    new_code = value.get("new_code")
+
+    if not (
+        isinstance(file_path, str)
+        and file_path.strip()
+        and isinstance(old_code, str)
+        and old_code.strip()
+        and isinstance(new_code, str)
+        and new_code.strip()
+    ):
+        logger.warning(
+            "invalid_code_change_structure",
+            repo_id=context.repo_id,
+        )
+        return None
+
+    file_path = file_path.strip()
+
+    # Do not allow the LLM to redirect the change to another file.
+    target = _build_affected_target(context)
+    target_file_path = target.get("file_path")
+
+    if (
+        isinstance(target_file_path, str)
+        and target_file_path not in {"", "unknown"}
+        and file_path != target_file_path
+    ):
+        logger.warning(
+            "code_change_file_mismatch",
+            repo_id=context.repo_id,
+            expected_file=target_file_path,
+            provided_file=file_path,
+        )
+        return None
+
+    # Do not accept a no-op change.
+    if old_code == new_code:
+        logger.warning(
+            "code_change_noop",
+            repo_id=context.repo_id,
+            file_path=file_path,
+        )
+        return None
+
+    return {
+        "file_path": file_path,
+        "old_code": old_code,
+        "new_code": new_code,
+    }
 
 
 def _build_affected_target(
@@ -217,3 +317,4 @@ def _assess_risk(
         return "medium"
 
     return "low"
+

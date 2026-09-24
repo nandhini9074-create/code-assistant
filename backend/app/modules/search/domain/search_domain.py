@@ -139,6 +139,10 @@ class SearchContext:
 
     action_analysis: dict[str, Any] | None = None
 
+    # Suggestion-only patch generation (never written to disk)
+    suggested_patch: str | None = None
+    patch_validation: dict[str, Any] | None = None
+
     triage_result: dict[str, Any] | None = None
 
     # ---------------------------------------------------------

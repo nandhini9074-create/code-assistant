@@ -59,6 +59,12 @@ from app.modules.search.pipeline.evidence_validation import (
 from app.modules.search.pipeline.action_analysis import (
     ActionAnalysisStage,
 )
+from app.modules.search.pipeline.suggestion_patch import (
+    SuggestionPatchStage,
+)
+from app.modules.search.pipeline.suggestion_validation import (
+    SuggestionValidationStage,
+)
 from app.modules.search.pipeline.final_triage import (
     FinalTriageStage,
 )
@@ -93,6 +99,8 @@ class SearchService:
         code_analysis_stage: CodeAnalysisStage,
         ev_val_stage: EvidenceValidationStage,
         action_analysis_stage: ActionAnalysisStage,
+        suggestion_patch_stage: SuggestionPatchStage,
+        suggestion_validation_stage: SuggestionValidationStage,
         final_triage_stage: FinalTriageStage,
         resp_gen_stage: ResponseGenerationStage,
     ) -> None:
@@ -107,6 +115,8 @@ class SearchService:
         self.code_analysis_stage = code_analysis_stage
         self.ev_val_stage = ev_val_stage
         self.action_analysis_stage = action_analysis_stage
+        self.suggestion_patch_stage = suggestion_patch_stage
+        self.suggestion_validation_stage = suggestion_validation_stage
         self.final_triage_stage = final_triage_stage
         self.resp_gen_stage = resp_gen_stage
 
@@ -126,18 +136,20 @@ class SearchService:
         # ---------------------------------------------------------
 
         self.stages = [
-            self.val_stage,              # 1
-            self.intent_stage,           # 2
-            self.query_prep_stage,       # 3
-            self.coll_sel_stage,         # 4
-            self.code_ret_stage,         # 5
-            self.code_ident_stage,       # 6
-            self.ctx_build_stage,        # 7
-            self.code_analysis_stage,    # 8
-            self.ev_val_stage,           # 9
-            self.action_analysis_stage,  # 10
-            self.final_triage_stage,     # 11
-            self.resp_gen_stage,         # 12
+            self.val_stage,                   # 1
+            self.intent_stage,                # 2
+            self.query_prep_stage,            # 3
+            self.coll_sel_stage,              # 4
+            self.code_ret_stage,              # 5
+            self.code_ident_stage,            # 6
+            self.ctx_build_stage,             # 7
+            self.code_analysis_stage,         # 8
+            self.ev_val_stage,                # 9
+            self.action_analysis_stage,       # 10
+            self.suggestion_patch_stage,      # 11
+            self.suggestion_validation_stage, # 12
+            self.final_triage_stage,          # 13
+            self.resp_gen_stage,              # 14
         ]
 
     async def run_pipeline(

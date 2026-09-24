@@ -70,7 +70,10 @@ class ResponseGenerationStage:
             requirement=context.query,
             suggestion=suggestion,
             proposed_change=suggestion,
+            code_change=None,
             suggested_code=None,
+            suggested_patch=context.suggested_patch,
+            patch_validation=context.patch_validation,
             confidence="low",
             early_exit={
                 "code": "SEARCH_RESPONSE_FALLBACK",
@@ -121,7 +124,10 @@ class ResponseGenerationStage:
         current_behavior = None
         suggestion: Any = None
         proposed_change = None
+        code_change = None
         suggested_code = None
+        suggested_patch = None
+        patch_validation = None
         confidence = None
 
         # ---------------------------------------------------------
@@ -151,6 +157,16 @@ class ResponseGenerationStage:
 
             suggested_code = context.triage_result.get(
                 "suggested_code"
+            )
+
+            suggested_patch = (
+                context.triage_result.get("suggested_patch")
+                or context.suggested_patch
+            )
+
+            patch_validation = (
+                context.triage_result.get("patch_validation")
+                or context.patch_validation
             )
 
             confidence = context.triage_result.get(
@@ -218,6 +234,9 @@ class ResponseGenerationStage:
                     or context.analysis_result.get("proposed_fix")
                 )
 
+            if code_change is None:
+                code_change = context.analysis_result.get("code_change")
+
             if suggested_code is None:
                 suggested_code = context.analysis_result.get(
                     "suggested_code"
@@ -259,6 +278,9 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # BUILD FINAL RESPONSE
         # ---------------------------------------------------------
+        if code_change is None and isinstance(context.action_analysis, dict):
+            code_change = context.action_analysis.get("code_change")
+
         context.final_response = SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -267,7 +289,10 @@ class ResponseGenerationStage:
             current_behavior=current_behavior,
             suggestion=suggestion,
             proposed_change=proposed_change,
+            code_change=code_change,
             suggested_code=suggested_code,
+            suggested_patch=suggested_patch or context.suggested_patch,
+            patch_validation=patch_validation or context.patch_validation,
             confidence=confidence,
             early_exit=None,
             ambiguous_candidates=[],
@@ -290,7 +315,10 @@ class ResponseGenerationStage:
         current_behavior = None
         suggestion: Any = None
         proposed_change = None
+        code_change = None
         suggested_code = None
+        suggested_patch = None
+        patch_validation = None
         confidence = None
 
         # ---------------------------------------------------------
@@ -318,8 +346,28 @@ class ResponseGenerationStage:
                 or context.triage_result.get("proposed_fix")
             )
 
+            if code_change is None:
+                code_change = (
+                    context.triage_result.get("code_change")
+                    or (
+                        context.triage_result.get("change_plan", {}).get("code_change")
+                        if isinstance(context.triage_result.get("change_plan"), dict)
+                        else None
+                    )
+                )
+
             suggested_code = context.triage_result.get(
                 "suggested_code"
+            )
+
+            suggested_patch = (
+                context.triage_result.get("suggested_patch")
+                or context.suggested_patch
+            )
+
+            patch_validation = (
+                context.triage_result.get("patch_validation")
+                or context.patch_validation
             )
 
             confidence = context.triage_result.get(
@@ -387,6 +435,9 @@ class ResponseGenerationStage:
                     context.analysis_result.get("proposed_change")
                     or context.analysis_result.get("proposed_fix")
                 )
+
+            if code_change is None:
+                code_change = context.analysis_result.get("code_change")
 
             if suggested_code is None:
                 suggested_code = context.analysis_result.get(
@@ -480,6 +531,9 @@ class ResponseGenerationStage:
         # ---------------------------------------------------------
         # BUILD EARLY EXIT RESPONSE
         # ---------------------------------------------------------
+        if code_change is None and isinstance(context.action_analysis, dict):
+            code_change = context.action_analysis.get("code_change")
+
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -488,7 +542,10 @@ class ResponseGenerationStage:
             current_behavior=current_behavior,
             suggestion=suggestion,
             proposed_change=proposed_change,
+            code_change=code_change,
             suggested_code=suggested_code,
+            suggested_patch=suggested_patch or context.suggested_patch,
+            patch_validation=patch_validation or context.patch_validation,
             confidence=confidence,
             early_exit=early_exit_payload,
             ambiguous_candidates=structured_candidates,

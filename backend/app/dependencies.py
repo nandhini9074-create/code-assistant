@@ -173,6 +173,8 @@ def get_search_service(
     from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingStage
     from app.modules.search.pipeline.request_validation import RequestValidationStage
     from app.modules.search.pipeline.response_generation import ResponseGenerationStage
+    from app.modules.search.pipeline.suggestion_patch import SuggestionPatchStage
+    from app.modules.search.pipeline.suggestion_validation import SuggestionValidationStage
 
     from app.modules.search.retrieval.dense_search import DenseSearch
     from app.modules.search.retrieval.hybrid_search import HybridSearch
@@ -253,12 +255,22 @@ def get_search_service(
     action_analysis_stage = ActionAnalysisStage()
 
     # ---------------------------------------------------------------
-    # Step 11: Final triage
+    # Step 11: Suggestion-only patch generation
+    # ---------------------------------------------------------------
+    suggestion_patch_stage = SuggestionPatchStage()
+
+    # ---------------------------------------------------------------
+    # Step 12: Suggestion validation
+    # ---------------------------------------------------------------
+    suggestion_validation_stage = SuggestionValidationStage()
+
+    # ---------------------------------------------------------------
+    # Step 13: Final triage
     # ---------------------------------------------------------------
     final_triage_stage = FinalTriageStage()
 
     # ---------------------------------------------------------------
-    # Step 12: Response generation
+    # Step 14: Response generation
     # ---------------------------------------------------------------
     resp_gen_stage = ResponseGenerationStage()
 
@@ -276,6 +288,8 @@ def get_search_service(
         code_analysis_stage=code_analysis_stage,
         ev_val_stage=ev_val_stage,
         action_analysis_stage=action_analysis_stage,
+        suggestion_patch_stage=suggestion_patch_stage,
+        suggestion_validation_stage=suggestion_validation_stage,
         final_triage_stage=final_triage_stage,
         resp_gen_stage=resp_gen_stage,
     )

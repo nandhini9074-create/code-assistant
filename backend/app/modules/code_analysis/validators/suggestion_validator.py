@@ -113,6 +113,24 @@ class SuggestionValidator:
             if not fix or not isinstance(fix, str) or not fix.strip():
                 errors.append("FIX_BUG analysis missing proposed_fix")
 
+        code_change = analysis.get("code_change")
+        if code_change is not None:
+            if not isinstance(code_change, dict):
+                errors.append("Exact code change must be an object or null")
+            else:
+                file_path = code_change.get("file_path")
+                old_code = code_change.get("old_code")
+                new_code = code_change.get("new_code")
+
+                if not isinstance(file_path, str) or not file_path.strip():
+                    errors.append("code_change.file_path must be a non-empty string")
+                if not isinstance(old_code, str) or not old_code.strip():
+                    errors.append("code_change.old_code must be a non-empty string")
+                if not isinstance(new_code, str) or not new_code.strip():
+                    errors.append("code_change.new_code must be a non-empty string")
+                if isinstance(old_code, str) and isinstance(new_code, str) and old_code == new_code:
+                    errors.append("code_change.old_code and code_change.new_code must differ")
+
         # 3. OPTIMIZE proposed_optimization
         if "proposed_optimization" in analysis:
             opt = analysis.get("proposed_optimization")

@@ -54,6 +54,21 @@ _SCHEMA = {
         "proposed_change": {
             "type": "string",
         },
+        "code_change": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string"},
+                        "old_code": {"type": "string"},
+                        "new_code": {"type": "string"},
+                    },
+                    "required": ["file_path", "old_code", "new_code"],
+                    "additionalProperties": False,
+                },
+                {"type": "null"},
+            ]
+        },
         "suggested_code": {
             "type": "string",
         },
@@ -64,6 +79,7 @@ _SCHEMA = {
         "likely_cause",
         "proposed_fix",
         "proposed_change",
+        "code_change",
         "suggested_code",
     ],
 }
@@ -144,6 +160,7 @@ class FixBugAnalyzer(BaseAnalyzer):
                     "likely_cause",
                     "proposed_fix",
                     "proposed_change",
+                    "code_change",
                     "suggested_code",
                 ],
             )
@@ -224,6 +241,9 @@ def _coerce(raw: dict, required_keys: list[str]) -> dict:
 
     for key in required_keys:
         if key not in raw:
-            raw[key] = ""
+            raw[key] = "" if key != "code_change" else None
+
+    if raw.get("code_change") is None:
+        raw["code_change"] = None
 
     return raw

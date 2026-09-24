@@ -11,6 +11,8 @@ from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingSt
 from app.modules.search.pipeline.repository_identification import RepositoryIdentificationStage
 from app.modules.search.pipeline.request_validation import RequestValidationStage
 from app.modules.search.pipeline.response_generation import ResponseGenerationStage
+from app.modules.search.pipeline.suggestion_patch import SuggestionPatchStage
+from app.modules.search.pipeline.suggestion_validation import SuggestionValidationStage
 
 __all__ = [
     "CodeIdentificationStage",
@@ -23,4 +25,6 @@ __all__ = [
     "RepositoryIdentificationStage",
     "RequestValidationStage",
     "ResponseGenerationStage",
+    "SuggestionPatchStage",
+    "SuggestionValidationStage",
 ]

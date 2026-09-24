@@ -65,6 +65,21 @@ _SCHEMA = {
         "risks": {
             "type": "string",
         },
+        "code_change": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string"},
+                        "old_code": {"type": "string"},
+                        "new_code": {"type": "string"},
+                    },
+                    "required": ["file_path", "old_code", "new_code"],
+                    "additionalProperties": False,
+                },
+                {"type": "null"},
+            ]
+        },
         "suggested_code": {
             "type": "string",
         },
@@ -75,6 +90,7 @@ _SCHEMA = {
         "required_changes",
         "affected_files",
         "risks",
+        "code_change",
         "suggested_code",
     ],
     "additionalProperties": False,
@@ -186,6 +202,7 @@ def _coerce(raw: dict) -> dict:
         raw["affected_files"] = []
 
     raw.setdefault("risks", "")
+    raw.setdefault("code_change", None)
 
     # ---------------------------------------------------------
     # SUGGESTED CODE

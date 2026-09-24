@@ -30,10 +30,24 @@ The JSON fields mean:
    List ONLY file paths that actually appear in the Context. Do not invent file names.
 5. "risks":
    Describe potential side effects, compatibility concerns, or assumptions. If "suggested_code" cannot be safely generated, explain why here.
-6. "suggested_code":
+- "code_change":
+   Either a JSON object with:
+   {
+     "file_path": "exact target file path from the provided context",
+     "old_code": "exact existing source code that will be replaced",
+     "new_code": "only the replacement source code"
+   }
+   OR null if an exact safe code change cannot be identified from the provided context.
+- "suggested_code":
    Provide the actual modified code required to implement the requested feature.
-   RULES FOR "suggested_code":
+   RULES FOR "code_change" AND "suggested_code":
    - If the target function is present in the Context and the requested change is implementable, you MUST generate the modified function in "suggested_code".
+   - "code_change.file_path" must be the exact target file.
+   - "code_change.old_code" must contain the exact existing source code that will be replaced.
+   - "code_change.new_code" must contain only the replacement source code.
+   - Do NOT generate old_code/new_code from a textual description.
+   - Do NOT return a partial function as "new_code" unless the entire function is actually being replaced.
+   - If an exact safe code change cannot be identified from the context, return "code_change": null.
    - "suggested_code" must be actual source code, not explanation/pseudocode/Markdown. Return the source code directly as the string value without ``` markdown code fences.
    - Return the complete modified function or method, preserving the existing signature and business logic.
    - Make the smallest change required to implement the Request.
@@ -64,5 +78,6 @@ Return:
 - "required_changes": list of strings
 - "affected_files": list of strings
 - "risks": string
+- "code_change": object with "file_path", "old_code", and "new_code" OR null
 - "suggested_code": string (actual modified source code of the target function)
 """

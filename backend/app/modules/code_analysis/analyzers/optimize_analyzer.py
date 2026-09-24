@@ -24,8 +24,23 @@ _SCHEMA = {
         "expensive_ops": {"type": "string"},
         "proposed_optimization": {"type": "string"},
         "proposed_change": {"type": "string"},
+        "code_change": {
+            "anyOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "file_path": {"type": "string"},
+                        "old_code": {"type": "string"},
+                        "new_code": {"type": "string"},
+                    },
+                    "required": ["file_path", "old_code", "new_code"],
+                    "additionalProperties": False,
+                },
+                {"type": "null"},
+            ]
+        },
     },
-    "required": ["bottleneck", "expensive_ops", "proposed_optimization", "proposed_change"],
+    "required": ["bottleneck", "expensive_ops", "proposed_optimization", "proposed_change", "code_change"],
 }
 
 
@@ -66,5 +81,5 @@ def _coerce(raw: dict, required_keys: list[str]) -> dict:
     """Return raw if all keys present; add missing keys as empty defaults."""
     for k in required_keys:
         if k not in raw:
-            raw[k] = ""
+            raw[k] = "" if k != "code_change" else None
     return raw

@@ -127,3 +127,42 @@ async def test_successful_analysis_keeps_existing_result():
     assert response["proposed_change"] == "Update the parser format handling."
     assert response["suggested_code"] == analysis["suggested_code"]
     assert response["confidence"] == "high"
+
+
+@pytest.mark.asyncio
+async def test_response_includes_exact_code_change_and_patch():
+    context = make_context()
+    context.analysis_result = {
+        "current_behavior": "The parser rejects seconds.",
+        "proposed_fix": "Accept the supported time format.",
+        "code_change": {
+            "file_path": "app/routers/appointments.py",
+            "old_code": '"error": "Booking can be done for the past date.",',
+            "new_code": '"error": "Booking cannot be done for the past date.",',
+        },
+    }
+    context.action_analysis = {
+        "action_type": "BUG_REMEDIATION",
+        "proposed_change": "Change the error message to state that booking cannot be done for a past date.",
+        "code_change": {
+            "file_path": "app/routers/appointments.py",
+            "old_code": '"error": "Booking can be done for the past date.",',
+            "new_code": '"error": "Booking cannot be done for the past date.",',
+        },
+    }
+    context.suggested_patch = (
+        '--- a/app/routers/appointments.py\n'
+        '+++ b/app/routers/appointments.py\n'
+        '@@ -1,1 +1,1 @@\n'
+        '-                "error": "Booking can be done for the past date.",\n'
+        '+                "error": "Booking cannot be done for the past date.",'
+    )
+    context.validation_status = "passed"
+    context.validated = True
+
+    await ResponseGenerationStage().execute(context)
+
+    response = context.final_response.model_dump()
+    assert response["code_change"]["file_path"] == "app/routers/appointments.py"
+    assert "Booking cannot be done for the past date" in response["code_change"]["new_code"]
+    assert "--- a/app/routers/appointments.py" in response["suggested_patch"]
