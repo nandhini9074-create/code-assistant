@@ -120,6 +120,9 @@ class SearchResponse(BaseSchema):
     # Validation of the suggested patch
     patch_validation: dict[str, Any] | None = None
 
+    # Final formatted human-readable output
+    formatted_output: str | None = None
+
     confidence: str | None = None
 
     early_exit: dict[str, Any] | None = None

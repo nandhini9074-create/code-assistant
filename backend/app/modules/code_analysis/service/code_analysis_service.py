@@ -15,6 +15,9 @@ from app.modules.code_analysis.analyzers.add_feature_analyzer import (
 from app.modules.code_analysis.analyzers.fix_bug_analyzer import (
     FixBugAnalyzer,
 )
+from app.modules.code_analysis.analyzers.fix_vulnerability_analyzer import (
+    FixVulnerabilityAnalyzer,
+)
 from app.modules.code_analysis.analyzers.optimize_analyzer import (
     OptimizeAnalyzer,
 )
@@ -43,6 +46,7 @@ class CodeAnalysisService:
         self,
         add_feature_analyzer: AddFeatureAnalyzer,
         fix_bug_analyzer: FixBugAnalyzer,
+        fix_vulnerability_analyzer: FixVulnerabilityAnalyzer,
         optimize_analyzer: OptimizeAnalyzer,
         refactor_analyzer: RefactorAnalyzer,
         evidence_validator: EvidenceValidator,
@@ -53,6 +57,7 @@ class CodeAnalysisService:
         self.analyzers: dict[IntentType, Any] = {
             IntentType.ADD_FEATURE: add_feature_analyzer,
             IntentType.FIX_BUG: fix_bug_analyzer,
+            IntentType.FIX_VULNERABILITY: fix_vulnerability_analyzer,
             IntentType.OPTIMIZE: optimize_analyzer,
             IntentType.REFACTOR: refactor_analyzer,
         }
@@ -186,6 +191,12 @@ class CodeAnalysisService:
             analysis,
             chunks,
         )
+
+        print("=== VALIDATION DEBUG ===")
+        print("EVIDENCE:", evidence_result.is_valid, evidence_result.errors)
+        print("CODE EXISTENCE:", code_existence_result.is_valid, code_existence_result.errors)
+        print("SUGGESTION:", suggestion_result.is_valid, suggestion_result.errors)
+        print("ANALYSIS:", analysis)
 
         all_errors = (
             evidence_result.errors

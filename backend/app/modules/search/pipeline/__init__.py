@@ -5,9 +5,11 @@ from app.modules.search.pipeline.code_identification import CodeIdentificationSt
 from app.modules.search.pipeline.code_retrieval import CodeRetrievalStage
 from app.modules.search.pipeline.collection_selection import CollectionSelectionStage
 from app.modules.search.pipeline.context_builder import ContextBuilderStage
+from app.modules.search.pipeline.dependency_vulnerability_analysis import DependencyVulnerabilityAnalysisStage
 from app.modules.search.pipeline.evidence_validation import EvidenceValidationStage
 from app.modules.search.pipeline.intent_classification import IntentClassificationStage
 from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingStage
+from app.modules.search.pipeline.remediation_verification import RemediationVerificationStage
 from app.modules.search.pipeline.repository_identification import RepositoryIdentificationStage
 from app.modules.search.pipeline.request_validation import RequestValidationStage
 from app.modules.search.pipeline.response_generation import ResponseGenerationStage
@@ -19,9 +21,11 @@ __all__ = [
     "CodeRetrievalStage",
     "CollectionSelectionStage",
     "ContextBuilderStage",
+    "DependencyVulnerabilityAnalysisStage",
     "EvidenceValidationStage",
     "IntentClassificationStage",
     "QueryPreprocessingStage",
+    "RemediationVerificationStage",
     "RepositoryIdentificationStage",
     "RequestValidationStage",
     "ResponseGenerationStage",

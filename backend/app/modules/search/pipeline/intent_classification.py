@@ -358,10 +358,20 @@ class IntentClassificationStage:
             ),
         }
 
-        # -----------------------------------------------------------
-        # Find matching intents
-        # -----------------------------------------------------------
         matched_intents: list[IntentType] = []
+
+        # Check vulnerability keywords first to ensure specific requests like
+        # "Fix the package.json vulnerability" resolve to FIX_VULNERABILITY.
+        vuln_patterns = (
+            r"\bvulnerab\w*\b",
+            r"\baudit\b",
+            r"\bcve\b",
+            r"\bsecurity\s+(?:vulnerability|issue|flaw|audit|fix)\b",
+            r"\bpackage\.json\s+vulnerability\b",
+            r"\bpackage\s+vulnerability\b",
+        )
+        if any(re.search(pat, normalized_query) for pat in vuln_patterns):
+            return IntentType.FIX_VULNERABILITY
 
         for intent, intent_patterns in patterns.items():
             if any(

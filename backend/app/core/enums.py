@@ -15,6 +15,7 @@ class IntentType(str, Enum):
     FIX_BUG = "FIX_BUG"
     OPTIMIZE = "OPTIMIZE"
     REFACTOR = "REFACTOR"
+    FIX_VULNERABILITY = "FIX_VULNERABILITY"
 
 
 # Job

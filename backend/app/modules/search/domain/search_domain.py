@@ -142,8 +142,16 @@ class SearchContext:
     # Suggestion-only patch generation (never written to disk)
     suggested_patch: str | None = None
     patch_validation: dict[str, Any] | None = None
+    code_change: dict[str, Any] | None = None
 
     triage_result: dict[str, Any] | None = None
+
+    # ---------------------------------------------------------
+    # Vulnerability analysis and verification
+    # ---------------------------------------------------------
+    vulnerability_data: dict[str, Any] | None = None
+    project_dir: str | None = None
+    remediation_verified: bool = False
 
     # ---------------------------------------------------------
     # Pipeline control

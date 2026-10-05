@@ -171,13 +171,22 @@ class FinalTriageStage:
         # Final triage output
         # ---------------------------------------------------------
 
+        code_change = (
+            action.get("code_change")
+            if isinstance(action, dict)
+            else None
+        ) or context.code_change or analysis.get("code_change")
+
         triage_output: dict[str, Any] = {
             "issue_summary": issue_summary,
             "recommended_change": recommended_change,
             "ai_suggestion": ai_suggestion,
             "current_behavior": current_behavior,
             "proposed_change": proposed_change,
+            "code_change": code_change,
             "suggested_code": suggested_code,
+            "suggested_patch": context.suggested_patch,
+            "patch_validation": context.patch_validation,
             "confidence": confidence,
             "target": target,
             "proposed_diff": proposed_diff,

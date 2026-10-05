@@ -7,6 +7,8 @@ Analyzer for FIX_BUG intent.
 
 from __future__ import annotations
 
+import re
+
 from app.core.logging import get_logger
 
 from app.modules.code_analysis.analyzers.base_analyzer import BaseAnalyzer
@@ -42,6 +44,13 @@ _SCHEMA = {
         "current_behavior": {
             "type": "string",
         },
+        "analysis_status": {
+            "type": "string",
+            "enum": ["OK", "UNAVAILABLE"],
+        },
+        "evidence_summary": {
+            "type": "string",
+        },
         "problematic_code": {
             "type": "string",
         },
@@ -60,10 +69,20 @@ _SCHEMA = {
                     "type": "object",
                     "properties": {
                         "file_path": {"type": "string"},
+                        "symbol": {"type": ["string", "null"]},
+                        "start_line": {"type": ["integer", "null"]},
+                        "end_line": {"type": ["integer", "null"]},
                         "old_code": {"type": "string"},
                         "new_code": {"type": "string"},
                     },
-                    "required": ["file_path", "old_code", "new_code"],
+                    "required": [
+                        "file_path",
+                        "symbol",
+                        "start_line",
+                        "end_line",
+                        "old_code",
+                        "new_code",
+                    ],
                     "additionalProperties": False,
                 },
                 {"type": "null"},
@@ -75,6 +94,8 @@ _SCHEMA = {
     },
     "required": [
         "current_behavior",
+        "analysis_status",
+        "evidence_summary",
         "problematic_code",
         "likely_cause",
         "proposed_fix",
@@ -155,6 +176,8 @@ class FixBugAnalyzer(BaseAnalyzer):
             analysis = _coerce(
                 raw,
                 [
+                    "analysis_status",
+                    "evidence_summary",
                     "current_behavior",
                     "problematic_code",
                     "likely_cause",
@@ -165,8 +188,24 @@ class FixBugAnalyzer(BaseAnalyzer):
                 ],
             )
 
+            analysis["analysis_status"] = str(
+                analysis.get("analysis_status") or "UNAVAILABLE"
+            ).strip().upper()
+            if (
+                analysis["analysis_status"] != "OK"
+                or not _has_concrete_evidence(analysis, context)
+            ):
+                analysis["analysis_status"] = "UNAVAILABLE"
+                analysis["code_change"] = None
+                analysis["suggested_code"] = ""
+                analysis["evidence_summary"] = str(
+                    analysis.get("evidence_summary")
+                    or "The retrieved code does not establish a specific cause."
+                )
+
             logger.info(
                 "fix_bug_analysis_completed",
+                analysis_status=analysis["analysis_status"],
                 suggested_code_chars=len(
                     analysis.get("suggested_code", "")
                 ),
@@ -247,3 +286,76 @@ def _coerce(raw: dict, required_keys: list[str]) -> dict:
         raw["code_change"] = None
 
     return raw
+
+
+def _has_concrete_evidence(
+    analysis: dict,
+    context: SearchContext,
+) -> bool:
+    """Require report-linked evidence and exact target code from retrieved chunks."""
+    evidence_summary = str(analysis.get("evidence_summary") or "").lower()
+    if not evidence_summary.strip():
+        return False
+    query_terms = {
+        term.lower()
+        for term in re.findall(
+            r"[A-Za-z][A-Za-z0-9]*",
+            context.query,
+        )
+    }
+    generic_terms = {
+        "fix", "bug", "the", "a", "an", "in", "on", "at", "to", "for",
+        "with", "error", "issue", "problem", "please", "wrong", "broken",
+    }
+    report_terms = query_terms - generic_terms
+    if report_terms and not any(
+        re.search(rf"(?<!\w){re.escape(term)}(?!\w)", evidence_summary)
+        for term in report_terms
+    ):
+        return False
+
+    code_change = analysis.get("code_change")
+    if code_change is not None and not isinstance(code_change, dict):
+        return False
+
+    target_path = (
+        str(code_change.get("file_path") or "").replace("\\", "/").lower()
+        if isinstance(code_change, dict)
+        else ""
+    )
+    if isinstance(code_change, dict) and not target_path:
+        return False
+
+    evidence_chunks = []
+    for chunk in context.retrieved_chunks:
+        chunk_path = (chunk.file_path or "").replace("\\", "/").lower()
+        if target_path and not (
+            chunk_path.endswith(target_path)
+            or target_path.endswith(chunk_path)
+        ):
+            continue
+
+        basename = chunk_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
+        symbols = [
+            str(chunk.metadata.get(key) or "").strip().lower()
+            for key in ("function_name", "class_name", "symbol")
+        ]
+        symbols = [symbol for symbol in symbols if symbol]
+        file_named = chunk_path in evidence_summary or basename in evidence_summary
+        symbol_named = not symbols or any(
+            symbol in evidence_summary for symbol in symbols
+        )
+        if file_named and symbol_named:
+            evidence_chunks.append(chunk)
+
+    if not evidence_chunks:
+        return False
+    if code_change is None:
+        return True
+
+    old_code = code_change.get("old_code")
+    return (
+        isinstance(old_code, str)
+        and bool(old_code.strip())
+        and any(old_code in chunk.content for chunk in evidence_chunks)
+    )

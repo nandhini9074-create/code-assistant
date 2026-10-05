@@ -14,6 +14,10 @@ from typing import Any
 from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.search.domain.search_domain import SearchContext
+from app.modules.search.pipeline.code_change_verifier import (
+    generate_deterministic_patch,
+    verify_and_locate_code_change,
+)
 
 logger = get_logger(__name__)
 
@@ -30,7 +34,12 @@ class SuggestionPatchStage:
             )
             return
 
-        if context.intent in (None, IntentType.RETRIEVE):
+        if (
+            context.intent in (None, IntentType.RETRIEVE)
+            or getattr(context, "ambiguous", False)
+            or getattr(context, "is_ambiguous", False)
+            or getattr(context, "symbol_conflict", False)
+        ):
             context.suggested_patch = None
             context.patch_validation = None
             return
@@ -70,18 +79,67 @@ class SuggestionPatchStage:
 
         file_path = self._get_file_path(context, action)
 
-        exact_change = self._extract_exact_code_change(action, analysis)
+        exact_change = (
+            getattr(context, "code_change", None)
+            or self._extract_exact_code_change(action, analysis)
+        )
         if isinstance(exact_change, dict):
-            expected_path = exact_change.get("file_path")
-            if isinstance(expected_path, str) and expected_path.strip() and file_path and expected_path.strip() != file_path:
+            verification = verify_and_locate_code_change(
+                code_change=exact_change,
+                chunks=context.retrieved_chunks,
+                primary_chunk=context.primary_chunk,
+                code_snippets=context.code_snippets,
+                target_symbol=context.target_symbol,
+            )
+            if not verification.is_valid:
                 return None, {
                     "status": "failed",
-                    "message": "The exact code_change file_path does not match the retrieved source file.",
-                    "warnings": [
-                        "Patch generation was aborted because the target file could not be confirmed."
+                    "message": "; ".join(verification.errors),
+                    "warnings": verification.errors,
+                    "target_file": exact_change.get("file_path"),
+                    "checks": [
+                        f"target file verified: {verification.checks.get('target_file_verified', 'FAIL')}",
+                        f"old code found exactly once: {verification.checks.get('old_code_found_once', 'FAIL')}",
+                        f"line range: {verification.checks.get('line_range', 'unknown')}",
+                        f"old/new code differ: {verification.checks.get('old_new_code_differ', 'FAIL')}",
+                        f"unified diff generated: {verification.checks.get('unified_diff_generated', 'FAIL')}",
+                        f"repository not modified: {verification.checks.get('repository_not_modified', 'PASS')}",
                     ],
+                    "details": verification.checks,
                     "test_suggestions": self._build_test_suggestions(context),
                 }
+
+            if verification.code_change:
+                exact_change.update(verification.code_change)
+                context.code_change = exact_change
+                if isinstance(action, dict):
+                    action["code_change"] = exact_change
+                if isinstance(analysis, dict):
+                    analysis["code_change"] = exact_change
+
+            start_line = exact_change.get("start_line", 1)
+            end_line = exact_change.get("end_line", 1)
+
+            return verification.suggested_patch, {
+                "status": "passed",
+                "message": (
+                    "A real unified diff was generated in memory. "
+                    "Repository files were not modified."
+                ),
+                "warnings": [],
+                "target_file": exact_change.get("file_path"),
+                "line_range": f"{start_line}-{end_line}",
+                "checks": [
+                    f"target file verified: {verification.checks.get('target_file_verified', 'PASS')}",
+                    f"old code found exactly once: {verification.checks.get('old_code_found_once', 'PASS')}",
+                    f"line range: {start_line}-{end_line}",
+                    f"old/new code differ: {verification.checks.get('old_new_code_differ', 'PASS')}",
+                    f"unified diff generated: {verification.checks.get('unified_diff_generated', 'PASS')}",
+                    f"repository not modified: {verification.checks.get('repository_not_modified', 'PASS')}",
+                ],
+                "details": verification.checks,
+                "test_suggestions": self._build_test_suggestions(context),
+            }
 
         original_code = self._get_original_code(context, analysis, action)
         suggested_code = self._get_suggested_code(analysis, action)
@@ -377,6 +435,12 @@ class SuggestionPatchStage:
                 "Run the existing tests before and after the refactoring.",
                 "Confirm public interfaces remain unchanged.",
                 "Check for regressions in the affected code path.",
+            ]
+
+        if intent == IntentType.FIX_VULNERABILITY:
+            return [
+                "Run npm audit to verify the vulnerability is resolved.",
+                "Run the test suite to confirm compatibility with the updated package version.",
             ]
 
         return [

@@ -10,6 +10,9 @@ from typing import Any
 
 from app.modules.code_analysis.domain.analysis_domain import ValidationResult
 from app.modules.search.domain.search_domain import RetrievedChunk
+from app.modules.search.pipeline.code_change_verifier import (
+    verify_and_locate_code_change,
+)
 
 
 class SuggestionValidator:
@@ -118,18 +121,17 @@ class SuggestionValidator:
             if not isinstance(code_change, dict):
                 errors.append("Exact code change must be an object or null")
             else:
-                file_path = code_change.get("file_path")
-                old_code = code_change.get("old_code")
-                new_code = code_change.get("new_code")
-
-                if not isinstance(file_path, str) or not file_path.strip():
-                    errors.append("code_change.file_path must be a non-empty string")
-                if not isinstance(old_code, str) or not old_code.strip():
-                    errors.append("code_change.old_code must be a non-empty string")
-                if not isinstance(new_code, str) or not new_code.strip():
-                    errors.append("code_change.new_code must be a non-empty string")
-                if isinstance(old_code, str) and isinstance(new_code, str) and old_code == new_code:
-                    errors.append("code_change.old_code and code_change.new_code must differ")
+                target_symbol = analysis.get("symbol")
+                verification = verify_and_locate_code_change(
+                    code_change=code_change,
+                    chunks=chunks,
+                    target_symbol=target_symbol,
+                )
+                if not verification.is_valid:
+                    errors.extend(verification.errors)
+                else:
+                    if verification.code_change:
+                        analysis["code_change"] = verification.code_change
 
         # 3. OPTIMIZE proposed_optimization
         if "proposed_optimization" in analysis:

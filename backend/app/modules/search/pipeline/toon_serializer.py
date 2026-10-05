@@ -167,9 +167,9 @@ def build_clean_code_blocks(
         if not source:
             continue
 
-        blocks.append(
-            f"[{index}]\n{source}"
-        )
+        role = snippet.get("role")
+        label = f" {role} CODE" if role else ""
+        blocks.append(f"[{index}]{label}\n{source}")
 
     return blocks
 

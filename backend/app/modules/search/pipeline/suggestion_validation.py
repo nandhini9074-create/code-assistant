@@ -20,6 +20,21 @@ class SuggestionValidationStage:
         if context.early_exit:
             return
 
+        # If patch_validation is already populated by SuggestionPatchStage, preserve its status and details
+        if isinstance(context.patch_validation, dict) and context.patch_validation.get("status") in ("passed", "failed"):
+            if "test_suggestions" not in context.patch_validation or not context.patch_validation["test_suggestions"]:
+                context.patch_validation["test_suggestions"] = [
+                    "Run the relevant unit tests for the affected module.",
+                    "Add a regression test for the behavior change.",
+                    "Review the patch manually before applying it.",
+                ]
+            logger.info(
+                "patch_validation_preserved",
+                repo_id=context.repo_id,
+                status=context.patch_validation["status"],
+            )
+            return
+
         patch = context.suggested_patch
         if not patch:
             context.patch_validation = {

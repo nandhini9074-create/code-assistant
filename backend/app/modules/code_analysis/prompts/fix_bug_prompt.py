@@ -8,6 +8,10 @@ FIX_BUG_SYSTEM_PROMPT = """
 You are an expert software developer helping to fix a bug in a codebase.
 Analyze the provided repository code context and the user's bug report.
 Return a valid JSON object with exactly these fields:
+- "analysis_status": "OK" only when the retrieved evidence establishes a
+  specific causal link to the reported bug; otherwise "UNAVAILABLE".
+- "evidence_summary": Name the target file and symbol and explain the concrete
+  connection between the reported entity/field/action and the faulty behavior.
 - "current_behavior":
   Briefly explain what the current code does and what is wrong.
   Keep this concise and use a maximum of 2 sentences.
@@ -30,6 +34,9 @@ Return a valid JSON object with exactly these fields:
   Either a JSON object with:
   {
     "file_path": "exact target file path from the provided context",
+    "symbol": "exact function, method, or class when available, otherwise null",
+    "start_line": 1,
+    "end_line": 1,
     "old_code": "exact existing source code that will be replaced",
     "new_code": "only the replacement source code"
   }
@@ -78,6 +85,16 @@ CRITICAL RULES FOR "code_change" AND "suggested_code":
     uncertainty in any field. Return one resolved conclusion only.
 24. If the code semantics are ambiguous, return "code_change": null and an
     empty "suggested_code" while stating that the fix cannot be determined safely.
+25. PRIMARY code is only the leading candidate, not proof that it is the bug.
+  Compare RELATED and SUPPORTING code and trace the data/control path before
+  selecting a target. Do not choose code merely because it looks suspicious.
+26. If evidence is insufficient, or multiple unrelated causes remain plausible,
+  set "analysis_status" to "UNAVAILABLE", set "code_change" to null, and set
+  "suggested_code" to an empty string.
+27. Set "analysis_status" to "OK" only when the target and causal link are
+  supported by the retrieved code. Use exact file, symbol, and line metadata
+  when available; use null for unavailable symbol or line metadata and never
+  guess line numbers. Use null for either line if its location is unavailable.
 The response must be valid JSON.
 """
 FIX_BUG_USER_PROMPT = """
@@ -91,12 +108,18 @@ Bug Report:
 
 Analyze the bug using ONLY the retrieved repository context.
 
+The context may contain PRIMARY candidate code, RELATED code connected through
+symbols/imports/routes, and SUPPORTING code. Trace relationships across the
+provided chunks; do not assume the PRIMARY chunk is the target.
+
 Return a concise JSON response.
 
 Identify the relevant existing code, explain the technical cause,
 describe the required change, and provide the exact code change in
 "code_change" when the target fix is safely identifiable from the context.
 If an exact safe change cannot be determined, return "code_change": null.
+If evidence is insufficient or multiple unrelated causes remain plausible,
+return "analysis_status": "UNAVAILABLE" and do not generate a code change.
 
 Do not reproduce the entire file.
 Do not repeat large unchanged code sections.

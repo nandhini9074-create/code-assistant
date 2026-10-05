@@ -27,6 +27,7 @@ SUPPORTED INTENTS:
 - FIX_BUG: diagnose or fix an existing bug, error, failure, or incorrect behavior.
 - OPTIMIZE: improve performance, efficiency, latency, resource usage, or scalability.
 - REFACTOR: restructure or clean up existing code without changing its intended behavior.
+- FIX_VULNERABILITY: identify, audit, or fix dependency, package, or security vulnerabilities (e.g. package.json).
 
 CLASSIFICATION:
 1. Choose exactly one supported intent.
@@ -36,8 +37,9 @@ CLASSIFICATION:
 5. "Fix/resolve/diagnose an existing problem" -> FIX_BUG.
 6. "Make/improve performance or efficiency" -> OPTIMIZE.
 7. "Restructure/clean up/reorganize without changing behavior" -> REFACTOR.
-8. If multiple activities are mentioned, choose the main requested outcome.
-9. Missing parameters MUST NOT change the intent.
+8. "Fix vulnerability / package.json vulnerability / audit / dependency vulnerability" -> FIX_VULNERABILITY.
+9. If multiple activities are mentioned, choose the main requested outcome.
+10. Missing parameters MUST NOT change the intent.
 
 PARAMETERS:
 Extract ONLY information explicitly stated in the query.
@@ -49,6 +51,7 @@ ADD_FEATURE: feature, target, requirements
 FIX_BUG: error, symptom, file_path, function_name
 OPTIMIZE: target, performance_issue, constraint
 REFACTOR: target, reason, scope
+FIX_VULNERABILITY: target, file_path, package_name
 
 Rules:
 - Include only explicitly stated values.

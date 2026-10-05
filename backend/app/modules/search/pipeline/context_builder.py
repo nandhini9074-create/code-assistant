@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.search.domain.search_domain import (
     RetrievedChunk,
@@ -133,7 +134,11 @@ class ContextBuilderStage:
         # 3. Limit the number of chunks
         # -------------------------------------------------------------------
 
-        selected_chunks = unique_chunks[:_MAX_CONTEXT_CHUNKS]
+        is_bug_fix = context.intent == IntentType.FIX_BUG
+        max_chunks = 8 if is_bug_fix else _MAX_CONTEXT_CHUNKS
+        max_chunk_chars = 2200 if is_bug_fix else _MAX_CHUNK_CHARS
+        max_total_chars = 10000 if is_bug_fix else _MAX_TOTAL_CHARS
+        selected_chunks = unique_chunks[:max_chunks]
 
         snippets: list[dict[str, Any]] = []
         total_source_chars = 0
@@ -149,18 +154,42 @@ class ContextBuilderStage:
             )
 
             # Keep source code intact except for the hard safety limit.
-            source_code = chunk.content[:_MAX_CHUNK_CHARS]
+            source_code = chunk.content[:max_chunk_chars]
 
             # Do not add another chunk if the source-code budget is full.
             if (
                 total_source_chars + len(source_code)
-                > _MAX_TOTAL_CHARS
+                > max_total_chars
             ):
                 break
 
             repo = (
                 chunk.metadata.get("repo_name")
                 or context.repo_name
+            )
+
+            primary_hash = (
+                context.primary_chunk.chunk_hash
+                if context.primary_chunk
+                else None
+            )
+            primary_related = set(
+                (context.primary_chunk.metadata or {}).get(
+                    "_fix_bug_related_hashes", []
+                )
+                if context.primary_chunk
+                else []
+            )
+            chunk_related = set(
+                chunk.metadata.get("_fix_bug_related_hashes", [])
+            )
+            role = (
+                "PRIMARY"
+                if is_primary
+                else "RELATED"
+                if chunk.chunk_hash in primary_related
+                or primary_hash in chunk_related
+                else "SUPPORTING"
             )
 
             snippet = {
@@ -174,6 +203,7 @@ class ContextBuilderStage:
                 "source_code": source_code,
                 "score": round(chunk.score, 4),
                 "is_primary": is_primary,
+                "role": role if is_bug_fix else None,
                 "chunk_hash": chunk.chunk_hash,
                 "language": chunk.metadata.get("language"),
             }
@@ -223,7 +253,7 @@ class ContextBuilderStage:
             if len(toon_context) > _MAX_TOTAL_CHARS:
                 toon_context = _truncate_context(
                     toon_context,
-                    _MAX_TOTAL_CHARS,
+                    max_total_chars,
                 )
 
             context.llm_context = toon_context

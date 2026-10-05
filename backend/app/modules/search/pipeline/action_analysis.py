@@ -25,6 +25,10 @@ from typing import Any
 from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.search.domain.search_domain import SearchContext
+from app.modules.search.pipeline.code_change_verifier import (
+    _matches_file,
+    verify_and_locate_code_change,
+)
 
 logger = get_logger(__name__)
 
@@ -140,6 +144,7 @@ class ActionAnalysisStage:
             "risk_level": risk_level,
             "is_applied": False,
         }
+        context.code_change = code_change
 
         logger.info(
             "action_analysis_complete",
@@ -161,6 +166,7 @@ def _determine_action_type(
         IntentType.FIX_BUG: "BUG_REMEDIATION",
         IntentType.OPTIMIZE: "PERFORMANCE_OPTIMIZATION",
         IntentType.REFACTOR: "CODE_REFACTORING",
+        IntentType.FIX_VULNERABILITY: "DEPENDENCY_REMEDIATION",
     }
 
     return action_types.get(
@@ -222,7 +228,7 @@ def _extract_code_change(
     if (
         isinstance(target_file_path, str)
         and target_file_path not in {"", "unknown"}
-        and file_path != target_file_path
+        and not _matches_file(file_path, target_file_path)
     ):
         logger.warning(
             "code_change_file_mismatch",
@@ -231,6 +237,8 @@ def _extract_code_change(
             provided_file=file_path,
         )
         return None
+    elif isinstance(target_file_path, str) and target_file_path not in {"", "unknown"}:
+        file_path = target_file_path
 
     # Do not accept a no-op change.
     if old_code == new_code:
@@ -241,11 +249,26 @@ def _extract_code_change(
         )
         return None
 
-    return {
+    res: dict[str, Any] = {
         "file_path": file_path,
         "old_code": old_code,
         "new_code": new_code,
+        "operation": value.get("operation", "replace"),
+        "symbol": value.get("symbol") or target.get("symbol") or "global",
     }
+
+    if not (getattr(context, "ambiguous", False) or getattr(context, "is_ambiguous", False) or getattr(context, "symbol_conflict", False)):
+        verification = verify_and_locate_code_change(
+            code_change=res,
+            chunks=context.retrieved_chunks,
+            primary_chunk=context.primary_chunk,
+            code_snippets=context.code_snippets,
+            target_symbol=context.target_symbol or target.get("symbol"),
+        )
+        if verification.is_valid and verification.code_change:
+            res = verification.code_change
+
+    return res
 
 
 def _build_affected_target(

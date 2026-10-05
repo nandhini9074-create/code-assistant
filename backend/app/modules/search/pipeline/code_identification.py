@@ -20,6 +20,7 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.llm.service.llm_service import LLMService
 from app.modules.search.domain.search_domain import (
@@ -74,6 +75,35 @@ class CodeIdentificationStage:
             context.early_exit_message = (
                 "Could not identify specific code elements because "
                 "no relevant code was retrieved."
+            )
+            return
+
+        # -------------------------------------------------------------
+        # FIX_VULNERABILITY: package.json is always the target.
+        # Only package.json and package-lock.json are targeted.
+        # -------------------------------------------------------------
+        if context.intent == IntentType.FIX_VULNERABILITY:
+            pkg_chunks = [
+                c for c in context.retrieved_chunks
+                if (getattr(c, "file_path", "") or "").replace("\\", "/").lower().endswith("package.json")
+            ]
+            if pkg_chunks:
+                context.primary_chunk = pkg_chunks[0]
+            elif context.retrieved_chunks:
+                context.primary_chunk = context.retrieved_chunks[0]
+
+            target_fp = getattr(context.primary_chunk, "file_path", "package.json") if context.primary_chunk else "package.json"
+            context.target_file = target_fp
+            context.target_symbol = None
+            context.identified_elements = [{
+                "name": "package.json",
+                "type": "file",
+                "file_path": target_fp,
+            }]
+            logger.info(
+                "code_identification_vulnerability_target_set",
+                repo_id=context.repo_id,
+                target_file=target_fp,
             )
             return
 

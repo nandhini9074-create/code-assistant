@@ -1,24 +1,23 @@
 """
 app/modules/search/service/search_service.py
-
 Service layer for orchestrating the search pipeline.
-
 The search pipeline uses the repository name supplied in the request
 and does not perform PostgreSQL-based repository identification.
-
 Pipeline:
-1. Request Validation
-2. Intent Classification
-3. Query Preprocessing
-4. Collection Selection
-5. Code Retrieval
-6. Code Identification
-7. Context Building
-8. Code Analysis
-9. Evidence Validation
+ 1. Request Validation
+ 2. Intent Classification
+ 3. Query Preprocessing
+ 4. Collection Selection
+ 5. Code Retrieval
+ 6. Code Identification
+ 7. Context Building
+ 8. Code Analysis  (FIX_VULNERABILITY uses FixVulnerabilityAnalyzer)
+ 9. Evidence Validation
 10. Action Analysis
-11. Final Triage
-12. Response Generation
+11. Suggestion Patch
+12. Suggestion Validation
+13. Final Triage
+14. Response Generation
 """
 
 from app.core.exceptions import RetrievalError
@@ -133,18 +132,21 @@ class SearchService:
         # CollectionSelectionStage is responsible for mapping
         # repo_name -> Qdrant collection.
         #
+        # FIX_VULNERABILITY is handled by FixVulnerabilityAnalyzer
+        # registered inside CodeAnalysisService — no extra pipeline
+        # stages are needed.
         # ---------------------------------------------------------
 
         self.stages = [
-            self.val_stage,                   # 1
-            self.intent_stage,                # 2
-            self.query_prep_stage,            # 3
-            self.coll_sel_stage,              # 4
-            self.code_ret_stage,              # 5
-            self.code_ident_stage,            # 6
-            self.ctx_build_stage,             # 7
-            self.code_analysis_stage,         # 8
-            self.ev_val_stage,                # 9
+            self.val_stage,                   #  1
+            self.intent_stage,                #  2
+            self.query_prep_stage,            #  3
+            self.coll_sel_stage,              #  4
+            self.code_ret_stage,              #  5
+            self.code_ident_stage,            #  6
+            self.ctx_build_stage,             #  7
+            self.code_analysis_stage,         #  8
+            self.ev_val_stage,                #  9
             self.action_analysis_stage,       # 10
             self.suggestion_patch_stage,      # 11
             self.suggestion_validation_stage, # 12

@@ -317,11 +317,15 @@ def _extract_code_change(
             )
             continue
 
-        return {
+        res: dict[str, Any] = {
             "file_path": resolved_file_path,
             "old_code": old_code,
             "new_code": new_code,
         }
+        for k in ("start_line", "end_line", "operation", "symbol"):
+            if k in value:
+                res[k] = value[k]
+        return res
 
     return None
 
