@@ -9,10 +9,10 @@ import HealthIndicator from '../components/HealthIndicator';
 const HealthPage: React.FC = () => {
   return (
     <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
-      <Typography variant="h4" fontWeight={800} gutterBottom>
+      <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }} gutterBottom>
         System Health
       </Typography>
-      <Typography variant="body2" color="text.secondary" mb={3}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Live status of all backend services.
       </Typography>
 
@@ -20,7 +20,7 @@ const HealthPage: React.FC = () => {
         <CardContent>
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5 }}>
             <MonitorHeartIcon sx={{ color: 'primary.main' }} />
-            <Typography variant="subtitle1" fontWeight={700}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
               Service Status
             </Typography>
           </Box>

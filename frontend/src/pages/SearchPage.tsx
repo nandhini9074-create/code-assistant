@@ -11,7 +11,6 @@ import Paper from '@mui/material/Paper';
 import Card from '@mui/material/Card';
 import CardActionArea from '@mui/material/CardActionArea';
 import CardContent from '@mui/material/CardContent';
-import Divider from '@mui/material/Divider';
 import SearchIcon from '@mui/icons-material/Search';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import FolderZipIcon from '@mui/icons-material/FolderZip';
@@ -56,7 +55,7 @@ const SearchPage: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => { return () => clearTimers(); }, [clearTimers]);
+  useEffect(() => () => clearTimers(), [clearTimers]);
 
   const handleSearch = useCallback(async (searchQuery = query) => {
     if (!searchQuery.trim()) return addToast('warning', 'Query required', 'Please enter a search query.');
@@ -117,36 +116,48 @@ const SearchPage: React.FC = () => {
   };
 
   return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
-      {/* Hero search bar */}
+    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100%', maxWidth: 1500, width: '100%', mx: 'auto', px: { xs: 2, md: 4 }, py: { xs: 2, md: 3 } }}>
       <Paper
         elevation={0}
         sx={{
+          width: '100%',
+          mx: 'auto',
           px: { xs: 2, md: 4 },
-          py: 3,
-          bgcolor: 'hsl(222, 18%, 9%)',
-          borderBottom: '1px solid',
+          py: { xs: 2.5, md: 3.5 },
+          borderRadius: 4,
+          background: 'linear-gradient(180deg, rgba(18,22,33,0.96), rgba(15,18,28,0.92))',
+          border: '1px solid',
           borderColor: 'divider',
+          boxShadow: '0 18px 42px rgba(0,0,0,0.18)',
           position: 'sticky',
           top: 0,
           zIndex: 10,
         }}
       >
-        <Typography variant="h4" fontWeight={800} gutterBottom>
-          Search Your Codebase
+        <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }} gutterBottom>
+          Search your codebase
         </Typography>
-        <Typography variant="body2" color="text.secondary" mb={2.5}>
-          Ask questions in natural language — CodeLens retrieves, analyzes, and explains relevant code.
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
+          Ask questions in natural language and let CodeLens locate, analyze, and explain the relevant implementation.
         </Typography>
 
-        {/* Source type toggle */}
-        <ButtonGroup size="small" variant="outlined" aria-label="Source type" sx={{ mb: 2 }}>
+        <ButtonGroup
+          size="small"
+          variant="outlined"
+          aria-label="Source type"
+          sx={{
+            mb: 2,
+            '& .MuiButtonGroup-grouped': {
+              minWidth: 140,
+            },
+          }}
+        >
           <Button
             id="source-pill-git"
             startIcon={<AccountTreeIcon />}
             onClick={() => setSourceType('git')}
             variant={sourceType === 'git' ? 'contained' : 'outlined'}
-            sx={{ fontWeight: 600 }}
+            sx={{ fontWeight: 700 }}
           >
             GitHub URL
           </Button>
@@ -155,21 +166,16 @@ const SearchPage: React.FC = () => {
             startIcon={<FolderZipIcon />}
             onClick={() => setSourceType('zip')}
             variant={sourceType === 'zip' ? 'contained' : 'outlined'}
-            sx={{ fontWeight: 600 }}
+            sx={{ fontWeight: 700 }}
           >
             ZIP Path
           </Button>
         </ButtonGroup>
 
-        {/* Location input */}
         <TextField
           id="search-location"
           fullWidth
-          placeholder={
-            sourceType === 'git'
-              ? 'https://github.com/owner/repo'
-              : 'local://repo-name.zip'
-          }
+          placeholder={sourceType === 'git' ? 'https://github.com/owner/repo' : 'local://repo-name.zip'}
           value={location}
           onChange={(e) => setLocation(e.target.value)}
           aria-label="Repository location"
@@ -177,8 +183,7 @@ const SearchPage: React.FC = () => {
           sx={{ mb: 1.5 }}
         />
 
-        {/* Query + search buttons */}
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ display: 'flex', gap: 1, flexDirection: { xs: 'column', md: 'row' } }}>
           <TextField
             id="search-query"
             fullWidth
@@ -189,12 +194,14 @@ const SearchPage: React.FC = () => {
             aria-label="Search query"
             disabled={loading}
             size="small"
-            InputProps={{
-              startAdornment: (
-                <InputAdornment position="start">
-                  <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
-                </InputAdornment>
-              ),
+            slotProps={{
+              input: {
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                  </InputAdornment>
+                ),
+              },
             }}
           />
           <Button
@@ -204,7 +211,7 @@ const SearchPage: React.FC = () => {
             disabled={loading}
             aria-label="Run search"
             startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SearchIcon />}
-            sx={{ whiteSpace: 'nowrap', minWidth: 120 }}
+            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 146 } }}
           >
             {loading ? 'Searching…' : 'Search'}
           </Button>
@@ -215,13 +222,12 @@ const SearchPage: React.FC = () => {
             disabled={loading}
             title="Audit project dependencies"
             startIcon={<ShieldIcon />}
-            sx={{ whiteSpace: 'nowrap' }}
+            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 148 } }}
           >
             NPM Audit
           </Button>
         </Box>
 
-        {/* Example queries */}
         {!activeResult && (
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.5 }}>
             {EXAMPLE_QUERIES.map((q) => (
@@ -232,31 +238,39 @@ const SearchPage: React.FC = () => {
                 variant="outlined"
                 clickable
                 onClick={() => setQuery(q)}
-                sx={{ fontSize: 11, '&:hover': { borderColor: 'primary.main', color: 'primary.light' } }}
+                sx={{
+                  fontSize: 11,
+                  borderRadius: 999,
+                  '&:hover': {
+                    borderColor: 'primary.main',
+                    color: 'primary.light',
+                  },
+                }}
               />
             ))}
           </Box>
         )}
       </Paper>
 
-      {/* Results area */}
-      <Box sx={{ px: { xs: 2, md: 4 }, py: 3, flex: 1 }}>
-        {loading && (
-          <PipelineLoader
-            currentStageIndex={currentStageIndex}
-            elapsedSeconds={elapsedSeconds}
-          />
-        )}
+      <Box sx={{ py: { xs: 2.5, md: 3 }, flex: 1, width: '100%', mx: 'auto' }}>
+        {loading && <PipelineLoader currentStageIndex={currentStageIndex} elapsedSeconds={elapsedSeconds} />}
 
-        {!loading && activeResult?.response && (
-          <SearchResult response={activeResult.response} query={activeResult.query} />
-        )}
+        {!loading && activeResult?.response && <SearchResult response={activeResult.response} query={activeResult.query} />}
 
-        {/* History */}
         {!loading && history.length > 1 && (
           <Box sx={{ mt: 3.5 }}>
-            <Typography variant="caption" fontWeight={700} color="text.secondary" textTransform="uppercase" letterSpacing="0.08em" display="block" mb={1.5}>
-              Previous Searches
+            <Typography
+              variant="caption"
+              color="text.secondary"
+              sx={{
+                fontWeight: 700,
+                textTransform: 'uppercase',
+                letterSpacing: '0.08em',
+                display: 'block',
+                mb: 1.5,
+              }}
+            >
+              Previous searches
             </Typography>
             <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               {history.slice(1).map((item) => (
@@ -268,11 +282,15 @@ const SearchPage: React.FC = () => {
                     cursor: 'pointer',
                     borderColor: activeResult?.id === item.id ? 'primary.main' : 'divider',
                     bgcolor: activeResult?.id === item.id ? 'hsla(258,90%,66%,0.07)' : 'transparent',
+                    transition: 'all 0.18s ease',
+                    '&:hover': { borderColor: 'primary.main', transform: 'translateY(-1px)' },
                   }}
                 >
                   <CardActionArea onClick={() => setActiveResult(item)}>
                     <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 } }}>
-                      <Typography variant="body2" fontWeight={600} noWrap>{item.query}</Typography>
+                      <Typography variant="body2" sx={{ fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {item.query}
+                      </Typography>
                       <Typography variant="caption" color="text.secondary">
                         {item.source.location} · {new Date(item.timestamp).toLocaleTimeString()}
                       </Typography>
@@ -284,7 +302,6 @@ const SearchPage: React.FC = () => {
           </Box>
         )}
 
-        {/* Empty state */}
         {!loading && history.length === 0 && (
           <Box
             sx={{
@@ -312,12 +329,11 @@ const SearchPage: React.FC = () => {
               <SearchIcon sx={{ fontSize: 36, color: 'primary.main' }} />
             </Box>
             <Box>
-              <Typography variant="h6" fontWeight={700} gutterBottom>
+              <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }} gutterBottom>
                 Ready to explore
               </Typography>
-              <Typography variant="body2" color="text.secondary" maxWidth={440}>
-                Enter a repository URL and a natural-language question to get started.
-                CodeLens will retrieve relevant code and provide AI-powered analysis.
+              <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 440 }}>
+                Enter a repository URL and a natural-language question to get started. CodeLens will retrieve relevant code and provide AI-powered analysis.
               </Typography>
             </Box>
           </Box>

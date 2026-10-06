@@ -31,10 +31,10 @@ import { useToast } from '../context/ToastContext';
 
 const statusConfig: Record<string, { color: 'success' | 'error' | 'info' | 'warning' | 'default'; label: string }> = {
   completed: { color: 'success', label: 'Completed' },
-  failed:    { color: 'error',   label: 'Failed' },
-  running:   { color: 'info',    label: 'Running' },
-  queued:    { color: 'default', label: 'Queued' },
-  pending:   { color: 'default', label: 'Pending' },
+  failed: { color: 'error', label: 'Failed' },
+  running: { color: 'info', label: 'Running' },
+  queued: { color: 'default', label: 'Queued' },
+  pending: { color: 'default', label: 'Pending' },
   cancelled: { color: 'warning', label: 'Cancelled' },
 };
 
@@ -78,21 +78,19 @@ const JobsPage: React.FC = () => {
     }
   };
 
-  const fmtDate = (s: string) =>
-    new Date(s).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
+  const fmtDate = (s: string) => new Date(s).toLocaleString(undefined, { dateStyle: 'short', timeStyle: 'medium' });
 
   return (
-    <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
-      <Typography variant="h4" fontWeight={800} gutterBottom>
+    <Box sx={{ px: { xs: 2, md: 4 }, py: { xs: 2.5, md: 3 }, maxWidth: 1500, mx: 'auto', width: '100%' }}>
+      <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }} gutterBottom>
         Ingestion Jobs
       </Typography>
-      <Typography variant="body2" color="text.secondary" mb={3}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Monitor repository indexing job history and status.
       </Typography>
 
-      {/* Repository selector */}
-      <Box sx={{ display: 'flex', gap: 1.5, mb: 3, alignItems: 'center' }}>
-        <FormControl size="small" sx={{ minWidth: 300 }}>
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 3, alignItems: 'center', flexDirection: { xs: 'column', sm: 'row' } }}>
+        <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 320 } }}>
           <InputLabel id="jobs-repo-label">Select repository</InputLabel>
           <Select
             id="jobs-repo-select"
@@ -110,19 +108,13 @@ const JobsPage: React.FC = () => {
         </FormControl>
         <Tooltip title="Refresh jobs">
           <span>
-            <IconButton
-              id="jobs-refresh"
-              onClick={loadJobs}
-              disabled={!selectedRepo}
-              aria-label="Refresh jobs"
-            >
+            <IconButton id="jobs-refresh" onClick={loadJobs} disabled={!selectedRepo} aria-label="Refresh jobs">
               <RefreshIcon />
             </IconButton>
           </span>
         </Tooltip>
       </Box>
 
-      {/* Jobs list */}
       {loading ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '30vh', gap: 2 }}>
           <CircularProgress size={40} />
@@ -134,15 +126,15 @@ const JobsPage: React.FC = () => {
             <WorkHistoryIcon sx={{ fontSize: 36, color: 'primary.main' }} />
           </Box>
           <Box>
-            <Typography variant="h6" fontWeight={700} gutterBottom>Select a repository</Typography>
-            <Typography variant="body2" color="text.secondary" maxWidth={380}>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }} gutterBottom>Select a repository</Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 380 }}>
               Choose a repository above to view its ingestion job history.
             </Typography>
           </Box>
         </Box>
       ) : jobs.length === 0 ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '30vh', gap: 2, textAlign: 'center' }}>
-          <Typography variant="h6" fontWeight={700} gutterBottom>No jobs found</Typography>
+          <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }} gutterBottom>No jobs found</Typography>
           <Typography variant="body2" color="text.secondary">
             No ingestion jobs have been run for this repository yet.
           </Typography>
@@ -151,7 +143,7 @@ const JobsPage: React.FC = () => {
           </Button>
         </Box>
       ) : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.25 }}>
           {jobs.map((job) => {
             const expanded = expandedJob === job.job_id;
             const isActive = ['running', 'queued', 'pending'].includes(job.status.toLowerCase());
@@ -167,7 +159,6 @@ const JobsPage: React.FC = () => {
                   transition: 'all 0.2s ease',
                 }}
               >
-                {/* Row header */}
                 <Box
                   component="button"
                   id={`job-row-${job.job_id}`}
@@ -197,12 +188,21 @@ const JobsPage: React.FC = () => {
                     sx={{
                       fontSize: 10,
                       flexShrink: 0,
-                      color: sc.color === 'success' ? 'success.main' : sc.color === 'error' ? 'error.main' : sc.color === 'info' ? 'info.main' : sc.color === 'warning' ? 'warning.main' : 'text.disabled',
-                      boxShadow: isActive ? `0 0 6px currentColor` : 'none',
+                      color:
+                        sc.color === 'success'
+                          ? 'success.main'
+                          : sc.color === 'error'
+                            ? 'error.main'
+                            : sc.color === 'info'
+                              ? 'info.main'
+                              : sc.color === 'warning'
+                                ? 'warning.main'
+                                : 'text.disabled',
+                      boxShadow: isActive ? '0 0 6px currentColor' : 'none',
                     }}
                   />
 
-                  <Typography variant="body2" fontWeight={600} sx={{ flex: 1 }}>
+                  <Typography variant="body2" sx={{ fontWeight: 600, flex: 1 }}>
                     {job.job_type.toUpperCase()}
                   </Typography>
 
@@ -219,12 +219,15 @@ const JobsPage: React.FC = () => {
                   </Typography>
 
                   {isActive && (
-                    <Tooltip title={`Cancel job`}>
+                    <Tooltip title="Cancel job">
                       <IconButton
                         id={`job-cancel-${job.job_id}`}
                         size="small"
                         color="error"
-                        onClick={(e) => { e.stopPropagation(); handleCancel(job.job_id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancel(job.job_id);
+                        }}
                         aria-label={`Cancel job ${job.job_id}`}
                       >
                         <CancelIcon fontSize="small" />
@@ -233,7 +236,6 @@ const JobsPage: React.FC = () => {
                   )}
                 </Box>
 
-                {/* Expanded details */}
                 <Collapse in={expanded}>
                   <Divider />
                   <Box sx={{ px: 3, py: 2 }}>
@@ -247,22 +249,26 @@ const JobsPage: React.FC = () => {
                           ['Files processed', job.processed_files],
                           ['Chunks indexed', job.processed_chunks],
                           ['Updated', fmtDate(job.updated_at)],
-                        ].filter(Boolean).map((row) => (
-                          <TableRow key={row![0]}>
-                            <TableCell sx={{ width: 160 }}>
-                              <Typography variant="caption" color="text.secondary">{row![0]}</Typography>
-                            </TableCell>
-                            <TableCell>
-                              <Typography
-                                variant="caption"
-                                fontFamily={row![0] === 'Job ID' || row![0] === 'Commit' ? "'JetBrains Mono', monospace" : undefined}
-                                fontWeight={row![0] === 'Stage' ? 600 : 400}
-                              >
-                                {String(row![1])}
-                              </Typography>
-                            </TableCell>
-                          </TableRow>
-                        ))}
+                        ]
+                          .filter(Boolean)
+                          .map((row) => (
+                            <TableRow key={String(row![0])}>
+                              <TableCell sx={{ width: 160 }}>
+                                <Typography variant="caption" color="text.secondary">{String(row![0])}</Typography>
+                              </TableCell>
+                              <TableCell>
+                                <Typography
+                                  variant="caption"
+                                  sx={{
+                                    fontFamily: String(row![0]) === 'Job ID' || String(row![0]) === 'Commit' ? "'JetBrains Mono', monospace" : undefined,
+                                    fontWeight: String(row![0]) === 'Stage' ? 600 : 400,
+                                  }}
+                                >
+                                  {String(row![1])}
+                                </Typography>
+                              </TableCell>
+                            </TableRow>
+                          ))}
                       </TableBody>
                     </Table>
 

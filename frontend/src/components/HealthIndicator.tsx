@@ -9,7 +9,7 @@ import TableCell from '@mui/material/TableCell';
 import TableRow from '@mui/material/TableRow';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import ErrorIcon from '@mui/icons-material/Error';
-import RemoveCircleOutlineIcon from '@mui/icons-material/RemoveCircleOutline';
+import RemoveCircleIcon from "@mui/icons-material/RemoveCircle";
 import FiberManualRecordIcon from '@mui/icons-material/FiberManualRecord';
 import { healthApi } from '../api/client';
 import type { HealthResponse } from '../types';
@@ -20,9 +20,9 @@ interface Props {
 
 const statusColors: Record<string, 'success' | 'error' | 'warning' | 'default'> = {
   healthy: 'success',
-  ok:      'success',
+  ok: 'success',
   degraded: 'warning',
-  error:   'error',
+  error: 'error',
   unknown: 'default',
 };
 
@@ -48,6 +48,7 @@ const HealthIndicator: React.FC<Props> = ({ compact = false }) => {
   }, [refresh]);
 
   const status = loading ? 'unknown' : health?.status ?? 'degraded';
+  const normalizedStatus = status as string;
   const chipColor = statusColors[status] ?? 'default';
 
   if (compact) {
@@ -61,13 +62,13 @@ const HealthIndicator: React.FC<Props> = ({ compact = false }) => {
           sx={{
             fontSize: 10,
             color:
-              status === 'healthy' || status === 'ok'
+              normalizedStatus === 'ok'
                 ? 'success.main'
-                : status === 'degraded'
-                ? 'warning.main'
-                : status === 'error'
-                ? 'error.main'
-                : 'text.disabled',
+                : normalizedStatus === 'degraded'
+                  ? 'warning.main'
+                  : normalizedStatus === 'error'
+                    ? 'error.main'
+                    : 'text.disabled',
             animation: loading ? 'pulse 2s infinite' : 'none',
             '@keyframes pulse': {
               '0%, 100%': { opacity: 1 },
@@ -84,7 +85,7 @@ const HealthIndicator: React.FC<Props> = ({ compact = false }) => {
 
   const getCheckIcon = (val: string) => {
     if (val === 'ok') return <CheckCircleIcon fontSize="small" color="success" />;
-    if (val === 'disabled') return <RemoveCircleOutlineIcon fontSize="small" color="disabled" />;
+    if (val === 'disabled') return <RemoveCircleIcon fontSize="small" color="disabled" />;
     return <ErrorIcon fontSize="small" color="error" />;
   };
 
@@ -127,13 +128,13 @@ const HealthIndicator: React.FC<Props> = ({ compact = false }) => {
                       {getCheckIcon(val)}
                       <Typography
                         variant="body2"
-                        fontWeight={600}
+                        sx={{ fontWeight: 600 }}
                         color={
                           val === 'ok'
                             ? 'success.main'
                             : val === 'disabled'
-                            ? 'text.disabled'
-                            : 'error.main'
+                              ? 'text.disabled'
+                              : 'error.main'
                         }
                       >
                         {val}

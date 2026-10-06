@@ -17,7 +17,7 @@ import TableRow from '@mui/material/TableRow';
 import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
 import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
-import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import ErrorIcon from '@mui/icons-material/Error';
 import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import GroupsIcon from '@mui/icons-material/Groups';
@@ -29,16 +29,16 @@ interface Props {
 }
 
 const intentLabel: Record<string, string> = {
-  EXPLAIN:        'Explain',
-  FIX_BUG:       'Fix Bug',
-  OPTIMIZE:       'Optimize',
-  REFACTOR:       'Refactor',
-  FIND_USAGE:     'Find Usage',
-  FIND_FUNCTION:  'Find Function',
-  FIND_CLASS:     'Find Class',
-  ARCHITECTURE:   'Architecture',
-  SECURITY:       'Security',
-  GENERAL:        'General',
+  EXPLAIN: 'Explain',
+  FIX_BUG: 'Fix Bug',
+  OPTIMIZE: 'Optimize',
+  REFACTOR: 'Refactor',
+  FIND_USAGE: 'Find Usage',
+  FIND_FUNCTION: 'Find Function',
+  FIND_CLASS: 'Find Class',
+  ARCHITECTURE: 'Architecture',
+  SECURITY: 'Security',
+  GENERAL: 'General',
 };
 
 // Prose wrapper for ReactMarkdown — applies MUI-like typography via sx
@@ -93,7 +93,7 @@ const ResultSection: React.FC<SectionProps> = ({ icon, label, children }) => (
   <Box sx={{ mb: 2.5 }}>
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
       <Box sx={{ color: 'primary.main', display: 'flex', fontSize: 14 }}>{icon}</Box>
-      <Typography variant="caption" fontWeight={700} color="text.secondary" textTransform="uppercase" letterSpacing="0.08em">
+      <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em' }}>
         {label}
       </Typography>
     </Box>
@@ -103,6 +103,7 @@ const ResultSection: React.FC<SectionProps> = ({ icon, label, children }) => (
 
 const SearchResult: React.FC<Props> = ({ response, query }) => {
   const label = intentLabel[response.intent] ?? response.intent;
+  const targetName = response.target?.name ? String(response.target.name) : '';
 
   const detectLang = (filePath?: string) => {
     if (!filePath) return 'python';
@@ -122,10 +123,10 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
   const cardHeader = (
     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
       <Box>
-        <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
+        <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
           Query
         </Typography>
-        <Typography variant="subtitle1" fontWeight={700}>
+        <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
           {query}
         </Typography>
       </Box>
@@ -156,7 +157,7 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
           <Divider sx={{ mb: 2 }} />
           <Alert
             severity="info"
-            icon={<ErrorOutlineIcon />}
+            icon={<ErrorIcon />}
             variant="outlined"
           >
             <ReactMarkdown remarkPlugins={[remarkGfm]}>
@@ -176,7 +177,7 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
           {cardHeader}
           <Divider sx={{ mb: 2 }} />
           <ResultSection icon={<GroupsIcon fontSize="small" />} label="Multiple Matches Found">
-            <Typography variant="body2" color="text.secondary" mb={1.5}>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5 }}>
               The symbol <strong>{response.ambiguous_candidates[0].name}</strong> exists in multiple files.
               Please refine your query with more context:
             </Typography>
@@ -187,7 +188,7 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
                     <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                         <InsertDriveFileOutlinedIcon sx={{ fontSize: 14, color: 'primary.main' }} />
-                        <Typography variant="caption" fontFamily="'JetBrains Mono', monospace" color="text.secondary">
+                        <Typography variant="caption" color="text.secondary" sx={{ fontFamily: "'JetBrains Mono', monospace" }}>
                           {c.file_path}
                         </Typography>
                       </Box>
@@ -198,12 +199,12 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
                       )}
                     </Box>
                     {c.class_name && (
-                      <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
                         Class: {c.class_name}
                       </Typography>
                     )}
                     {c.start_line != null && (
-                      <Typography variant="caption" color="text.secondary" display="block">
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block' }}>
                         Lines {c.start_line}–{c.end_line}
                       </Typography>
                     )}
@@ -241,9 +242,9 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
                   sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}
                 />
               )}
-              {response.target.name && (
+              {targetName && (
                 <Chip
-                  label={String(response.target.name)}
+                  label={targetName}
                   size="small"
                   color="primary"
                   variant="outlined"
@@ -251,7 +252,7 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
                 />
               )}
               {response.target.start_line != null && (
-                <Typography variant="caption" color="text.secondary" alignSelf="center">
+                <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'center' }}>
                   L{String(response.target.start_line)}–{String(response.target.end_line)}
                 </Typography>
               )}
@@ -279,7 +280,7 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
 
         {/* Current behavior */}
         {response.current_behavior && (
-          <ResultSection icon={<ErrorOutlineIcon fontSize="small" />} label="Current Behavior">
+          <ResultSection icon={<ErrorIcon fontSize="small" />} label="Current Behavior">
             <ProseBox>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{response.current_behavior}</ReactMarkdown>
             </ProseBox>
@@ -317,7 +318,7 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
                 {Object.entries(response.patch_validation).map(([k, v]) => (
                   <TableRow key={k}>
                     <TableCell><Typography variant="caption" color="text.secondary">{k}</Typography></TableCell>
-                    <TableCell align="right"><Typography variant="caption" fontWeight={600}>{String(v)}</Typography></TableCell>
+                    <TableCell align="right"><Typography variant="caption" sx={{ fontWeight: 600 }}>{String(v)}</Typography></TableCell>
                   </TableRow>
                 ))}
               </TableBody>

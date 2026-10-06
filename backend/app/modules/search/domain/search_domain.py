@@ -154,6 +154,11 @@ class SearchContext:
     remediation_verified: bool = False
 
     # ---------------------------------------------------------
+    # Model-Schema Contract Analysis
+    # ---------------------------------------------------------
+    contract_analysis: Any | None = None
+
+    # ---------------------------------------------------------
     # Pipeline control
     # ---------------------------------------------------------
 

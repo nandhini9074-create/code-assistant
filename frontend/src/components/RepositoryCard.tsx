@@ -59,7 +59,7 @@ const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs
         <Box sx={{ display: 'flex', alignItems: 'flex-start', gap: 1, mb: 1 }}>
           <AccountTreeIcon sx={{ color: 'primary.main', mt: 0.3, flexShrink: 0 }} />
           <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Typography variant="subtitle1" fontWeight={700} noWrap>
+            <Typography variant="subtitle1" sx={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
               {repo.name}
             </Typography>
             <Typography variant="caption" color="text.secondary">
@@ -87,8 +87,7 @@ const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs
               <TableCell align="right">
                 <Typography
                   variant="caption"
-                  fontFamily="'JetBrains Mono', monospace"
-                  sx={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', display: 'block', textAlign: 'right' }}
+                  sx={{ fontFamily: "'JetBrains Mono', monospace", maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', display: 'block', textAlign: 'right' }}
                 >
                   {repo.qdrant_collection}
                 </Typography>
@@ -100,7 +99,7 @@ const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs
                   <Typography variant="caption" color="text.secondary">Commit</Typography>
                 </TableCell>
                 <TableCell align="right">
-                  <Typography variant="caption" fontFamily="'JetBrains Mono', monospace">
+                  <Typography variant="caption" sx={{ fontFamily: "'JetBrains Mono', monospace" }}>
                     {repo.current_commit_sha.slice(0, 12)}
                   </Typography>
                 </TableCell>

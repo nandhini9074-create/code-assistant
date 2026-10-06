@@ -96,18 +96,17 @@ const RepositoriesPage: React.FC = () => {
   const repoToDelete = repos.find((r) => r.id === deleteConfirmId);
 
   return (
-    <Box sx={{ px: { xs: 2, md: 4 }, py: 3 }}>
-      {/* Header */}
-      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3 }}>
+    <Box sx={{ px: { xs: 2, md: 4 }, py: { xs: 2.5, md: 3 }, maxWidth: 1500, mx: 'auto', width: '100%' }}>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 3, gap: 2, flexDirection: { xs: 'column', sm: 'row' } }}>
         <Box>
-          <Typography variant="h4" fontWeight={800} gutterBottom>
+          <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }} gutterBottom>
             Repositories
           </Typography>
           <Typography variant="body2" color="text.secondary">
             Manage indexed GitHub repositories
           </Typography>
         </Box>
-        <Box sx={{ display: 'flex', gap: 1 }}>
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
           <Button
             id="repos-refresh"
             variant="outlined"
@@ -131,13 +130,23 @@ const RepositoriesPage: React.FC = () => {
         </Box>
       </Box>
 
-      {/* Add repo form */}
+      {!loading && repos.length > 0 && (
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 3 }}>
+          <Box component="span" sx={{ px: 1.5, py: 0.5, borderRadius: 999, bgcolor: 'rgba(122,92,255,0.12)', color: 'primary.light', border: '1px solid rgba(122,92,255,0.2)', fontSize: 12, fontWeight: 700 }}>
+            Total {repos.length}
+          </Box>
+          <Box component="span" sx={{ px: 1.5, py: 0.5, borderRadius: 999, bgcolor: 'rgba(36,168,134,0.12)', color: 'success.light', border: '1px solid rgba(36,168,134,0.2)', fontSize: 12, fontWeight: 700 }}>
+            Healthy {repos.filter((repo) => repo.status === 'indexed').length}
+          </Box>
+        </Box>
+      )}
+
       <Collapse in={showAdd}>
-        <Card sx={{ mb: 3 }}>
-          <CardContent>
+        <Card sx={{ mb: 3, borderRadius: 3 }}>
+          <CardContent sx={{ p: { xs: 2, md: 3 } }}>
             <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 2.5 }}>
               <AccountTreeIcon sx={{ color: 'primary.main' }} />
-              <Typography variant="subtitle1" fontWeight={700}>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
                 Register New Repository
               </Typography>
             </Box>
@@ -182,13 +191,8 @@ const RepositoriesPage: React.FC = () => {
 
               <Divider sx={{ my: 2 }} />
 
-              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
-                <Button
-                  type="button"
-                  id="add-repo-cancel"
-                  variant="outlined"
-                  onClick={() => setShowAdd(false)}
-                >
+              <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <Button type="button" id="add-repo-cancel" variant="outlined" onClick={() => setShowAdd(false)}>
                   Cancel
                 </Button>
                 <Button
@@ -206,7 +210,6 @@ const RepositoriesPage: React.FC = () => {
         </Card>
       </Collapse>
 
-      {/* Content */}
       {loading ? (
         <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '30vh', gap: 2 }}>
           <CircularProgress size={40} />
@@ -218,18 +221,13 @@ const RepositoriesPage: React.FC = () => {
             <AccountTreeIcon sx={{ fontSize: 36, color: 'primary.main' }} />
           </Box>
           <Box>
-            <Typography variant="h6" fontWeight={700} gutterBottom>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }} gutterBottom>
               No repositories yet
             </Typography>
-            <Typography variant="body2" color="text.secondary" maxWidth={380} mb={2}>
+            <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 380, mb: 2 }}>
               Register a GitHub repository to start indexing and searching your code.
             </Typography>
-            <Button
-              id="repos-empty-add"
-              variant="contained"
-              startIcon={<AddIcon />}
-              onClick={() => setShowAdd(true)}
-            >
+            <Button id="repos-empty-add" variant="contained" startIcon={<AddIcon />} onClick={() => setShowAdd(true)}>
               Add First Repository
             </Button>
           </Box>
@@ -249,36 +247,18 @@ const RepositoriesPage: React.FC = () => {
         </Grid>
       )}
 
-      {/* Delete confirmation dialog */}
-      <Dialog
-        open={!!deleteConfirmId}
-        onClose={() => setDeleteConfirmId(null)}
-        maxWidth="xs"
-        fullWidth
-        id="delete-repo-dialog"
-      >
-        <DialogTitle fontWeight={700}>Delete Repository?</DialogTitle>
+      <Dialog open={!!deleteConfirmId} onClose={() => setDeleteConfirmId(null)} maxWidth="xs" fullWidth id="delete-repo-dialog">
+        <DialogTitle sx={{ fontWeight: 700 }}>Delete Repository?</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            This will permanently delete{' '}
-            <strong>{repoToDelete?.full_name}</strong> and all its indexed data.
-            This action cannot be undone.
+            This will permanently delete <strong>{repoToDelete?.full_name}</strong> and all its indexed data. This action cannot be undone.
           </DialogContentText>
         </DialogContent>
         <DialogActions>
-          <Button
-            id="delete-repo-cancel"
-            onClick={() => setDeleteConfirmId(null)}
-            color="inherit"
-          >
+          <Button id="delete-repo-cancel" onClick={() => setDeleteConfirmId(null)} color="inherit">
             Cancel
           </Button>
-          <Button
-            id="delete-repo-confirm"
-            onClick={() => deleteConfirmId && handleDelete(deleteConfirmId)}
-            color="error"
-            variant="contained"
-          >
+          <Button id="delete-repo-confirm" onClick={() => deleteConfirmId && handleDelete(deleteConfirmId)} color="error" variant="contained">
             Delete
           </Button>
         </DialogActions>

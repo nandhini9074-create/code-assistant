@@ -27,6 +27,10 @@ from app.modules.search.domain.search_domain import (
     RetrievedChunk,
     SearchContext,
 )
+from app.modules.search.pipeline.model_schema_contract_analysis import (
+    ContractIssueType,
+    ModelSchemaContractAnalyzer,
+)
 
 logger = get_logger(__name__)
 
@@ -105,7 +109,27 @@ class CodeIdentificationStage:
                 repo_id=context.repo_id,
                 target_file=target_fp,
             )
-            return
+        # -------------------------------------------------------------
+        # FIX_BUG: Run Model-Schema Contract Analysis
+        # -------------------------------------------------------------
+        if context.intent == IntentType.FIX_BUG:
+            contract_analyzer = ModelSchemaContractAnalyzer()
+            contract_result = contract_analyzer.analyze(context)
+            context.contract_analysis = contract_result.to_dict()
+
+            if contract_result.is_applicable and contract_result.issue_type == ContractIssueType.AMBIGUOUS:
+                self._mark_ambiguous(
+                    context,
+                    contract_result.evidence_summary,
+                )
+                context.symbol_conflict = True
+                context.ambiguous_candidates = contract_result.candidate_models
+                logger.warning(
+                    "code_identification_contract_ambiguity_detected",
+                    repo_id=context.repo_id,
+                    candidates=len(contract_result.candidate_models),
+                )
+                return
 
         elements = await self._identify(context)
 

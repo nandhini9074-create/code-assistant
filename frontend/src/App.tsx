@@ -9,11 +9,11 @@ import { ToastProvider } from './context/ToastContext';
 
 const SIDEBAR_WIDTH = 230;
 
-const SearchPage       = lazy(() => import('./pages/SearchPage'));
+const SearchPage = lazy(() => import('./pages/SearchPage'));
 const RepositoriesPage = lazy(() => import('./pages/RepositoriesPage'));
-const UploadPage       = lazy(() => import('./pages/UploadPage'));
-const JobsPage         = lazy(() => import('./pages/JobsPage'));
-const HealthPage       = lazy(() => import('./pages/HealthPage'));
+const UploadPage = lazy(() => import('./pages/UploadPage'));
+const JobsPage = lazy(() => import('./pages/JobsPage'));
+const HealthPage = lazy(() => import('./pages/HealthPage'));
 
 const PageLoader: React.FC = () => (
   <Box
@@ -26,7 +26,7 @@ const PageLoader: React.FC = () => (
       gap: 2,
     }}
   >
-    <CircularProgress size={48} />
+    <CircularProgress size={42} thickness={4} />
     <Typography variant="body2" color="text.secondary">
       Loading…
     </Typography>
@@ -43,30 +43,35 @@ const App: React.FC = () => {
             component="main"
             sx={{
               flexGrow: 1,
-              ml: `${SIDEBAR_WIDTH}px`,
+              minWidth: 0,
               minHeight: '100vh',
               overflow: 'auto',
             }}
           >
-            <Suspense fallback={<PageLoader />}>
-              <Routes>
-                <Route path="/"             element={<SearchPage />} />
-                <Route path="/repositories" element={<RepositoriesPage />} />
-                <Route path="/upload"       element={<UploadPage />} />
-                <Route path="/jobs"         element={<JobsPage />} />
-                <Route path="/health"       element={<HealthPage />} />
-                <Route path="*" element={
-                  <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
-                    <Box sx={{ textAlign: 'center' }}>
-                      <Typography variant="h3" fontWeight={700} color="text.secondary" gutterBottom>
-                        404
-                      </Typography>
-                      <Typography color="text.secondary">Page not found</Typography>
-                    </Box>
-                  </Box>
-                } />
-              </Routes>
-            </Suspense>
+            <Box sx={{ maxWidth: 1500, mx: 'auto', width: '100%' }}>
+              <Suspense fallback={<PageLoader />}>
+                <Routes>
+                  <Route path="/" element={<SearchPage />} />
+                  <Route path="/repositories" element={<RepositoriesPage />} />
+                  <Route path="/upload" element={<UploadPage />} />
+                  <Route path="/jobs" element={<JobsPage />} />
+                  <Route path="/health" element={<HealthPage />} />
+                  <Route
+                    path="*"
+                    element={
+                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '60vh' }}>
+                        <Box sx={{ textAlign: 'center' }}>
+                          <Typography variant="h3" color="text.secondary" sx={{ fontWeight: 700, mb: 1 }} gutterBottom>
+                            404
+                          </Typography>
+                          <Typography color="text.secondary">Page not found</Typography>
+                        </Box>
+                      </Box>
+                    }
+                  />
+                </Routes>
+              </Suspense>
+            </Box>
           </Box>
         </Box>
         <ToastContainer />

@@ -95,10 +95,10 @@ const Sidebar: React.FC<Props> = ({ width }) => {
           <CodeIcon sx={{ color: '#fff', fontSize: 20 }} />
         </Box>
         <Box>
-          <Typography variant="subtitle1" fontWeight={700} lineHeight={1.2}>
+          <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
             CodeLens
           </Typography>
-          <Typography variant="caption" color="text.secondary" lineHeight={1.2}>
+          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
             AI Code Intelligence
           </Typography>
         </Box>
@@ -110,9 +110,8 @@ const Sidebar: React.FC<Props> = ({ width }) => {
           <Box key={section.label}>
             <Typography
               variant="caption"
-              fontWeight={700}
               color="text.disabled"
-              sx={{ px: 2.5, pt: 2, pb: 0.5, display: 'block', letterSpacing: '0.08em', textTransform: 'uppercase' }}
+              sx={{ px: 2.5, pt: 2, pb: 0.5, display: 'block', letterSpacing: '0.08em', textTransform: 'uppercase', fontWeight: 700 }}
             >
               {section.label}
             </Typography>
@@ -140,7 +139,12 @@ const Sidebar: React.FC<Props> = ({ width }) => {
                       <ListItemIcon>{item.icon}</ListItemIcon>
                       <ListItemText
                         primary={item.label}
-                        primaryTypographyProps={{ fontSize: 14, fontWeight: isActive ? 600 : 400 }}
+                        sx={{
+                          '& .MuiListItemText-primary': {
+                            fontSize: 14,
+                            fontWeight: isActive ? 600 : 400,
+                          },
+                        }}
                       />
                       {isActive && (
                         <Box

@@ -141,10 +141,30 @@ class FixBugAnalyzer(BaseAnalyzer):
                 f"{feedback_str}"
             )
 
+        # ---------------------------------------------------------
+        # Model-Schema Contract Analysis
+        # ---------------------------------------------------------
+        from app.modules.search.pipeline.model_schema_contract_analysis import (
+            ContractIssueType,
+            ModelSchemaContractAnalyzer,
+            format_contract_evidence_for_llm,
+        )
+
+        contract_analyzer = ModelSchemaContractAnalyzer()
+        contract_result = contract_analyzer.analyze(context)
+        context.contract_analysis = contract_result.to_dict()
+
+        contract_fact_str = ""
+        if contract_result.is_applicable:
+            contract_fact_str = format_contract_evidence_for_llm(contract_result)
+
         # Limit the context before constructing the final LLM prompt.
         repository_context = _limit_context(
             context.llm_context or ""
         )
+
+        if contract_fact_str and contract_fact_str not in repository_context:
+            repository_context = f"{contract_fact_str}\n\n{repository_context}"
 
         user_prompt = FIX_BUG_USER_PROMPT.format(
             context=repository_context,
@@ -158,6 +178,8 @@ class FixBugAnalyzer(BaseAnalyzer):
             context_chars=len(repository_context),
             query_chars=len(query_text),
             validation_feedback_count=len(context.validation_feedback),
+            contract_applicable=contract_result.is_applicable,
+            contract_issue_type=contract_result.issue_type.value,
         )
 
         try:
@@ -191,7 +213,22 @@ class FixBugAnalyzer(BaseAnalyzer):
             analysis["analysis_status"] = str(
                 analysis.get("analysis_status") or "UNAVAILABLE"
             ).strip().upper()
+
+            # If contract analysis found insufficient evidence or ambiguity, enforce UNAVAILABLE
             if (
+                contract_result.is_applicable
+                and contract_result.issue_type in (
+                    ContractIssueType.AMBIGUOUS,
+                    ContractIssueType.INSUFFICIENT_EVIDENCE,
+                )
+                and not contract_result.verified_facts.get("field_present")
+            ):
+                analysis["analysis_status"] = "UNAVAILABLE"
+                analysis["code_change"] = None
+                analysis["suggested_code"] = ""
+                analysis["evidence_summary"] = contract_result.evidence_summary
+
+            elif (
                 analysis["analysis_status"] != "OK"
                 or not _has_concrete_evidence(analysis, context)
             ):
@@ -202,6 +239,38 @@ class FixBugAnalyzer(BaseAnalyzer):
                     analysis.get("evidence_summary")
                     or "The retrieved code does not establish a specific cause."
                 )
+
+            # Rule 8: Never automatically suggest adding a database/model field when
+            # the issue is a mapping mismatch or wrong field reference
+            if (
+                contract_result.is_applicable
+                and contract_result.field_confirmed_absent
+                and contract_result.issue_type in (
+                    ContractIssueType.FIELD_MAPPING_MISMATCH,
+                    ContractIssueType.WRONG_FIELD_REFERENCE,
+                )
+                and isinstance(analysis.get("code_change"), dict)
+            ):
+                model_fp = (
+                    contract_result.model_definition.file_path.replace("\\", "/").lower()
+                    if contract_result.model_definition
+                    else ""
+                )
+                cc_fp = str(analysis["code_change"].get("file_path") or "").replace("\\", "/").lower()
+                # If code change attempts to add fields to the database model file instead of the caller/schema
+                if model_fp and (cc_fp.endswith(model_fp) or model_fp.endswith(cc_fp)):
+                    logger.warning(
+                        "fix_bug_prevented_unsafe_model_modification",
+                        target_model=model_fp,
+                        issue_type=contract_result.issue_type.value,
+                    )
+                    analysis["code_change"] = None
+                    analysis["suggested_code"] = ""
+                    analysis["proposed_fix"] = (
+                        f"Update the {contract_result.issue_type.value.lower().replace('_', ' ')} "
+                        f"to use verified field '{contract_result.equivalent_field}' "
+                        f"instead of modifying the database model."
+                    )
 
             logger.info(
                 "fix_bug_analysis_completed",

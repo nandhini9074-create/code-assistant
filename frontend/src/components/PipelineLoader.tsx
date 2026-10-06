@@ -23,7 +23,7 @@ import LayersIcon from '@mui/icons-material/Layers';
 import MemoryIcon from '@mui/icons-material/Memory';
 import FlashOnIcon from '@mui/icons-material/FlashOn';
 import BuildIcon from '@mui/icons-material/Build';
-import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircle';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import TaskAltIcon from '@mui/icons-material/TaskAlt';
 
@@ -37,20 +37,20 @@ export interface PipelineStageInfo {
 }
 
 export const PIPELINE_STAGES: PipelineStageInfo[] = [
-  { number: 1,  name: 'Request Validation',    shortName: 'Validation',       loadingMessage: 'Validating request query parameters and repository source...',         detail: 'Verifies query format, repository target existence, and user constraints.',                         typicalDurationMs: 700  },
-  { number: 2,  name: 'Intent Classification', shortName: 'Intent',           loadingMessage: 'Classifying query intent and search strategy...',                      detail: 'Determines whether query is explain, debug, fix, search, or architectural inquiry.',               typicalDurationMs: 900  },
-  { number: 3,  name: 'Query Preprocessing',   shortName: 'Preprocessing',    loadingMessage: 'Extracting keywords, function identifiers, and syntax tokens...',       detail: 'Normalizes search terms and separates natural language from code identifiers.',                    typicalDurationMs: 800  },
-  { number: 4,  name: 'Collection Selection',  shortName: 'Collection',       loadingMessage: 'Selecting repository vector collection in Qdrant...',                   detail: 'Resolves repository name to active Qdrant vector database namespace.',                             typicalDurationMs: 700  },
-  { number: 5,  name: 'Code Retrieval',        shortName: 'Retrieval',        loadingMessage: 'Searching vector database for matching code chunks and embeddings...',  detail: 'Performs semantic vector search against indexed AST chunks and code snippets.',                    typicalDurationMs: 1600 },
-  { number: 6,  name: 'Code Identification',   shortName: 'Identification',   loadingMessage: 'Identifying primary classes, functions, and target symbols...',         detail: 'Pins exact symbol definitions and resolves any ambiguous identifier candidates.',                   typicalDurationMs: 1200 },
-  { number: 7,  name: 'Context Builder',       shortName: 'Context',          loadingMessage: 'Assembling complete context window with cross-file references...',       detail: 'Builds coherent prompt context with imports, callers, and related implementations.',                typicalDurationMs: 1000 },
-  { number: 8,  name: 'Code Analysis',         shortName: 'Analysis',         loadingMessage: 'Running deep semantic code analysis with AI model...',                  detail: 'LLM evaluates code logic, dependencies, control flows, and potential issues.',                    typicalDurationMs: 3500 },
-  { number: 9,  name: 'Evidence Validation',   shortName: 'Evidence',         loadingMessage: 'Validating analysis evidence against actual codebase facts...',         detail: 'Ensures reasoning is strictly grounded in retrieved chunks without hallucination.',                typicalDurationMs: 1200 },
-  { number: 10, name: 'Action Analysis',       shortName: 'Action Planning',  loadingMessage: 'Planning remediation actions, refactoring, and code changes...',        detail: 'Formulates concrete action plan and architectural recommendations.',                               typicalDurationMs: 1500 },
-  { number: 11, name: 'Suggestion Patch',      shortName: 'Patch Gen',        loadingMessage: 'Generating suggested code modifications and unified diffs...',           detail: 'Produces precise line-by-line diffs and code patch replacements.',                                typicalDurationMs: 2200 },
-  { number: 12, name: 'Suggestion Validation', shortName: 'Patch Validation', loadingMessage: 'Validating suggested patch syntax, integrity, and safety...',           detail: 'Checks patch consistency against original source code structure.',                                typicalDurationMs: 1000 },
-  { number: 13, name: 'Final Triage',          shortName: 'Final Triage',     loadingMessage: 'Performing safety checks, confidence scoring, and candidate ranking...', detail: 'Ranks final recommendations and verifies security guardrails.',                                    typicalDurationMs: 900  },
-  { number: 14, name: 'Response Generation',   shortName: 'Response Gen',     loadingMessage: 'Synthesizing final structured response and formatted explanation...',    detail: 'Formats answer with markdown, code highlights, and actionable suggestions.',                       typicalDurationMs: 1800 },
+  { number: 1, name: 'Request Validation', shortName: 'Validation', loadingMessage: 'Validating request query parameters and repository source...', detail: 'Verifies query format, repository target existence, and user constraints.', typicalDurationMs: 700 },
+  { number: 2, name: 'Intent Classification', shortName: 'Intent', loadingMessage: 'Classifying query intent and search strategy...', detail: 'Determines whether query is explain, debug, fix, search, or architectural inquiry.', typicalDurationMs: 900 },
+  { number: 3, name: 'Query Preprocessing', shortName: 'Preprocessing', loadingMessage: 'Extracting keywords, function identifiers, and syntax tokens...', detail: 'Normalizes search terms and separates natural language from code identifiers.', typicalDurationMs: 800 },
+  { number: 4, name: 'Collection Selection', shortName: 'Collection', loadingMessage: 'Selecting repository vector collection in Qdrant...', detail: 'Resolves repository name to active Qdrant vector database namespace.', typicalDurationMs: 700 },
+  { number: 5, name: 'Code Retrieval', shortName: 'Retrieval', loadingMessage: 'Searching vector database for matching code chunks and embeddings...', detail: 'Performs semantic vector search against indexed AST chunks and code snippets.', typicalDurationMs: 1600 },
+  { number: 6, name: 'Code Identification', shortName: 'Identification', loadingMessage: 'Identifying primary classes, functions, and target symbols...', detail: 'Pins exact symbol definitions and resolves any ambiguous identifier candidates.', typicalDurationMs: 1200 },
+  { number: 7, name: 'Context Builder', shortName: 'Context', loadingMessage: 'Assembling complete context window with cross-file references...', detail: 'Builds coherent prompt context with imports, callers, and related implementations.', typicalDurationMs: 1000 },
+  { number: 8, name: 'Code Analysis', shortName: 'Analysis', loadingMessage: 'Running deep semantic code analysis with AI model...', detail: 'LLM evaluates code logic, dependencies, control flows, and potential issues.', typicalDurationMs: 3500 },
+  { number: 9, name: 'Evidence Validation', shortName: 'Evidence', loadingMessage: 'Validating analysis evidence against actual codebase facts...', detail: 'Ensures reasoning is strictly grounded in retrieved chunks without hallucination.', typicalDurationMs: 1200 },
+  { number: 10, name: 'Action Analysis', shortName: 'Action Planning', loadingMessage: 'Planning remediation actions, refactoring, and code changes...', detail: 'Formulates concrete action plan and architectural recommendations.', typicalDurationMs: 1500 },
+  { number: 11, name: 'Suggestion Patch', shortName: 'Patch Gen', loadingMessage: 'Generating suggested code modifications and unified diffs...', detail: 'Produces precise line-by-line diffs and code patch replacements.', typicalDurationMs: 2200 },
+  { number: 12, name: 'Suggestion Validation', shortName: 'Patch Validation', loadingMessage: 'Validating suggested patch syntax, integrity, and safety...', detail: 'Checks patch consistency against original source code structure.', typicalDurationMs: 1000 },
+  { number: 13, name: 'Final Triage', shortName: 'Final Triage', loadingMessage: 'Performing safety checks, confidence scoring, and candidate ranking...', detail: 'Ranks final recommendations and verifies security guardrails.', typicalDurationMs: 900 },
+  { number: 14, name: 'Response Generation', shortName: 'Response Gen', loadingMessage: 'Synthesizing final structured response and formatted explanation...', detail: 'Formats answer with markdown, code highlights, and actionable suggestions.', typicalDurationMs: 1800 },
 ];
 
 interface PipelineLoaderProps {
@@ -59,15 +59,15 @@ interface PipelineLoaderProps {
 }
 
 const stageIcons: Record<number, React.ReactNode> = {
-  1:  <VerifiedUserIcon fontSize="small" />,
-  2:  <ExploreIcon fontSize="small" />,
-  3:  <FilterListIcon fontSize="small" />,
-  4:  <StorageIcon fontSize="small" />,
-  5:  <SearchIcon fontSize="small" />,
-  6:  <CodeIcon fontSize="small" />,
-  7:  <LayersIcon fontSize="small" />,
-  8:  <MemoryIcon fontSize="small" />,
-  9:  <VerifiedUserIcon fontSize="small" />,
+  1: <VerifiedUserIcon fontSize="small" />,
+  2: <ExploreIcon fontSize="small" />,
+  3: <FilterListIcon fontSize="small" />,
+  4: <StorageIcon fontSize="small" />,
+  5: <SearchIcon fontSize="small" />,
+  6: <CodeIcon fontSize="small" />,
+  7: <LayersIcon fontSize="small" />,
+  8: <MemoryIcon fontSize="small" />,
+  9: <VerifiedUserIcon fontSize="small" />,
   10: <FlashOnIcon fontSize="small" />,
   11: <BuildIcon fontSize="small" />,
   12: <CheckCircleOutlineIcon fontSize="small" />,
@@ -111,7 +111,7 @@ export const PipelineLoader: React.FC<PipelineLoaderProps> = ({ currentStageInde
               icon={<Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', animation: 'pulseDot 1.5s ease-in-out infinite', '@keyframes pulseDot': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.3 } }, ml: 0.5 }} />}
               sx={{ mb: 1, fontWeight: 700, fontSize: 10, letterSpacing: '0.06em' }}
             />
-            <Typography variant="h6" fontWeight={700} gutterBottom>
+            <Typography variant="h6" sx={{ fontWeight: 700, mb: 1 }} gutterBottom>
               Executing Deep Search Pipeline
             </Typography>
             <Typography variant="body2" color="text.secondary">
@@ -146,7 +146,7 @@ export const PipelineLoader: React.FC<PipelineLoaderProps> = ({ currentStageInde
             <Typography variant="caption" color="text.secondary">
               Step {activeStage.number} — {activeStage.name}
             </Typography>
-            <Typography variant="caption" color="primary.main" fontWeight={700}>
+            <Typography variant="caption" color="primary.main" sx={{ fontWeight: 700 }}>
               {progressPercent}%
             </Typography>
           </Box>
@@ -189,7 +189,7 @@ export const PipelineLoader: React.FC<PipelineLoaderProps> = ({ currentStageInde
                 size="small"
                 sx={{ fontSize: 10, fontWeight: 700, bgcolor: 'hsla(258,90%,66%,0.15)', color: 'primary.light' }}
               />
-              <Typography variant="body2" fontWeight={700}>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>
                 {activeStage.name}
               </Typography>
             </Box>
@@ -242,13 +242,13 @@ export const PipelineLoader: React.FC<PipelineLoaderProps> = ({ currentStageInde
                       borderColor: isCurrent
                         ? 'hsla(258,90%,66%,0.4)'
                         : isCompleted
-                        ? 'hsla(145,70%,50%,0.25)'
-                        : 'divider',
+                          ? 'hsla(145,70%,50%,0.25)'
+                          : 'divider',
                       bgcolor: isCurrent
                         ? 'hsla(258,90%,66%,0.08)'
                         : isCompleted
-                        ? 'hsla(145,70%,50%,0.05)'
-                        : 'transparent',
+                          ? 'hsla(145,70%,50%,0.05)'
+                          : 'transparent',
                       display: 'flex',
                       alignItems: 'flex-start',
                       gap: 1,
@@ -298,15 +298,13 @@ export const PipelineLoader: React.FC<PipelineLoaderProps> = ({ currentStageInde
 
                     {/* Content */}
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="caption" color="text.disabled" display="block" sx={{ fontSize: 10 }}>
+                      <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10, display: 'block' }}>
                         Stage {stage.number}
                       </Typography>
                       <Typography
                         variant="caption"
-                        fontWeight={isCurrent ? 700 : 500}
                         color={isCurrent ? 'primary.light' : isCompleted ? 'success.main' : 'text.secondary'}
-                        display="block"
-                        sx={{ lineHeight: 1.3 }}
+                        sx={{ lineHeight: 1.3, display: 'block', fontWeight: isCurrent ? 700 : 500 }}
                       >
                         {stage.name}
                       </Typography>

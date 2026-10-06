@@ -92,7 +92,7 @@ class ActionAnalysisStage:
             context.action_analysis = None
             return
 
-        action_type = _determine_action_type(intent)
+        action_type = _determine_action_type(intent, context)
 
         proposed_change = str(
             analysis.get("proposed_change")
@@ -158,8 +158,19 @@ class ActionAnalysisStage:
 
 def _determine_action_type(
     intent: IntentType | None,
+    context: SearchContext | None = None,
 ) -> str:
-    """Map intent to an action category."""
+    """Map intent and contract analysis to an action category."""
+    if intent == IntentType.FIX_BUG and context and context.contract_analysis:
+        ca = context.contract_analysis
+        if ca.get("is_applicable"):
+            issue_type = ca.get("issue_type")
+            if issue_type == "FIELD_MAPPING_MISMATCH":
+                return "SCHEMA_MAPPING_FIX"
+            if issue_type == "WRONG_FIELD_REFERENCE":
+                return "FIELD_REFERENCE_CORRECTION"
+            if issue_type == "MODEL_FIELD_MISSING":
+                return "MODEL_CONTRACT_REMEDIATION"
 
     action_types = {
         IntentType.ADD_FEATURE: "FEATURE_IMPLEMENTATION",

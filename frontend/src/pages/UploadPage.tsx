@@ -73,10 +73,10 @@ const UploadPage: React.FC = () => {
 
   return (
     <Box sx={{ px: { xs: 2, md: 4 }, py: 3, maxWidth: 680 }}>
-      <Typography variant="h4" fontWeight={800} gutterBottom>
+      <Typography variant="h4" sx={{ fontWeight: 800, mb: 1 }} gutterBottom>
         Upload ZIP
       </Typography>
-      <Typography variant="body2" color="text.secondary" mb={3}>
+      <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
         Upload a local ZIP archive to index and search its code.
       </Typography>
 
@@ -120,7 +120,7 @@ const UploadPage: React.FC = () => {
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, justifyContent: 'center' }}>
             <FolderZipIcon sx={{ fontSize: 40, color: 'primary.main' }} />
             <Box sx={{ textAlign: 'left' }}>
-              <Typography variant="subtitle1" fontWeight={700}>{file.name}</Typography>
+              <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>{file.name}</Typography>
               <Typography variant="caption" color="text.secondary">
                 {(file.size / 1024 / 1024).toFixed(2)} MB
               </Typography>
@@ -140,7 +140,7 @@ const UploadPage: React.FC = () => {
         ) : (
           <>
             <UploadFileIcon sx={{ fontSize: 48, color: 'text.disabled', mb: 1.5 }} />
-            <Typography variant="subtitle1" fontWeight={600} gutterBottom>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600, mb: 1 }} gutterBottom>
               Drop your ZIP file here
             </Typography>
             <Typography variant="body2" color="text.secondary">
@@ -172,7 +172,7 @@ const UploadPage: React.FC = () => {
           <CardContent>
             <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 1 }}>
               <Typography variant="body2" color="text.secondary">Uploading & indexing…</Typography>
-              <Typography variant="body2" fontWeight={700}>{progress}%</Typography>
+              <Typography variant="body2" sx={{ fontWeight: 700 }}>{progress}%</Typography>
             </Box>
             <LinearProgress variant="determinate" value={progress} />
           </CardContent>
