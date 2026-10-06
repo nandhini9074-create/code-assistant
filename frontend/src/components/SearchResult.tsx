@@ -3,16 +3,25 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { SearchResponse } from '../types';
 import CodeBlock from './CodeBlock';
-import {
-  Lightbulb,
-  Target,
-  FileCode,
-  AlertCircle,
-  GitCompare,
-  Sparkles,
-  Users,
-  CheckCircle,
-} from 'lucide-react';
+import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import Typography from '@mui/material/Typography';
+import Chip from '@mui/material/Chip';
+import Divider from '@mui/material/Divider';
+import Alert from '@mui/material/Alert';
+import Table from '@mui/material/Table';
+import TableBody from '@mui/material/TableBody';
+import TableCell from '@mui/material/TableCell';
+import TableRow from '@mui/material/TableRow';
+import LightbulbOutlinedIcon from '@mui/icons-material/LightbulbOutlined';
+import GpsFixedIcon from '@mui/icons-material/GpsFixed';
+import InsertDriveFileOutlinedIcon from '@mui/icons-material/InsertDriveFileOutlined';
+import ErrorOutlineIcon from '@mui/icons-material/ErrorOutline';
+import CompareArrowsIcon from '@mui/icons-material/CompareArrows';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import GroupsIcon from '@mui/icons-material/Groups';
+import VerifiedIcon from '@mui/icons-material/Verified';
 
 interface Props {
   response: SearchResponse;
@@ -32,10 +41,69 @@ const intentLabel: Record<string, string> = {
   GENERAL:        'General',
 };
 
+// Prose wrapper for ReactMarkdown — applies MUI-like typography via sx
+const ProseBox: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <Box
+    sx={{
+      '& p': { mb: 1, lineHeight: 1.75, color: 'text.secondary', fontSize: 14 },
+      '& h1, & h2, & h3, & h4': { fontWeight: 700, mt: 2, mb: 1 },
+      '& ul, & ol': { pl: 2.5, mb: 1 },
+      '& li': { mb: 0.5, color: 'text.secondary', fontSize: 14 },
+      '& code': {
+        fontFamily: "'JetBrains Mono', monospace",
+        fontSize: 12,
+        bgcolor: 'hsl(222,14%,17%)',
+        px: 0.75,
+        py: 0.25,
+        borderRadius: 0.5,
+        color: 'primary.light',
+      },
+      '& pre': { borderRadius: 2, overflow: 'auto', mb: 1.5 },
+      '& blockquote': {
+        borderLeft: '3px solid',
+        borderColor: 'primary.main',
+        pl: 1.5,
+        ml: 0,
+        color: 'text.secondary',
+        fontStyle: 'italic',
+      },
+      '& table': { width: '100%', borderCollapse: 'collapse', mb: 1.5 },
+      '& th, & td': {
+        p: 1,
+        border: '1px solid',
+        borderColor: 'divider',
+        fontSize: 13,
+      },
+      '& th': { background: 'hsl(222,18%,9%)', fontWeight: 700 },
+      '& strong': { color: 'text.primary', fontWeight: 700 },
+      '& a': { color: 'primary.light' },
+    }}
+  >
+    {children}
+  </Box>
+);
+
+interface SectionProps {
+  icon: React.ReactNode;
+  label: string;
+  children: React.ReactNode;
+}
+
+const ResultSection: React.FC<SectionProps> = ({ icon, label, children }) => (
+  <Box sx={{ mb: 2.5 }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75, mb: 1 }}>
+      <Box sx={{ color: 'primary.main', display: 'flex', fontSize: 14 }}>{icon}</Box>
+      <Typography variant="caption" fontWeight={700} color="text.secondary" textTransform="uppercase" letterSpacing="0.08em">
+        {label}
+      </Typography>
+    </Box>
+    {children}
+  </Box>
+);
+
 const SearchResult: React.FC<Props> = ({ response, query }) => {
   const label = intentLabel[response.intent] ?? response.intent;
 
-  /* Detect language from target or file path */
   const detectLang = (filePath?: string) => {
     if (!filePath) return 'python';
     if (filePath.endsWith('.ts') || filePath.endsWith('.tsx')) return 'typescript';
@@ -51,206 +119,213 @@ const SearchResult: React.FC<Props> = ({ response, query }) => {
   const targetFile = response.target?.file_path as string | undefined;
   const lang = detectLang(targetFile);
 
+  const cardHeader = (
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2 }}>
+      <Box>
+        <Typography variant="caption" color="text.secondary" display="block" mb={0.5}>
+          Query
+        </Typography>
+        <Typography variant="subtitle1" fontWeight={700}>
+          {query}
+        </Typography>
+      </Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 0.75 }}>
+        <Chip
+          label={label}
+          size="small"
+          variant="outlined"
+          color="primary"
+          icon={<AutoAwesomeIcon style={{ fontSize: 13 }} />}
+          sx={{ fontWeight: 700, fontSize: 11 }}
+        />
+        {response.confidence && (
+          <Typography variant="caption" color="text.secondary">
+            Confidence: {response.confidence}
+          </Typography>
+        )}
+      </Box>
+    </Box>
+  );
+
   /* Early exit */
   if (response.early_exit) {
     return (
-      <div className="result-card animate-fade">
-        <div className="result-header">
-          <div>
-            <div style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 4 }}>Query</div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>{query}</div>
-          </div>
-          <span className="result-intent-badge"><AlertCircle size={12} />{label}</span>
-        </div>
-        <div className="result-body">
-          <div className="result-section">
-            <div className="result-section-label"><AlertCircle size={11} />Notice</div>
-            <div className="result-text prose">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {String(response.early_exit.message ?? 'No further information available.')}
-              </ReactMarkdown>
-            </div>
-          </div>
-        </div>
-      </div>
+      <Card sx={{ animation: 'fadeIn 0.3s ease', '@keyframes fadeIn': { from: { opacity: 0, transform: 'translateY(8px)' }, to: { opacity: 1, transform: 'none' } } }}>
+        <CardContent>
+          {cardHeader}
+          <Divider sx={{ mb: 2 }} />
+          <Alert
+            severity="info"
+            icon={<ErrorOutlineIcon />}
+            variant="outlined"
+          >
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {String(response.early_exit.message ?? 'No further information available.')}
+            </ReactMarkdown>
+          </Alert>
+        </CardContent>
+      </Card>
     );
   }
 
   /* Ambiguous candidates */
   if (response.ambiguous_candidates.length > 0) {
     return (
-      <div className="result-card animate-fade">
-        <div className="result-header">
-          <div>
-            <div style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 4 }}>Query</div>
-            <div style={{ fontSize: 15, fontWeight: 600 }}>{query}</div>
-          </div>
-          <span className="result-intent-badge"><Users size={12} />Ambiguous</span>
-        </div>
-        <div className="result-body">
-          <div className="result-section">
-            <div className="result-section-label"><Users size={11} />Multiple Matches Found</div>
-            <p className="result-text" style={{ marginBottom: 12 }}>
+      <Card sx={{ animation: 'fadeIn 0.3s ease', '@keyframes fadeIn': { from: { opacity: 0, transform: 'translateY(8px)' }, to: { opacity: 1, transform: 'none' } } }}>
+        <CardContent>
+          {cardHeader}
+          <Divider sx={{ mb: 2 }} />
+          <ResultSection icon={<GroupsIcon fontSize="small" />} label="Multiple Matches Found">
+            <Typography variant="body2" color="text.secondary" mb={1.5}>
               The symbol <strong>{response.ambiguous_candidates[0].name}</strong> exists in multiple files.
               Please refine your query with more context:
-            </p>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               {response.ambiguous_candidates.map((c, i) => (
-                <div
-                  key={i}
-                  className="card card-sm"
-                  style={{ background: 'var(--color-bg-elevated)', borderRadius: 'var(--radius-md)' }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span className="result-target-file"><FileCode size={12} />{c.file_path}</span>
-                    {c.score != null && (
-                      <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                        score: {c.score.toFixed(3)}
-                      </span>
+                <Card key={i} variant="outlined" sx={{ bgcolor: 'hsl(222,14%,17%)' }}>
+                  <CardContent sx={{ py: 1, '&:last-child': { pb: 1 } }}>
+                    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                        <InsertDriveFileOutlinedIcon sx={{ fontSize: 14, color: 'primary.main' }} />
+                        <Typography variant="caption" fontFamily="'JetBrains Mono', monospace" color="text.secondary">
+                          {c.file_path}
+                        </Typography>
+                      </Box>
+                      {c.score != null && (
+                        <Typography variant="caption" color="text.disabled">
+                          score: {c.score.toFixed(3)}
+                        </Typography>
+                      )}
+                    </Box>
+                    {c.class_name && (
+                      <Typography variant="caption" color="text.secondary" display="block" mt={0.5}>
+                        Class: {c.class_name}
+                      </Typography>
                     )}
-                  </div>
-                  {c.class_name && (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 4 }}>
-                      Class: {c.class_name}
-                    </div>
-                  )}
-                  {c.start_line != null && (
-                    <div style={{ fontSize: 12, color: 'var(--color-text-muted)', marginTop: 2 }}>
-                      Lines {c.start_line}–{c.end_line}
-                    </div>
-                  )}
-                </div>
+                    {c.start_line != null && (
+                      <Typography variant="caption" color="text.secondary" display="block">
+                        Lines {c.start_line}–{c.end_line}
+                      </Typography>
+                    )}
+                  </CardContent>
+                </Card>
               ))}
-            </div>
-          </div>
-        </div>
-      </div>
+            </Box>
+          </ResultSection>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <div className="result-card animate-fade">
-      {/* Header */}
-      <div className="result-header">
-        <div>
-          <div style={{ fontSize: 13, color: 'var(--color-text-muted)', marginBottom: 4 }}>Query</div>
-          <div style={{ fontSize: 15, fontWeight: 600 }}>{query}</div>
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 8 }}>
-          <span className="result-intent-badge"><Sparkles size={12} />{label}</span>
-          {response.confidence && (
-            <span style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-              Confidence: {response.confidence}
-            </span>
-          )}
-        </div>
-      </div>
+    <Card
+      sx={{
+        animation: 'fadeIn 0.3s ease',
+        '@keyframes fadeIn': { from: { opacity: 0, transform: 'translateY(8px)' }, to: { opacity: 1, transform: 'none' } },
+      }}
+    >
+      <CardContent>
+        {cardHeader}
+        <Divider sx={{ mb: 2 }} />
 
-      <div className="result-body">
         {/* Target */}
         {response.target && (
-          <div className="result-section">
-            <div className="result-section-label"><Target size={11} />Target</div>
-            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <ResultSection icon={<GpsFixedIcon fontSize="small" />} label="Target">
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
               {targetFile && (
-                <span className="result-target-file"><FileCode size={12} />{targetFile}</span>
+                <Chip
+                  icon={<InsertDriveFileOutlinedIcon />}
+                  label={targetFile}
+                  size="small"
+                  variant="outlined"
+                  sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}
+                />
               )}
               {response.target.name && (
-                <span className="result-target-file" style={{ color: 'var(--color-text-accent)' }}>
-                  {String(response.target.name)}
-                </span>
+                <Chip
+                  label={String(response.target.name)}
+                  size="small"
+                  color="primary"
+                  variant="outlined"
+                  sx={{ fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}
+                />
               )}
               {response.target.start_line != null && (
-                <span style={{ fontSize: 12, color: 'var(--color-text-muted)', alignSelf: 'center' }}>
+                <Typography variant="caption" color="text.secondary" alignSelf="center">
                   L{String(response.target.start_line)}–{String(response.target.end_line)}
-                </span>
+                </Typography>
               )}
-            </div>
-          </div>
+            </Box>
+          </ResultSection>
         )}
 
-        {/* Formatted output (main LLM answer) */}
+        {/* Analysis */}
         {response.formatted_output && (
-          <div className="result-section">
-            <div className="result-section-label"><Lightbulb size={11} />Analysis</div>
-            <div className="result-text prose">
+          <ResultSection icon={<LightbulbOutlinedIcon fontSize="small" />} label="Analysis">
+            <ProseBox>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{response.formatted_output}</ReactMarkdown>
-            </div>
-          </div>
+            </ProseBox>
+          </ResultSection>
         )}
 
         {/* Suggestion */}
         {response.suggestion && !response.formatted_output && (
-          <div className="result-section">
-            <div className="result-section-label"><Lightbulb size={11} />Suggestion</div>
-            <div className="result-text prose">
+          <ResultSection icon={<LightbulbOutlinedIcon fontSize="small" />} label="Suggestion">
+            <ProseBox>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{response.suggestion}</ReactMarkdown>
-            </div>
-          </div>
+            </ProseBox>
+          </ResultSection>
         )}
 
         {/* Current behavior */}
         {response.current_behavior && (
-          <div className="result-section">
-            <div className="result-section-label"><AlertCircle size={11} />Current Behavior</div>
-            <div className="result-text prose">
+          <ResultSection icon={<ErrorOutlineIcon fontSize="small" />} label="Current Behavior">
+            <ProseBox>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{response.current_behavior}</ReactMarkdown>
-            </div>
-          </div>
+            </ProseBox>
+          </ResultSection>
         )}
 
         {/* Proposed change */}
         {response.proposed_change && (
-          <div className="result-section">
-            <div className="result-section-label"><GitCompare size={11} />Proposed Change</div>
-            <div className="result-text prose">
+          <ResultSection icon={<CompareArrowsIcon fontSize="small" />} label="Proposed Change">
+            <ProseBox>
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{response.proposed_change}</ReactMarkdown>
-            </div>
-          </div>
+            </ProseBox>
+          </ResultSection>
         )}
 
         {/* Suggested code */}
         {response.suggested_code && (
-          <div className="result-section">
-            <div className="result-section-label"><FileCode size={11} />Suggested Code</div>
-            <CodeBlock
-              code={response.suggested_code}
-              language={lang}
-              filename={targetFile}
-            />
-          </div>
+          <ResultSection icon={<InsertDriveFileOutlinedIcon fontSize="small" />} label="Suggested Code">
+            <CodeBlock code={response.suggested_code} language={lang} filename={targetFile} />
+          </ResultSection>
         )}
 
         {/* Suggested patch */}
         {response.suggested_patch && !response.suggested_code && (
-          <div className="result-section">
-            <div className="result-section-label"><GitCompare size={11} />Suggested Patch</div>
-            <CodeBlock
-              code={response.suggested_patch}
-              language="diff"
-              filename="patch.diff"
-            />
-          </div>
+          <ResultSection icon={<CompareArrowsIcon fontSize="small" />} label="Suggested Patch">
+            <CodeBlock code={response.suggested_patch} language="diff" filename="patch.diff" />
+          </ResultSection>
         )}
 
         {/* Patch validation */}
         {response.patch_validation && (
-          <div className="result-section">
-            <div className="result-section-label">
-              <CheckCircle size={11} />Patch Validation
-            </div>
-            <div className="kv-list">
-              {Object.entries(response.patch_validation).map(([k, v]) => (
-                <div className="kv-row" key={k}>
-                  <span className="kv-key">{k}</span>
-                  <span className="kv-value">{String(v)}</span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <ResultSection icon={<VerifiedIcon fontSize="small" />} label="Patch Validation">
+            <Table size="small" sx={{ '& td': { border: 'none', py: 0.5, px: 0 } }}>
+              <TableBody>
+                {Object.entries(response.patch_validation).map(([k, v]) => (
+                  <TableRow key={k}>
+                    <TableCell><Typography variant="caption" color="text.secondary">{k}</Typography></TableCell>
+                    <TableCell align="right"><Typography variant="caption" fontWeight={600}>{String(v)}</Typography></TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </ResultSection>
         )}
-      </div>
-    </div>
+      </CardContent>
+    </Card>
   );
 };
 

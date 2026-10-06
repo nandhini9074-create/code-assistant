@@ -1,39 +1,57 @@
 import React from 'react';
-import { CheckCircle, AlertCircle, AlertTriangle, Info, X } from 'lucide-react';
+import Snackbar from '@mui/material/Snackbar';
+import Alert from '@mui/material/Alert';
+import AlertTitle from '@mui/material/AlertTitle';
+import Stack from '@mui/material/Stack';
 import { useToast } from '../context/ToastContext';
 import type { Toast } from '../types';
 
-const ICONS: Record<Toast['type'], React.ReactNode> = {
-  success: <CheckCircle size={16} color="var(--color-success)" />,
-  error:   <AlertCircle  size={16} color="var(--color-error)" />,
-  warning: <AlertTriangle size={16} color="var(--color-warning)" />,
-  info:    <Info          size={16} color="var(--color-accent)" />,
+const severityMap: Record<Toast['type'], 'success' | 'error' | 'warning' | 'info'> = {
+  success: 'success',
+  error:   'error',
+  warning: 'warning',
+  info:    'info',
 };
 
 const ToastContainer: React.FC = () => {
   const { toasts, removeToast } = useToast();
 
   return (
-    <div className="toast-container" role="region" aria-label="Notifications">
+    <Stack
+      spacing={1}
+      sx={{
+        position: 'fixed',
+        bottom: 24,
+        right: 24,
+        zIndex: (theme) => theme.zIndex.snackbar,
+        maxWidth: 380,
+        width: '100%',
+      }}
+      role="region"
+      aria-label="Notifications"
+    >
       {toasts.map((t) => (
-        <div key={t.id} className={`toast ${t.type}`} role="alert">
-          <span style={{ marginTop: 1 }}>{ICONS[t.type]}</span>
-          <div style={{ flex: 1 }}>
-            <div className="toast-title">{t.title}</div>
-            {t.message && <div className="toast-message">{t.message}</div>}
-          </div>
-          <button
-            id={`toast-close-${t.id}`}
-            className="btn btn-ghost btn-icon"
-            onClick={() => removeToast(t.id)}
-            aria-label="Dismiss notification"
-            style={{ padding: 2 }}
+        <Snackbar
+          key={t.id}
+          open
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+          sx={{ position: 'relative', bottom: 'auto', right: 'auto', transform: 'none' }}
+        >
+          <Alert
+            id={`toast-${t.id}`}
+            severity={severityMap[t.type]}
+            onClose={() => removeToast(t.id)}
+            variant="filled"
+            closeText="Dismiss notification"
+            sx={{ width: '100%', boxShadow: '0 4px 16px rgba(0,0,0,.5)' }}
+            role="alert"
           >
-            <X size={14} />
-          </button>
-        </div>
+            {t.title && <AlertTitle sx={{ fontWeight: 700 }}>{t.title}</AlertTitle>}
+            {t.message}
+          </Alert>
+        </Snackbar>
       ))}
-    </div>
+    </Stack>
   );
 };
 

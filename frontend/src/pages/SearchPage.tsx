@@ -1,5 +1,21 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import { Search, GitBranch, Archive, Loader2, ShieldCheck } from 'lucide-react';
+import Box from '@mui/material/Box';
+import Typography from '@mui/material/Typography';
+import Button from '@mui/material/Button';
+import ButtonGroup from '@mui/material/ButtonGroup';
+import TextField from '@mui/material/TextField';
+import InputAdornment from '@mui/material/InputAdornment';
+import Chip from '@mui/material/Chip';
+import CircularProgress from '@mui/material/CircularProgress';
+import Paper from '@mui/material/Paper';
+import Card from '@mui/material/Card';
+import CardActionArea from '@mui/material/CardActionArea';
+import CardContent from '@mui/material/CardContent';
+import Divider from '@mui/material/Divider';
+import SearchIcon from '@mui/icons-material/Search';
+import AccountTreeIcon from '@mui/icons-material/AccountTree';
+import FolderZipIcon from '@mui/icons-material/FolderZip';
+import ShieldIcon from '@mui/icons-material/Shield';
 import { searchApi } from '../api/client';
 import type { SearchRequest, SearchResponse, SourceType, SearchHistoryItem } from '../types';
 import { useToast } from '../context/ToastContext';
@@ -24,7 +40,6 @@ const SearchPage: React.FC = () => {
   const [history, setHistory] = useState<SearchHistoryItem[]>([]);
   const [activeResult, setActiveResult] = useState<SearchHistoryItem | null>(null);
 
-  // Pipeline stage progression state
   const [currentStageIndex, setCurrentStageIndex] = useState(0);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const stageTimeoutRef = useRef<number | null>(null);
@@ -41,9 +56,7 @@ const SearchPage: React.FC = () => {
     }
   }, []);
 
-  useEffect(() => {
-    return () => clearTimers();
-  }, [clearTimers]);
+  useEffect(() => { return () => clearTimers(); }, [clearTimers]);
 
   const handleSearch = useCallback(async (searchQuery = query) => {
     if (!searchQuery.trim()) return addToast('warning', 'Query required', 'Please enter a search query.');
@@ -54,7 +67,6 @@ const SearchPage: React.FC = () => {
       query: searchQuery.trim(),
     };
 
-    // Reset & start pipeline tracking
     clearTimers();
     setCurrentStageIndex(0);
     setElapsedSeconds(0);
@@ -105,108 +117,130 @@ const SearchPage: React.FC = () => {
   };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
+    <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: '100%' }}>
       {/* Hero search bar */}
-      <div className="search-bar-wrap">
-        <h1 className="search-hero-title">Search Your Codebase</h1>
-        <p className="search-hero-sub">
+      <Paper
+        elevation={0}
+        sx={{
+          px: { xs: 2, md: 4 },
+          py: 3,
+          bgcolor: 'hsl(222, 18%, 9%)',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
+          position: 'sticky',
+          top: 0,
+          zIndex: 10,
+        }}
+      >
+        <Typography variant="h4" fontWeight={800} gutterBottom>
+          Search Your Codebase
+        </Typography>
+        <Typography variant="body2" color="text.secondary" mb={2.5}>
           Ask questions in natural language — CodeLens retrieves, analyzes, and explains relevant code.
-        </p>
+        </Typography>
 
-        {/* Source type pills */}
-        <div className="source-pills" role="group" aria-label="Source type">
-          <button
+        {/* Source type toggle */}
+        <ButtonGroup size="small" variant="outlined" aria-label="Source type" sx={{ mb: 2 }}>
+          <Button
             id="source-pill-git"
-            className={`source-pill ${sourceType === 'git' ? 'active' : ''}`}
+            startIcon={<AccountTreeIcon />}
             onClick={() => setSourceType('git')}
+            variant={sourceType === 'git' ? 'contained' : 'outlined'}
+            sx={{ fontWeight: 600 }}
           >
-            <GitBranch size={13} /> GitHub URL
-          </button>
-          <button
+            GitHub URL
+          </Button>
+          <Button
             id="source-pill-zip"
-            className={`source-pill ${sourceType === 'zip' ? 'active' : ''}`}
+            startIcon={<FolderZipIcon />}
             onClick={() => setSourceType('zip')}
+            variant={sourceType === 'zip' ? 'contained' : 'outlined'}
+            sx={{ fontWeight: 600 }}
           >
-            <Archive size={13} /> ZIP Path
-          </button>
-        </div>
+            ZIP Path
+          </Button>
+        </ButtonGroup>
 
         {/* Location input */}
-        <div className="form-group" style={{ marginBottom: 10 }}>
-          <input
-            id="search-location"
-            className="form-input"
-            placeholder={
-              sourceType === 'git'
-                ? 'https://github.com/owner/repo'
-                : 'local://repo-name.zip'
-            }
-            value={location}
-            onChange={(e) => setLocation(e.target.value)}
-            aria-label="Repository location"
-          />
-        </div>
+        <TextField
+          id="search-location"
+          fullWidth
+          placeholder={
+            sourceType === 'git'
+              ? 'https://github.com/owner/repo'
+              : 'local://repo-name.zip'
+          }
+          value={location}
+          onChange={(e) => setLocation(e.target.value)}
+          aria-label="Repository location"
+          size="small"
+          sx={{ mb: 1.5 }}
+        />
 
-        {/* Query input + send button */}
-        <div className="search-input-row">
-          <div className="search-input-group">
-            <Search size={17} className="search-input-icon" />
-            <input
-              id="search-query"
-              className="search-input"
-              placeholder="Ask anything about your code…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              aria-label="Search query"
-              disabled={loading}
-            />
-          </div>
-          <button
+        {/* Query + search buttons */}
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <TextField
+            id="search-query"
+            fullWidth
+            placeholder="Ask anything about your code…"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={handleKeyDown}
+            aria-label="Search query"
+            disabled={loading}
+            size="small"
+            InputProps={{
+              startAdornment: (
+                <InputAdornment position="start">
+                  <SearchIcon fontSize="small" sx={{ color: 'text.secondary' }} />
+                </InputAdornment>
+              ),
+            }}
+          />
+          <Button
             id="search-submit"
-            className="btn btn-primary btn-lg"
+            variant="contained"
             onClick={() => handleSearch()}
             disabled={loading}
             aria-label="Run search"
+            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SearchIcon />}
+            sx={{ whiteSpace: 'nowrap', minWidth: 120 }}
           >
-            {loading ? <Loader2 size={16} className="animate-pulse" /> : <Search size={16} />}
             {loading ? 'Searching…' : 'Search'}
-          </button>
-          <button
+          </Button>
+          <Button
             id="npm-audit-submit"
-            className="btn btn-secondary btn-lg"
+            variant="outlined"
             onClick={() => handleSearch('Run npm audit')}
             disabled={loading}
             title="Audit project dependencies"
+            startIcon={<ShieldIcon />}
+            sx={{ whiteSpace: 'nowrap' }}
           >
-            <ShieldCheck size={16} />
             NPM Audit
-          </button>
-        </div>
+          </Button>
+        </Box>
 
         {/* Example queries */}
         {!activeResult && (
-          <div style={{ marginTop: 14, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mt: 1.5 }}>
             {EXAMPLE_QUERIES.map((q) => (
-              <button
+              <Chip
                 key={q}
-                className="btn btn-ghost btn-sm"
-                style={{
-                  fontSize: 12,
-                  border: '1px solid var(--color-border)',
-                  borderRadius: 999,
-                }}
+                label={q}
+                size="small"
+                variant="outlined"
+                clickable
                 onClick={() => setQuery(q)}
-              >
-                {q}
-              </button>
+                sx={{ fontSize: 11, '&:hover': { borderColor: 'primary.main', color: 'primary.light' } }}
+              />
             ))}
-          </div>
+          </Box>
         )}
-      </div>
+      </Paper>
 
       {/* Results area */}
-      <div className="page" style={{ maxWidth: '100%' }}>
+      <Box sx={{ px: { xs: 2, md: 4 }, py: 3, flex: 1 }}>
         {loading && (
           <PipelineLoader
             currentStageIndex={currentStageIndex}
@@ -218,49 +252,78 @@ const SearchPage: React.FC = () => {
           <SearchResult response={activeResult.response} query={activeResult.query} />
         )}
 
-        {/* History sidebar */}
+        {/* History */}
         {!loading && history.length > 1 && (
-          <div style={{ marginTop: 28 }}>
-            <h2 style={{ fontSize: 14, fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: 12 }}>
+          <Box sx={{ mt: 3.5 }}>
+            <Typography variant="caption" fontWeight={700} color="text.secondary" textTransform="uppercase" letterSpacing="0.08em" display="block" mb={1.5}>
               Previous Searches
-            </h2>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            </Typography>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
               {history.slice(1).map((item) => (
-                <button
+                <Card
                   key={item.id}
                   id={`history-${item.id}`}
-                  className="card card-sm"
-                  style={{
+                  variant="outlined"
+                  sx={{
                     cursor: 'pointer',
-                    textAlign: 'left',
-                    background: activeResult?.id === item.id ? 'var(--color-bg-elevated)' : undefined,
-                    border: activeResult?.id === item.id ? '1px solid var(--color-accent)' : undefined,
+                    borderColor: activeResult?.id === item.id ? 'primary.main' : 'divider',
+                    bgcolor: activeResult?.id === item.id ? 'hsla(258,90%,66%,0.07)' : 'transparent',
                   }}
-                  onClick={() => setActiveResult(item)}
                 >
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{item.query}</div>
-                  <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                    {item.source.location} · {new Date(item.timestamp).toLocaleTimeString()}
-                  </div>
-                </button>
+                  <CardActionArea onClick={() => setActiveResult(item)}>
+                    <CardContent sx={{ py: 1.25, '&:last-child': { pb: 1.25 } }}>
+                      <Typography variant="body2" fontWeight={600} noWrap>{item.query}</Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {item.source.location} · {new Date(item.timestamp).toLocaleTimeString()}
+                      </Typography>
+                    </CardContent>
+                  </CardActionArea>
+                </Card>
               ))}
-            </div>
-          </div>
+            </Box>
+          </Box>
         )}
 
         {/* Empty state */}
         {!loading && history.length === 0 && (
-          <div className="empty-state" style={{ paddingTop: 80 }}>
-            <div className="empty-state-icon"><Search size={48} /></div>
-            <div className="empty-state-title">Ready to explore</div>
-            <div className="empty-state-sub">
-              Enter a repository URL and a natural-language question to get started.
-              CodeLens will retrieve relevant code and provide AI-powered analysis.
-            </div>
-          </div>
+          <Box
+            sx={{
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              minHeight: '40vh',
+              gap: 2,
+              textAlign: 'center',
+            }}
+          >
+            <Box
+              sx={{
+                width: 80,
+                height: 80,
+                borderRadius: '50%',
+                bgcolor: 'hsla(258,90%,66%,0.1)',
+                border: '1px solid hsla(258,90%,66%,0.2)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              <SearchIcon sx={{ fontSize: 36, color: 'primary.main' }} />
+            </Box>
+            <Box>
+              <Typography variant="h6" fontWeight={700} gutterBottom>
+                Ready to explore
+              </Typography>
+              <Typography variant="body2" color="text.secondary" maxWidth={440}>
+                Enter a repository URL and a natural-language question to get started.
+                CodeLens will retrieve relevant code and provide AI-powered analysis.
+              </Typography>
+            </Box>
+          </Box>
         )}
-      </div>
-    </div>
+      </Box>
+    </Box>
   );
 };
 

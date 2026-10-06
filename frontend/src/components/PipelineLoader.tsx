@@ -1,23 +1,31 @@
 import React, { useState } from 'react';
-import {
-  ShieldCheck,
-  Compass,
-  Filter,
-  Database,
-  Search,
-  FileCode,
-  Layers,
-  Cpu,
-  Zap,
-  Wrench,
-  CheckCircle2,
-  Sparkles,
-  Check,
-  Loader2,
-  Clock,
-  ChevronDown,
-  ChevronUp,
-} from 'lucide-react';
+import Box from '@mui/material/Box';
+import Card from '@mui/material/Card';
+import CardContent from '@mui/material/CardContent';
+import Typography from '@mui/material/Typography';
+import LinearProgress from '@mui/material/LinearProgress';
+import Chip from '@mui/material/Chip';
+import Button from '@mui/material/Button';
+import Collapse from '@mui/material/Collapse';
+import Grid from '@mui/material/Grid';
+import CircularProgress from '@mui/material/CircularProgress';
+import CheckIcon from '@mui/icons-material/Check';
+import ExpandMoreIcon from '@mui/icons-material/ExpandMore';
+import ExpandLessIcon from '@mui/icons-material/ExpandLess';
+import AccessTimeIcon from '@mui/icons-material/AccessTime';
+import VerifiedUserIcon from '@mui/icons-material/VerifiedUser';
+import ExploreIcon from '@mui/icons-material/Explore';
+import FilterListIcon from '@mui/icons-material/FilterList';
+import StorageIcon from '@mui/icons-material/Storage';
+import SearchIcon from '@mui/icons-material/Search';
+import CodeIcon from '@mui/icons-material/Code';
+import LayersIcon from '@mui/icons-material/Layers';
+import MemoryIcon from '@mui/icons-material/Memory';
+import FlashOnIcon from '@mui/icons-material/FlashOn';
+import BuildIcon from '@mui/icons-material/Build';
+import CheckCircleOutlineIcon from '@mui/icons-material/CheckCircleOutline';
+import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
+import TaskAltIcon from '@mui/icons-material/TaskAlt';
 
 export interface PipelineStageInfo {
   number: number;
@@ -29,118 +37,20 @@ export interface PipelineStageInfo {
 }
 
 export const PIPELINE_STAGES: PipelineStageInfo[] = [
-  {
-    number: 1,
-    name: 'Request Validation',
-    shortName: 'Validation',
-    loadingMessage: 'Validating request query parameters and repository source...',
-    detail: 'Verifies query format, repository target existence, and user constraints.',
-    typicalDurationMs: 700,
-  },
-  {
-    number: 2,
-    name: 'Intent Classification',
-    shortName: 'Intent',
-    loadingMessage: 'Classifying query intent and search strategy...',
-    detail: 'Determines whether query is explain, debug, fix, search, or architectural inquiry.',
-    typicalDurationMs: 900,
-  },
-  {
-    number: 3,
-    name: 'Query Preprocessing',
-    shortName: 'Preprocessing',
-    loadingMessage: 'Extracting keywords, function identifiers, and syntax tokens...',
-    detail: 'Normalizes search terms and separates natural language from code identifiers.',
-    typicalDurationMs: 800,
-  },
-  {
-    number: 4,
-    name: 'Collection Selection',
-    shortName: 'Collection',
-    loadingMessage: 'Selecting repository vector collection in Qdrant...',
-    detail: 'Resolves repository name to active Qdrant vector database namespace.',
-    typicalDurationMs: 700,
-  },
-  {
-    number: 5,
-    name: 'Code Retrieval',
-    shortName: 'Retrieval',
-    loadingMessage: 'Searching vector database for matching code chunks and embeddings...',
-    detail: 'Performs semantic vector search against indexed AST chunks and code snippets.',
-    typicalDurationMs: 1600,
-  },
-  {
-    number: 6,
-    name: 'Code Identification',
-    shortName: 'Identification',
-    loadingMessage: 'Identifying primary classes, functions, and target symbols...',
-    detail: 'Pins exact symbol definitions and resolves any ambiguous identifier candidates.',
-    typicalDurationMs: 1200,
-  },
-  {
-    number: 7,
-    name: 'Context Builder',
-    shortName: 'Context',
-    loadingMessage: 'Assembling complete context window with cross-file references...',
-    detail: 'Builds coherent prompt context with imports, callers, and related implementations.',
-    typicalDurationMs: 1000,
-  },
-  {
-    number: 8,
-    name: 'Code Analysis',
-    shortName: 'Analysis',
-    loadingMessage: 'Running deep semantic code analysis with AI model...',
-    detail: 'LLM evaluates code logic, dependencies, control flows, and potential issues.',
-    typicalDurationMs: 3500,
-  },
-  {
-    number: 9,
-    name: 'Evidence Validation',
-    shortName: 'Evidence',
-    loadingMessage: 'Validating analysis evidence against actual codebase facts...',
-    detail: 'Ensures reasoning is strictly grounded in retrieved chunks without hallucination.',
-    typicalDurationMs: 1200,
-  },
-  {
-    number: 10,
-    name: 'Action Analysis',
-    shortName: 'Action Planning',
-    loadingMessage: 'Planning remediation actions, refactoring, and code changes...',
-    detail: 'Formulates concrete action plan and architectural recommendations.',
-    typicalDurationMs: 1500,
-  },
-  {
-    number: 11,
-    name: 'Suggestion Patch',
-    shortName: 'Patch Gen',
-    loadingMessage: 'Generating suggested code modifications and unified diffs...',
-    detail: 'Produces precise line-by-line diffs and code patch replacements.',
-    typicalDurationMs: 2200,
-  },
-  {
-    number: 12,
-    name: 'Suggestion Validation',
-    shortName: 'Patch Validation',
-    loadingMessage: 'Validating suggested patch syntax, integrity, and safety...',
-    detail: 'Checks patch consistency against original source code structure.',
-    typicalDurationMs: 1000,
-  },
-  {
-    number: 13,
-    name: 'Final Triage',
-    shortName: 'Final Triage',
-    loadingMessage: 'Performing safety checks, confidence scoring, and candidate ranking...',
-    detail: 'Ranks final recommendations and verifies security guardrails.',
-    typicalDurationMs: 900,
-  },
-  {
-    number: 14,
-    name: 'Response Generation',
-    shortName: 'Response Gen',
-    loadingMessage: 'Synthesizing final structured response and formatted explanation...',
-    detail: 'Formats answer with markdown, code highlights, and actionable suggestions.',
-    typicalDurationMs: 1800,
-  },
+  { number: 1,  name: 'Request Validation',    shortName: 'Validation',       loadingMessage: 'Validating request query parameters and repository source...',         detail: 'Verifies query format, repository target existence, and user constraints.',                         typicalDurationMs: 700  },
+  { number: 2,  name: 'Intent Classification', shortName: 'Intent',           loadingMessage: 'Classifying query intent and search strategy...',                      detail: 'Determines whether query is explain, debug, fix, search, or architectural inquiry.',               typicalDurationMs: 900  },
+  { number: 3,  name: 'Query Preprocessing',   shortName: 'Preprocessing',    loadingMessage: 'Extracting keywords, function identifiers, and syntax tokens...',       detail: 'Normalizes search terms and separates natural language from code identifiers.',                    typicalDurationMs: 800  },
+  { number: 4,  name: 'Collection Selection',  shortName: 'Collection',       loadingMessage: 'Selecting repository vector collection in Qdrant...',                   detail: 'Resolves repository name to active Qdrant vector database namespace.',                             typicalDurationMs: 700  },
+  { number: 5,  name: 'Code Retrieval',        shortName: 'Retrieval',        loadingMessage: 'Searching vector database for matching code chunks and embeddings...',  detail: 'Performs semantic vector search against indexed AST chunks and code snippets.',                    typicalDurationMs: 1600 },
+  { number: 6,  name: 'Code Identification',   shortName: 'Identification',   loadingMessage: 'Identifying primary classes, functions, and target symbols...',         detail: 'Pins exact symbol definitions and resolves any ambiguous identifier candidates.',                   typicalDurationMs: 1200 },
+  { number: 7,  name: 'Context Builder',       shortName: 'Context',          loadingMessage: 'Assembling complete context window with cross-file references...',       detail: 'Builds coherent prompt context with imports, callers, and related implementations.',                typicalDurationMs: 1000 },
+  { number: 8,  name: 'Code Analysis',         shortName: 'Analysis',         loadingMessage: 'Running deep semantic code analysis with AI model...',                  detail: 'LLM evaluates code logic, dependencies, control flows, and potential issues.',                    typicalDurationMs: 3500 },
+  { number: 9,  name: 'Evidence Validation',   shortName: 'Evidence',         loadingMessage: 'Validating analysis evidence against actual codebase facts...',         detail: 'Ensures reasoning is strictly grounded in retrieved chunks without hallucination.',                typicalDurationMs: 1200 },
+  { number: 10, name: 'Action Analysis',       shortName: 'Action Planning',  loadingMessage: 'Planning remediation actions, refactoring, and code changes...',        detail: 'Formulates concrete action plan and architectural recommendations.',                               typicalDurationMs: 1500 },
+  { number: 11, name: 'Suggestion Patch',      shortName: 'Patch Gen',        loadingMessage: 'Generating suggested code modifications and unified diffs...',           detail: 'Produces precise line-by-line diffs and code patch replacements.',                                typicalDurationMs: 2200 },
+  { number: 12, name: 'Suggestion Validation', shortName: 'Patch Validation', loadingMessage: 'Validating suggested patch syntax, integrity, and safety...',           detail: 'Checks patch consistency against original source code structure.',                                typicalDurationMs: 1000 },
+  { number: 13, name: 'Final Triage',          shortName: 'Final Triage',     loadingMessage: 'Performing safety checks, confidence scoring, and candidate ranking...', detail: 'Ranks final recommendations and verifies security guardrails.',                                    typicalDurationMs: 900  },
+  { number: 14, name: 'Response Generation',   shortName: 'Response Gen',     loadingMessage: 'Synthesizing final structured response and formatted explanation...',    detail: 'Formats answer with markdown, code highlights, and actionable suggestions.',                       typicalDurationMs: 1800 },
 ];
 
 interface PipelineLoaderProps {
@@ -148,198 +58,270 @@ interface PipelineLoaderProps {
   elapsedSeconds: number;
 }
 
-const getStageIcon = (stageNumber: number, size = 16) => {
-  switch (stageNumber) {
-    case 1:
-      return <ShieldCheck size={size} />;
-    case 2:
-      return <Compass size={size} />;
-    case 3:
-      return <Filter size={size} />;
-    case 4:
-      return <Database size={size} />;
-    case 5:
-      return <Search size={size} />;
-    case 6:
-      return <FileCode size={size} />;
-    case 7:
-      return <Layers size={size} />;
-    case 8:
-      return <Cpu size={size} />;
-    case 9:
-      return <ShieldCheck size={size} />;
-    case 10:
-      return <Zap size={size} />;
-    case 11:
-      return <Wrench size={size} />;
-    case 12:
-      return <CheckCircle2 size={size} />;
-    case 13:
-      return <Sparkles size={size} />;
-    case 14:
-      return <Check size={size} />;
-    default:
-      return <Loader2 size={size} />;
-  }
+const stageIcons: Record<number, React.ReactNode> = {
+  1:  <VerifiedUserIcon fontSize="small" />,
+  2:  <ExploreIcon fontSize="small" />,
+  3:  <FilterListIcon fontSize="small" />,
+  4:  <StorageIcon fontSize="small" />,
+  5:  <SearchIcon fontSize="small" />,
+  6:  <CodeIcon fontSize="small" />,
+  7:  <LayersIcon fontSize="small" />,
+  8:  <MemoryIcon fontSize="small" />,
+  9:  <VerifiedUserIcon fontSize="small" />,
+  10: <FlashOnIcon fontSize="small" />,
+  11: <BuildIcon fontSize="small" />,
+  12: <CheckCircleOutlineIcon fontSize="small" />,
+  13: <AutoAwesomeIcon fontSize="small" />,
+  14: <TaskAltIcon fontSize="small" />,
 };
 
-export const PipelineLoader: React.FC<PipelineLoaderProps> = ({
-  currentStageIndex,
-  elapsedSeconds,
-}) => {
+export const PipelineLoader: React.FC<PipelineLoaderProps> = ({ currentStageIndex, elapsedSeconds }) => {
   const [showAllStages, setShowAllStages] = useState(true);
 
   const totalStages = PIPELINE_STAGES.length;
   const clampedIndex = Math.min(Math.max(currentStageIndex, 0), totalStages - 1);
   const activeStage = PIPELINE_STAGES[clampedIndex];
-  const progressPercent = Math.min(
-    Math.round(((clampedIndex + 0.6) / totalStages) * 100),
-    98
-  );
+  const progressPercent = Math.min(Math.round(((clampedIndex + 0.6) / totalStages) * 100), 98);
 
   return (
-    <div className="pipeline-loader-card" role="region" aria-label="Search pipeline progress">
-      {/* Glow highlight backdrop */}
-      <div className="pipeline-loader-glow" />
+    <Card
+      role="region"
+      aria-label="Search pipeline progress"
+      sx={{
+        position: 'relative',
+        overflow: 'hidden',
+        '&::before': {
+          content: '""',
+          position: 'absolute',
+          inset: 0,
+          background: 'radial-gradient(ellipse at top left, hsla(258,90%,66%,0.06) 0%, transparent 60%)',
+          pointerEvents: 'none',
+        },
+      }}
+    >
+      <CardContent>
+        {/* Header */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', mb: 2.5 }}>
+          <Box>
+            <Chip
+              label="PIPELINE RUNNING"
+              size="small"
+              color="primary"
+              variant="outlined"
+              icon={<Box component="span" sx={{ width: 8, height: 8, borderRadius: '50%', bgcolor: 'primary.main', animation: 'pulseDot 1.5s ease-in-out infinite', '@keyframes pulseDot': { '0%,100%': { opacity: 1 }, '50%': { opacity: 0.3 } }, ml: 0.5 }} />}
+              sx={{ mb: 1, fontWeight: 700, fontSize: 10, letterSpacing: '0.06em' }}
+            />
+            <Typography variant="h6" fontWeight={700} gutterBottom>
+              Executing Deep Search Pipeline
+            </Typography>
+            <Typography variant="body2" color="text.secondary">
+              Analyzing repository semantics, extracting references, and generating insights
+            </Typography>
+          </Box>
+          <Box sx={{ display: 'flex', gap: 1, flexShrink: 0 }}>
+            <Chip
+              icon={<AccessTimeIcon />}
+              label={`${elapsedSeconds.toFixed(1)}s`}
+              size="small"
+              variant="outlined"
+              sx={{ fontWeight: 600 }}
+            />
+            <Chip
+              label={`Stage ${activeStage.number}/${totalStages}`}
+              size="small"
+              color="primary"
+              sx={{ fontWeight: 700 }}
+            />
+          </Box>
+        </Box>
 
-      {/* Header bar */}
-      <div className="pipeline-loader-header">
-        <div className="pipeline-loader-title-group">
-          <div className="pipeline-pulse-badge">
-            <span className="pipeline-pulse-dot" />
-            <span className="pipeline-badge-text">PIPELINE RUNNING</span>
-          </div>
-          <h2 className="pipeline-title">Executing Deep Search Pipeline</h2>
-          <p className="pipeline-subtitle">
-            Analyzing repository semantics, extracting references, and generating insights
-          </p>
-        </div>
-
-        <div className="pipeline-metrics">
-          <div className="pipeline-metric-badge">
-            <Clock size={14} className="pipeline-timer-icon" />
-            <span>{elapsedSeconds.toFixed(1)}s elapsed</span>
-          </div>
-          <div className="pipeline-metric-badge stage-counter-badge">
-            Stage {activeStage.number} of {totalStages}
-          </div>
-        </div>
-      </div>
-
-      {/* Progress Bar */}
-      <div className="pipeline-progress-container">
-        <div className="pipeline-progress-track">
-          <div
-            className="pipeline-progress-fill"
-            style={{ width: `${progressPercent}%` }}
+        {/* Progress bar */}
+        <Box sx={{ mb: 2 }}>
+          <LinearProgress
+            variant="determinate"
+            value={progressPercent}
+            sx={{ mb: 0.75 }}
           />
-        </div>
-        <div className="pipeline-progress-labels">
-          <span className="pipeline-progress-hint">
-            Step {activeStage.number} &mdash; {activeStage.name}
-          </span>
-          <span className="pipeline-progress-value">{progressPercent}%</span>
-        </div>
-      </div>
+          <Box sx={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Typography variant="caption" color="text.secondary">
+              Step {activeStage.number} — {activeStage.name}
+            </Typography>
+            <Typography variant="caption" color="primary.main" fontWeight={700}>
+              {progressPercent}%
+            </Typography>
+          </Box>
+        </Box>
 
-      {/* Hero Active Stage Banner */}
-      <div className="pipeline-active-stage-card">
-        <div className="pipeline-active-stage-header">
-          <div className="pipeline-stage-icon-wrap">
-            <div className="pipeline-stage-spinner" />
-            <span className="pipeline-stage-icon">
-              {getStageIcon(activeStage.number, 20)}
-            </span>
-          </div>
-          <div className="pipeline-active-info">
-            <div className="pipeline-stage-meta">
-              <span className="pipeline-stage-pill">
-                STAGE {String(activeStage.number).padStart(2, '0')}
-              </span>
-              <span className="pipeline-stage-name">{activeStage.name}</span>
-            </div>
-            <div className="pipeline-stage-msg">
-              <Loader2 size={15} className="pipeline-spin-icon" />
-              <span>{activeStage.loadingMessage}</span>
-            </div>
-          </div>
-        </div>
-
-        <p className="pipeline-stage-desc">{activeStage.detail}</p>
-      </div>
-
-      {/* Toggle View for Pipeline Stages List */}
-      <div className="pipeline-stages-accordion-toggle">
-        <button
-          type="button"
-          className="btn btn-ghost btn-sm pipeline-accordion-btn"
-          onClick={() => setShowAllStages((prev) => !prev)}
-          aria-expanded={showAllStages}
+        {/* Active stage card */}
+        <Box
+          sx={{
+            p: 2,
+            mb: 2,
+            borderRadius: 2,
+            bgcolor: 'hsl(222,14%,17%)',
+            border: '1px solid',
+            borderColor: 'hsla(258,90%,66%,0.25)',
+            display: 'flex',
+            alignItems: 'flex-start',
+            gap: 2,
+          }}
         >
-          <span>
+          <Box
+            sx={{
+              width: 44,
+              height: 44,
+              borderRadius: 2,
+              background: 'linear-gradient(135deg, hsla(258,90%,66%,0.2), hsla(258,70%,55%,0.2))',
+              border: '1px solid hsla(258,90%,66%,0.3)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0,
+              color: 'primary.main',
+            }}
+          >
+            {stageIcons[activeStage.number] ?? <CircularProgress size={20} />}
+          </Box>
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+              <Chip
+                label={`STAGE ${String(activeStage.number).padStart(2, '0')}`}
+                size="small"
+                sx={{ fontSize: 10, fontWeight: 700, bgcolor: 'hsla(258,90%,66%,0.15)', color: 'primary.light' }}
+              />
+              <Typography variant="body2" fontWeight={700}>
+                {activeStage.name}
+              </Typography>
+            </Box>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.75 }}>
+              <CircularProgress size={14} sx={{ color: 'primary.main', flexShrink: 0 }} />
+              <Typography variant="body2" color="text.secondary" sx={{ fontSize: 13 }}>
+                {activeStage.loadingMessage}
+              </Typography>
+            </Box>
+            <Typography variant="caption" color="text.disabled">
+              {activeStage.detail}
+            </Typography>
+          </Box>
+        </Box>
+
+        {/* Toggle stages */}
+        <Box sx={{ display: 'flex', justifyContent: 'center', mb: showAllStages ? 2 : 0 }}>
+          <Button
+            size="small"
+            variant="text"
+            color="inherit"
+            endIcon={showAllStages ? <ExpandLessIcon /> : <ExpandMoreIcon />}
+            onClick={() => setShowAllStages((v) => !v)}
+            aria-expanded={showAllStages}
+            sx={{ color: 'text.secondary', fontSize: 12 }}
+          >
             {showAllStages ? 'Hide full stage breakdown' : 'Show all 14 pipeline stages'}
-          </span>
-          {showAllStages ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-        </button>
-      </div>
+          </Button>
+        </Box>
 
-      {/* All Stages Stepper Grid / List */}
-      {showAllStages && (
-        <div className="pipeline-stepper-grid">
-          {PIPELINE_STAGES.map((stage, idx) => {
-            const isCompleted = idx < clampedIndex;
-            const isCurrent = idx === clampedIndex;
-            const isUpcoming = idx > clampedIndex;
+        {/* All stages grid */}
+        <Collapse in={showAllStages}>
+          <Grid container spacing={1}>
+            {PIPELINE_STAGES.map((stage, idx) => {
+              const isCompleted = idx < clampedIndex;
+              const isCurrent = idx === clampedIndex;
+              const isUpcoming = idx > clampedIndex;
 
-            let statusClass = 'upcoming';
-            if (isCompleted) statusClass = 'completed';
-            if (isCurrent) statusClass = 'active';
+              return (
+                <Grid
+                  key={stage.number}
+                  size={{ xs: 12, sm: 6, md: 4, lg: 3 }}
+                >
+                  <Box
+                    id={`pipeline-stage-${stage.number}`}
+                    sx={{
+                      p: 1.25,
+                      borderRadius: 1.5,
+                      border: '1px solid',
+                      borderColor: isCurrent
+                        ? 'hsla(258,90%,66%,0.4)'
+                        : isCompleted
+                        ? 'hsla(145,70%,50%,0.25)'
+                        : 'divider',
+                      bgcolor: isCurrent
+                        ? 'hsla(258,90%,66%,0.08)'
+                        : isCompleted
+                        ? 'hsla(145,70%,50%,0.05)'
+                        : 'transparent',
+                      display: 'flex',
+                      alignItems: 'flex-start',
+                      gap: 1,
+                      transition: 'all 0.2s ease',
+                      opacity: isUpcoming ? 0.5 : 1,
+                    }}
+                  >
+                    {/* Indicator */}
+                    <Box sx={{ flexShrink: 0, mt: 0.25 }}>
+                      {isCompleted && (
+                        <Box
+                          sx={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            bgcolor: 'success.main',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <CheckIcon sx={{ fontSize: 11, color: '#000' }} />
+                        </Box>
+                      )}
+                      {isCurrent && (
+                        <CircularProgress size={18} thickness={5} sx={{ color: 'primary.main' }} />
+                      )}
+                      {isUpcoming && (
+                        <Box
+                          sx={{
+                            width: 18,
+                            height: 18,
+                            borderRadius: '50%',
+                            border: '2px solid',
+                            borderColor: 'divider',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                          }}
+                        >
+                          <Typography sx={{ fontSize: 10, fontWeight: 700, color: 'text.disabled', lineHeight: 1 }}>
+                            {stage.number}
+                          </Typography>
+                        </Box>
+                      )}
+                    </Box>
 
-            return (
-              <div
-                key={stage.number}
-                className={`pipeline-step-item ${statusClass}`}
-                id={`pipeline-stage-${stage.number}`}
-              >
-                <div className="pipeline-step-indicator">
-                  {isCompleted && (
-                    <span className="pipeline-step-check" title="Completed">
-                      <Check size={12} strokeWidth={3} />
-                    </span>
-                  )}
-                  {isCurrent && (
-                    <span className="pipeline-step-spinner" title="In progress">
-                      <Loader2 size={12} className="pipeline-spin-icon" />
-                    </span>
-                  )}
-                  {isUpcoming && (
-                    <span className="pipeline-step-num">
-                      {stage.number}
-                    </span>
-                  )}
-                </div>
-
-                <div className="pipeline-step-content">
-                  <div className="pipeline-step-title-row">
-                    <span className="pipeline-step-num-text">Stage {stage.number}</span>
-                    <span className="pipeline-step-name">{stage.name}</span>
-                  </div>
-                  <div className="pipeline-step-message">
-                    {isCurrent ? (
-                      <span className="pipeline-step-live-msg">{stage.loadingMessage}</span>
-                    ) : isCompleted ? (
-                      <span className="pipeline-step-done-msg">Completed</span>
-                    ) : (
-                      <span className="pipeline-step-pending-msg">{stage.shortName}</span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
+                    {/* Content */}
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="caption" color="text.disabled" display="block" sx={{ fontSize: 10 }}>
+                        Stage {stage.number}
+                      </Typography>
+                      <Typography
+                        variant="caption"
+                        fontWeight={isCurrent ? 700 : 500}
+                        color={isCurrent ? 'primary.light' : isCompleted ? 'success.main' : 'text.secondary'}
+                        display="block"
+                        sx={{ lineHeight: 1.3 }}
+                      >
+                        {stage.name}
+                      </Typography>
+                      <Typography variant="caption" color="text.disabled" sx={{ fontSize: 10 }}>
+                        {isCurrent ? 'In progress…' : isCompleted ? 'Completed' : stage.shortName}
+                      </Typography>
+                    </Box>
+                  </Box>
+                </Grid>
+              );
+            })}
+          </Grid>
+        </Collapse>
+      </CardContent>
+    </Card>
   );
 };
 
