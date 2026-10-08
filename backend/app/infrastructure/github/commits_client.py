@@ -12,6 +12,7 @@ async def fetch_latest_commit_sha(
     owner: str,
     repo: str,
     branch: str = "main",
+    github_token: str | None = None,
 ) -> str:
     """
     Fetch the latest commit SHA for a given branch.
@@ -20,6 +21,7 @@ async def fetch_latest_commit_sha(
         owner: GitHub repository owner.
         repo: GitHub repository name.
         branch: The branch to fetch the latest commit for.
+        github_token: Optional per-repo GitHub PAT.
         
     Returns:
         The SHA string of the latest commit.
@@ -27,7 +29,7 @@ async def fetch_latest_commit_sha(
     client = get_github_client()
     endpoint = f"/repos/{owner}/{repo}/commits/{branch}"
     
-    response = await client.request("GET", endpoint)
+    response = await client.request("GET", endpoint, github_token=github_token)
     data = response.json()
     
     return data["sha"]

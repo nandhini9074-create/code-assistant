@@ -5,22 +5,35 @@ Manages Qdrant collections and payload indices for Code Explorer.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from qdrant_client.http import models as qmodels
 
 from app.core.logging import get_logger
 from app.infrastructure.qdrant.client import get_qdrant_client
 
+if TYPE_CHECKING:
+    from qdrant_client import AsyncQdrantClient
+
 logger = get_logger(__name__)
+
+
+def sanitize_collection_name(collection_name: str) -> str:
+    """Sanitize collection name to ensure valid URL routing in Qdrant REST API."""
+    return collection_name.lower().replace("/", "_").replace("-", "_").replace(".", "_").replace(":", "_")
 
 
 async def ensure_collection_exists(
     collection_name: str,
     vector_size: int = 1024,
-) -> None:
+    recreate: bool = False,
+) -> str:
     """
     Ensure a Qdrant collection exists and has the required payload indices.
-    If it doesn't exist, it creates it.
+    If it doesn't exist (or recreate=True), it creates it.
+    Returns the sanitized collection name.
     """
+    collection_name = sanitize_collection_name(collection_name)
     client = get_qdrant_client()
 
     try:
@@ -28,8 +41,26 @@ async def ensure_collection_exists(
         existing_collections = {c.name for c in collections_response.collections}
 
         if collection_name in existing_collections:
-            logger.debug("qdrant_collection_exists", collection=collection_name)
-            return
+            if recreate:
+                logger.info("qdrant_recreating_collection", collection=collection_name)
+                await client.delete_collection(collection_name=collection_name)
+            else:
+                logger.debug("qdrant_collection_exists", collection=collection_name)
+                # Verify collection config matches expected vector size (1024) and cosine distance
+                coll_info = await client.get_collection(collection_name=collection_name)
+                vectors_config = coll_info.config.params.vectors
+                if isinstance(vectors_config, qmodels.VectorParams):
+                    if vectors_config.size != vector_size:
+                        raise ValueError(
+                            f"Qdrant collection {collection_name} dimension mismatch: "
+                            f"expected {vector_size}, found {vectors_config.size}"
+                        )
+                    if vectors_config.distance != qmodels.Distance.COSINE:
+                        raise ValueError(
+                            f"Qdrant collection {collection_name} distance mismatch: "
+                            f"expected Cosine, found {vectors_config.distance}"
+                        )
+                return
 
         logger.info("qdrant_creating_collection", collection=collection_name)
         await client.create_collection(
@@ -65,3 +96,17 @@ async def _create_indices(client: "AsyncQdrantClient", collection_name: str) -> 
         field_name="file_path",
         field_schema=qmodels.PayloadSchemaType.KEYWORD,
     )
+
+    # Index content for lexical full-text search
+    await client.create_payload_index(
+        collection_name=collection_name,
+        field_name="content",
+        field_schema=qmodels.TextIndexParams(
+            type=qmodels.TextIndexType.TEXT,
+            tokenizer=qmodels.TokenizerType.WORD,
+            min_token_len=2,
+            max_token_len=20,
+            lowercase=True,
+        ),
+    )
+

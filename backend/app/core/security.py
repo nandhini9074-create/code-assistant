@@ -49,13 +49,20 @@ def verify_github_signature(
     Raises:
         WebhookVerificationError: If the signature is missing, malformed, or invalid.
     """
+    from app.core.logging import get_logger
+    logger = get_logger(__name__)
+    
+    logger.debug("verifying_webhook_signature", header_length=len(signature_header) if signature_header else 0)
+
     if not signature_header:
+        logger.error("webhook_signature_missing")
         raise WebhookVerificationError(
             "Missing X-Hub-Signature-256 header",
             code="MISSING_SIGNATURE",
         )
 
     if not signature_header.startswith(GITHUB_SIGNATURE_PREFIX):
+        logger.error("webhook_signature_malformed", header=signature_header)
         raise WebhookVerificationError(
             f"Signature header must start with '{GITHUB_SIGNATURE_PREFIX}'",
             code="MALFORMED_SIGNATURE",
@@ -73,10 +80,13 @@ def verify_github_signature(
 
     # Constant-time comparison — NEVER use == for HMAC comparison
     if not hmac.compare_digest(expected_sig, received_sig):
+        logger.error("webhook_signature_mismatch", expected=expected_sig, received=received_sig)
         raise WebhookVerificationError(
             "Webhook signature verification failed",
             code="INVALID_SIGNATURE",
         )
+        
+    logger.info("webhook_signature_verified")
 
 
 # ZIP Security Helpers

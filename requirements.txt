@@ -1,0 +1,3 @@
+# Code Explorer — Root Requirements
+# References backend base requirements
+-r backend/requirements/base.txt

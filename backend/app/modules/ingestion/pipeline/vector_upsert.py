@@ -3,13 +3,19 @@ app/modules/ingestion/pipeline/vector_upsert.py
 Pipeline stage: Vector upsert to Qdrant.
 """
 
+import uuid
+
 from qdrant_client.http import models as qmodels
 
+from app.core.logging import get_logger
 from app.infrastructure.database.models.chunk_registry import ChunkRegistry
-from app.infrastructure.qdrant.vector_repository import generate_point_id, upsert_vectors
+from app.infrastructure.qdrant.collection_manager import ensure_collection_exists
+from app.infrastructure.qdrant.vector_repository import generate_point_id, upsert_vectors, delete_vectors_by_ids
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
+
+logger = get_logger(__name__)
 
 
 class VectorUpsertStage:
@@ -23,49 +29,105 @@ class VectorUpsertStage:
 
     async def execute(self, context: IngestionContext) -> None:
         """Upserts new chunks to Qdrant and saves them to PostgreSQL."""
-        repo = await self.repo_repo.get_by_id(context.repo_id)
+        logger.info("stage_10_vector_upsert_started", repo_id=context.repo_id)
+        repo = await self.repo_repo.get_by_id(uuid.UUID(context.repo_id))
         if not repo:
+            logger.error("stage_10_vector_upsert_aborted", reason="Repository not found")
             return
 
-        points = []
-        db_chunks = []
-        
+        points = []       # New vectors to upsert into Qdrant
+        db_chunks = []    # ALL chunks for modified files to re-record in DB
+
         for file in context.files:
             if not file.is_new_or_modified or not file.chunks:
                 continue
-                
+
             for chunk in file.chunks:
-                if not chunk.is_new:
-                    continue
-                    
-                # Generate deterministic point ID
-                chunk.point_id = generate_point_id(str(context.repo_id), file.file_path, chunk.chunk_hash)
-                
-                if chunk.embedding:
-                    points.append(qmodels.PointStruct(
-                        id=chunk.point_id,
-                        vector=chunk.embedding,
-                        payload=chunk.metadata,
-                    ))
-                    
+                if chunk.is_new:
+                    # Generate deterministic point ID for new chunks
+                    chunk.point_id = generate_point_id(context.repo_id, file.file_path, chunk.chunk_hash)
+
+                    if chunk.embedding:
+                        if len(chunk.embedding) != 1024:
+                            logger.error(
+                                "stage_10_vector_dimension_mismatch",
+                                chunk_hash=chunk.chunk_hash,
+                                dimension=len(chunk.embedding),
+                                expected=1024,
+                            )
+                            raise ValueError(
+                                f"Vector dimension mismatch for chunk {chunk.chunk_hash}: "
+                                f"expected 1024, got {len(chunk.embedding)}"
+                            )
+
+                        points.append(qmodels.PointStruct(
+                            id=chunk.point_id,
+                            vector=chunk.embedding,
+                            payload=chunk.metadata,
+                        ))
+
+                # Fetch settings for embedding info
+                from app.config import get_settings
+                settings = get_settings()
+
+                # Re-save ALL chunks (new and reused) to DB, because we delete
+                # the entire file's old chunk records before re-writing.
                 db_chunks.append(
                     ChunkRegistry(
-                        repo_id=context.repo_id,
+                        repo_id=uuid.UUID(context.repo_id),
                         file_path=file.file_path,
                         chunk_hash=chunk.chunk_hash,
-                        point_id=chunk.point_id,
-                        metadata_json=chunk.metadata,
-                        commit_sha=context.commit_sha,
+                        symbol_name=chunk.function_name or chunk.class_name,
+                        symbol_type=chunk.chunk_type,
+                        start_line=chunk.start_line,
+                        end_line=chunk.end_line,
+                        qdrant_point_id=chunk.point_id,
+                        last_seen_job_id=uuid.UUID(context.job_id) if context.job_id else None,
+                        embedding_model=settings.jina_embedding_model,
+                        embedding_version="1.0",
                     )
                 )
 
+
+        # Guarantee Qdrant collection exists for this repository
+        coll_name = repo.qdrant_collection
+        await ensure_collection_exists(coll_name)
+
         if points:
-            await upsert_vectors(repo.qdrant_collection, points)
+            unique_points = {}
+            for point in points:
+                if point.id not in unique_points:
+                    unique_points[point.id] = point
+            deduped_points = list(unique_points.values())
             
-        if db_chunks:
-            # Delete old chunks for these modified files first
-            modified_files = [f.file_path for f in context.files if f.is_new_or_modified]
-            if modified_files:
-                await self.chunk_repo.delete_by_file_paths(context.repo_id, modified_files)
+            logger.info("stage_10_upserting_to_qdrant", points_count=len(deduped_points), original_count=len(points), collection=coll_name)
+            await upsert_vectors(coll_name, deduped_points)
+            logger.info("stage_10_qdrant_upsert_success", points_count=len(deduped_points))
+
+        modified_files = [f.file_path for f in context.files if f.is_new_or_modified]
+        if modified_files:
+            # Clean up orphaned Qdrant points before wiping Postgres
+            old_chunks = await self.chunk_repo.get_by_file_paths(uuid.UUID(context.repo_id), modified_files)
+            old_point_ids = {c.qdrant_point_id for c in old_chunks}
+            new_point_ids = {c.qdrant_point_id for c in db_chunks}
+            orphaned_point_ids = list(old_point_ids - new_point_ids)
+            
+            if orphaned_point_ids:
+                logger.info("stage_10_cleaning_orphaned_qdrant_points", count=len(orphaned_point_ids))
+                await delete_vectors_by_ids(coll_name, orphaned_point_ids)
                 
-            await self.chunk_repo.bulk_create(db_chunks)
+            logger.info("stage_10_cleaning_old_db_chunks", modified_files_count=len(modified_files))
+            await self.chunk_repo.delete_by_file_paths(uuid.UUID(context.repo_id), modified_files)
+
+        if db_chunks:
+            unique_db_chunks = {}
+            for chunk in db_chunks:
+                if chunk.chunk_hash not in unique_db_chunks:
+                    unique_db_chunks[chunk.chunk_hash] = chunk
+            deduped_db_chunks = list(unique_db_chunks.values())
+            
+            logger.info("stage_10_saving_to_postgresql", db_chunks_count=len(deduped_db_chunks), original_count=len(db_chunks))
+            await self.chunk_repo.bulk_create(deduped_db_chunks)
+            logger.info("stage_10_postgresql_save_success", db_chunks_count=len(deduped_db_chunks))
+        else:
+            logger.info("stage_10_no_new_chunks_to_save", reason="All chunks reused from previous index")

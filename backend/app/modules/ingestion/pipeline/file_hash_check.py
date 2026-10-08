@@ -3,54 +3,89 @@ app/modules/ingestion/pipeline/file_hash_check.py
 Pipeline stage: File hash check.
 """
 
-from app.core.enums import FileStatus
-from app.infrastructure.database.models.file_registry import FileRegistry
+import uuid
+
+from app.core.enums import FileFetchStatus, FileStatus
+from app.core.logging import get_logger
+from app.infrastructure.database.models.file_hash import FileHash
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
-from app.modules.ingestion.repository.file_registry_repo import FileRegistryRepository
+from app.modules.ingestion.repository.file_hash_repo import FileHashRepository
+from app.shared.utils.file_utils import get_language_from_extension
 from app.shared.utils.hashing import sha256_content
+
+logger = get_logger(__name__)
 
 
 class FileHashCheckStage:
-    def __init__(self, registry_repo: FileRegistryRepository) -> None:
+    def __init__(self, registry_repo: FileHashRepository) -> None:
         self.registry_repo = registry_repo
 
     async def execute(self, context: IngestionContext) -> None:
         """Computes content hash and skips unchanged files."""
+        logger.info("stage_5_hash_check_started", total_files=len(context.files), full_reindex=context.full_reindex)
         # Find active files in the repo to handle deletions
         active_files = await self.registry_repo.get_active_files(context.repo_id)
         active_paths = {f.file_path: f for f in active_files}
         
         seen_paths = set()
+        new_modified_count = 0
+        skipped_count = 0
+        failed_count = 0
         
         for file in context.files:
-            if not file.content:
+            # 1. Handle fetch failures explicitly
+            if file.fetch_status == FileFetchStatus.FAILED:
                 file.is_new_or_modified = False
+                context.failed_files.append(file.file_path)
+                failed_count += 1
+                logger.warning(
+                    "stage_5_hash_check_skipped_fetch_failed_file",
+                    file_path=file.file_path,
+                    error=file.fetch_error,
+                )
                 continue
-                
-            file.file_hash = sha256_content(file.content)
+
+            # 2. Compute hash (handles non-empty as well as valid empty b"" files)
+            content_bytes = file.content if file.content is not None else b""
+            file.file_hash = sha256_content(content_bytes)
             seen_paths.add(file.file_path)
             
             existing = active_paths.get(file.file_path)
             if existing and existing.file_hash == file.file_hash:
                 # File is unchanged
                 file.is_new_or_modified = False
+                skipped_count += 1
             else:
-                # File is new or modified
+                # File is new, modified
                 file.is_new_or_modified = True
+                new_modified_count += 1
                 
             # Update registry (we do this per file for now, bulk is better in prod)
             if file.is_new_or_modified:
-                registry_record = FileRegistry(
+                registry_record = FileHash(
                     repo_id=context.repo_id,
                     file_path=file.file_path,
                     file_hash=file.file_hash,
                     blob_sha=file.blob_sha,
-                    commit_sha=context.commit_sha,
+                    last_commit_sha=context.commit_sha,
+                    language=get_language_from_extension(file.file_path),
                     status=FileStatus.ACTIVE.value,
+                    last_seen_job_id=uuid.UUID(context.job_id),
                 )
                 await self.registry_repo.upsert_file(registry_record)
                 
-        # Any file in active_paths not in seen_paths was deleted
-        for path in active_paths:
-            if path not in seen_paths:
-                context.deleted_files.append(path)
+        # If we fetched the entire repository tree, any active file that wasn't seen must have been deleted.
+        # But if we only fetched a subset of files (e.g., via webhook diff), GitHub already provided the 
+        # deleted files list, so we shouldn't assume unseen files are deleted.
+        if not context.webhook_diff:
+            for path in active_paths:
+                if path not in seen_paths:
+                    context.deleted_files.append(path)
+
+        logger.info(
+            "stage_5_hash_check_completed",
+            new_or_modified=new_modified_count,
+            skipped=skipped_count,
+            fetch_failed=failed_count,
+            deleted_detected=len(context.deleted_files),
+        )

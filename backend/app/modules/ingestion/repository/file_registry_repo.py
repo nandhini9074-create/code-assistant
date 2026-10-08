@@ -5,9 +5,10 @@ SQLAlchemy CRUD operations for FileRegistry model.
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Sequence, cast
 
 from sqlalchemy import delete, select
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.enums import FileStatus
@@ -72,4 +73,4 @@ class FileRegistryRepository:
         )
         result = await self.session.execute(stmt)
         await self.session.commit()
-        return result.rowcount > 0
+        return cast(CursorResult[None], result).rowcount > 0

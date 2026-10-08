@@ -8,9 +8,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from asgiref.sync import async_to_sync
-
-from app.core.enums import IngestionSource
+from app.core.enums import TriggerSource
 from app.core.logging import get_logger
 from app.infrastructure.database.session import get_db
 from app.infrastructure.github.blobs_client import fetch_blob_content
@@ -30,70 +28,124 @@ from app.modules.ingestion.pipeline import (
     VectorUpsertStage,
 )
 from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
-from app.modules.ingestion.repository.file_registry_repo import FileRegistryRepository
+from app.modules.ingestion.repository.file_hash_repo import FileHashRepository
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
 from app.modules.ingestion.service.ingestion_service import IngestionService
 from app.modules.repositories.repository.repository_repo import RepositoryRepository
+from app.modules.webhooks.repository.webhook_event_repo import WebhookEventRepository
 from app.workers.celery_app import celery_app
 
 logger = get_logger(__name__)
 
 
-async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str | None) -> dict[str, Any]:
-    # Set up dependencies manually since we are outside FastAPI request context
-    # In a real application, you'd use a DI container or proper factory function
-    from app.infrastructure.database.session import async_session_maker
+async def _run_ingestion(job_id: str, repo_id: str, source: str, commit_sha: str | None, full_reindex: bool = False, webhook_diff: dict[str, list[str]] | None = None) -> dict[str, Any]:
+    from app.config import get_settings
+    from app.infrastructure.database.session import _build_engine
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+    settings = get_settings()
+    # Create task-scoped engine to prevent asyncpg connection pool sharing across event loops
+    engine = _build_engine(
+        database_url=settings.database_url,
+        pool_size=5,
+        max_overflow=10,
+        echo=settings.database_echo_sql,
+    )
+    session_factory = async_sessionmaker(
+        bind=engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+        autoflush=False,
+    )
     
-    async with async_session_maker() as session:
-        repo_repo = RepositoryRepository(session)
-        job_repo = IngestionJobRepository(session)
-        file_repo = FileRegistryRepository(session)
-        chunk_repo = ChunkRegistryRepository(session)
-        
-        # Instantiate stages
-        val_stage = RequestValidationStage(repo_repo)
-        repo_fetch_stage = RepositoryFetchStage(repo_repo)
-        file_filter_stage = FileFilterStage()
-        content_fetch_stage = ContentFetchStage(repo_repo)
-        hash_check_stage = FileHashCheckStage(file_repo)
-        ast_stage = AstChunkingStage()
-        dedup_stage = ChunkDeduplicationStage(chunk_repo)
-        meta_stage = MetadataEnrichmentStage()
-        embed_stage = EmbeddingGenerationStage()
-        upsert_stage = VectorUpsertStage(repo_repo, chunk_repo)
-        cleanup_stage = DeletedChunkCleanupStage(repo_repo, file_repo, chunk_repo)
-        checkpoint_stage = CheckpointUpdateStage(job_repo)
-        
-        service = IngestionService(
-            val_stage,
-            repo_fetch_stage,
-            file_filter_stage,
-            content_fetch_stage,
-            hash_check_stage,
-            ast_stage,
-            dedup_stage,
-            meta_stage,
-            embed_stage,
-            upsert_stage,
-            cleanup_stage,
-            checkpoint_stage,
-        )
-        
-        ingestion_source = IngestionSource(source)
-        result = await service.run_pipeline(
-            job_id=job_id,
-            repo_id=repo_id,
-            source=ingestion_source,
-            commit_sha=commit_sha or "",
-        )
-        
-        return {
-            "status": "success" if result.success else "failed",
-            "job_id": result.job_id,
-            "processed_files": result.processed_files_count,
-            "chunks_indexed": result.indexed_chunks_count,
-            "error": result.error_message,
-        }
+    try:
+        async with session_factory() as session:
+            repo_repo = RepositoryRepository(session)
+            job_repo = IngestionJobRepository(session)
+            file_repo = FileHashRepository(session)
+            chunk_repo = ChunkRegistryRepository(session)
+            event_repo = WebhookEventRepository(session)
+            
+            # Instantiate stages
+            val_stage = RequestValidationStage(repo_repo)
+            repo_fetch_stage = RepositoryFetchStage(repo_repo)
+            file_filter_stage = FileFilterStage()
+            content_fetch_stage = ContentFetchStage(repo_repo)
+            hash_check_stage = FileHashCheckStage(file_repo)
+            ast_stage = AstChunkingStage()
+            dedup_stage = ChunkDeduplicationStage(chunk_repo)
+            meta_stage = MetadataEnrichmentStage()
+            embed_stage = EmbeddingGenerationStage()
+            upsert_stage = VectorUpsertStage(repo_repo, chunk_repo)
+            cleanup_stage = DeletedChunkCleanupStage(repo_repo, file_repo, chunk_repo)
+            checkpoint_stage = CheckpointUpdateStage(job_repo, event_repo, repo_repo)
+            
+            service = IngestionService(
+                val_stage,
+                repo_fetch_stage,
+                file_filter_stage,
+                content_fetch_stage,
+                hash_check_stage,
+                ast_stage,
+                dedup_stage,
+                meta_stage,
+                embed_stage,
+                upsert_stage,
+                cleanup_stage,
+                checkpoint_stage,
+            )
+            
+            ingestion_source = TriggerSource(source)
+            
+            # Fetch the repo to get the per-repository token if it exists
+            repo = await repo_repo.get_by_id(repo_id)
+            if repo and repo.access_token_ref:
+                from app.shared.utils.encryption import decrypt_token
+                github_token = decrypt_token(repo.access_token_ref)
+            else:
+                github_token = None
+            
+            # Mark the job as RUNNING and record the previous commit SHA before the new pipeline run
+            from app.core.enums import JobStatus
+            previous_sha = repo.last_indexed_commit_sha if repo else None
+            await job_repo.update_status(
+                job_id,
+                status=JobStatus.RUNNING,
+                previous_commit_sha=previous_sha,
+            )
+            
+            result = await service.run_pipeline(
+                job_id=job_id,
+                repo_id=repo_id,
+                repo_name=repo.repo_name if repo else "unknown",
+                source=ingestion_source,
+                commit_sha=commit_sha or "",
+                github_token=github_token,
+                full_reindex=full_reindex,
+                webhook_diff=webhook_diff,
+            )
+            
+            # If the pipeline failed before reaching the CheckpointUpdateStage (Stage 12),
+            # we need to manually update the database here so the job isn't stuck as RUNNING forever.
+            if not result.success:
+                logger.warning("pipeline_failed_updating_job_status_to_failed", job_id=job_id, error=result.error_message)
+                await job_repo.update_status(
+                    job_id,
+                    status=JobStatus.FAILED,
+                    stage="pipeline_aborted_early"
+                )
+            
+            return {
+                "status": "success" if result.success else "failed",
+                "job_id": result.job_id,
+                "processed_files": result.processed_files_count,
+                "processed_file_paths": result.processed_file_paths,
+                "chunks_indexed": result.indexed_chunks_count,
+                "chunk_ids": result.chunk_ids,
+                "error": result.error_message,
+            }
+    finally:
+        await engine.dispose()
 
 
 @celery_app.task(
@@ -111,6 +163,8 @@ def ingest_repository_task(
     repo_id: str,
     source: str,
     commit_sha: str | None = None,
+    full_reindex: bool = False,
+    webhook_diff: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
     """
     Background task to ingest a GitHub repository.
@@ -124,10 +178,22 @@ def ingest_repository_task(
     )
     
     try:
-        # Execute the async ingestion flow in an event loop using `async_to_sync`
-        # In a real environment, you'd want to handle the event loop carefully
-        # if Celery worker is running in a threading/gevent model.
-        return async_to_sync(_run_ingestion)(job_id, repo_id, source, commit_sha)
+        # Check if an event loop is already running (e.g. Celery eager mode inside FastAPI process)
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop and loop.is_running():
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    asyncio.run,
+                    _run_ingestion(job_id, repo_id, source, commit_sha, full_reindex, webhook_diff),
+                )
+                return future.result()
+        else:
+            return asyncio.run(_run_ingestion(job_id, repo_id, source, commit_sha, full_reindex, webhook_diff))
     except Exception as exc:
         logger.error("ingestion_task_failed", job_id=job_id, exc_info=exc)
         raise self.retry(exc=exc)

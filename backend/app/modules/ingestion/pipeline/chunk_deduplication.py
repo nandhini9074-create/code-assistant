@@ -3,8 +3,12 @@ app/modules/ingestion/pipeline/chunk_deduplication.py
 Pipeline stage: Chunk deduplication.
 """
 
+from app.core.logging import get_logger
+from app.infrastructure.qdrant.vector_repository import generate_point_id
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.chunk_registry_repo import ChunkRegistryRepository
+
+logger = get_logger(__name__)
 
 
 class ChunkDeduplicationStage:
@@ -13,6 +17,11 @@ class ChunkDeduplicationStage:
 
     async def execute(self, context: IngestionContext) -> None:
         """Checks if chunks already exist in the database."""
+        total_chunks = sum(len(f.chunks) for f in context.files if f.is_new_or_modified)
+        logger.info("stage_7_chunk_deduplication_started", candidate_chunks=total_chunks)
+        reused_count = 0
+        new_count = 0
+
         for file in context.files:
             if not file.is_new_or_modified or not file.chunks:
                 continue
@@ -25,5 +34,26 @@ class ChunkDeduplicationStage:
                 if existing:
                     chunk.is_new = False
                     chunk.point_id = existing.point_id
+                    reused_count += 1
                 else:
                     chunk.is_new = True
+                    chunk.point_id = generate_point_id(context.repo_id, file.file_path, chunk.chunk_hash)
+                    new_count += 1
+                    
+                    # For webhooks, log the specific new chunk content so the user can see exactly what changed
+                    if str(context.source) == "TriggerSource.WEBHOOK" or str(context.source) == "webhook":
+                        preview = chunk.code[:200] + "..." if len(chunk.code) > 200 else chunk.code
+                        logger.info(
+                            "webhook_chunk_changed",
+                            file=file.file_path,
+                            chunk_id=chunk.point_id,
+                            chunk_hash=chunk.chunk_hash,
+                            chunk_type=chunk.chunk_type,
+                            content_preview=preview
+                        )
+
+        logger.info(
+            "stage_7_chunk_deduplication_completed",
+            new_chunks_to_embed=new_count,
+            reused_existing_chunks=reused_count,
+        )

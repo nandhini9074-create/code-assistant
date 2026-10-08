@@ -1,82 +1,356 @@
 """
 app/modules/search/service/search_service.py
 Service layer for orchestrating the search pipeline.
+The search pipeline uses the repository name supplied in the request
+and does not perform PostgreSQL-based repository identification.
+Pipeline:
+ 1. Request Validation
+ 2. Intent Classification
+ 3. Query Preprocessing
+ 4. Collection Selection
+ 5. Code Retrieval
+ 6. Code Identification
+ 7. Context Building
+ 8. Code Analysis  (FIX_VULNERABILITY uses FixVulnerabilityAnalyzer)
+ 9. Evidence Validation
+10. Action Analysis
+11. Suggestion Patch
+12. Suggestion Validation
+13. Final Triage
+14. Response Generation
 """
 
 from app.core.exceptions import RetrievalError
 from app.core.logging import get_logger
-from app.modules.search.domain.search_domain import SearchContext, SearchResult
-from app.modules.search.pipeline.code_identification import CodeIdentificationStage
-from app.modules.search.pipeline.code_retrieval import CodeRetrievalStage
-from app.modules.search.pipeline.collection_selection import CollectionSelectionStage
-from app.modules.search.pipeline.context_builder import ContextBuilderStage
-from app.modules.search.pipeline.evidence_validation import EvidenceValidationStage
-from app.modules.search.pipeline.intent_classification import IntentClassificationStage
-from app.modules.search.pipeline.query_preprocessing import QueryPreprocessingStage
-from app.modules.search.pipeline.repository_identification import RepositoryIdentificationStage
-from app.modules.search.pipeline.request_validation import RequestValidationStage
-from app.modules.search.pipeline.response_generation import ResponseGenerationStage
+
+from app.modules.search.domain.search_domain import (
+    SearchContext,
+    SearchResult,
+)
+
+from app.modules.search.pipeline.request_validation import (
+    RequestValidationStage,
+)
+from app.modules.search.pipeline.intent_classification import (
+    IntentClassificationStage,
+)
+from app.modules.search.pipeline.query_preprocessing import (
+    QueryPreprocessingStage,
+)
+from app.modules.search.pipeline.collection_selection import (
+    CollectionSelectionStage,
+)
+from app.modules.search.pipeline.code_retrieval import (
+    CodeRetrievalStage,
+)
+from app.modules.search.pipeline.code_identification import (
+    CodeIdentificationStage,
+)
+from app.modules.search.pipeline.context_builder import (
+    ContextBuilderStage,
+)
+from app.modules.search.pipeline.code_analysis import (
+    CodeAnalysisStage,
+)
+from app.modules.search.pipeline.evidence_validation import (
+    EvidenceValidationStage,
+)
+from app.modules.search.pipeline.action_analysis import (
+    ActionAnalysisStage,
+)
+from app.modules.search.pipeline.suggestion_patch import (
+    SuggestionPatchStage,
+)
+from app.modules.search.pipeline.suggestion_validation import (
+    SuggestionValidationStage,
+)
+from app.modules.search.pipeline.final_triage import (
+    FinalTriageStage,
+)
+from app.modules.search.pipeline.response_generation import (
+    ResponseGenerationStage,
+)
+
 
 logger = get_logger(__name__)
 
 
+# These stages should always execute so that the request can be
+# validated and a final response can be generated even when an
+# earlier stage sets an early-exit condition.
+_ALWAYS_RUN = {
+    RequestValidationStage,
+    ResponseGenerationStage,
+}
+
+
 class SearchService:
-    """Orchestrates the search pipeline."""
-    
+
     def __init__(
         self,
         val_stage: RequestValidationStage,
         intent_stage: IntentClassificationStage,
         query_prep_stage: QueryPreprocessingStage,
-        repo_ident_stage: RepositoryIdentificationStage,
         coll_sel_stage: CollectionSelectionStage,
         code_ret_stage: CodeRetrievalStage,
         code_ident_stage: CodeIdentificationStage,
         ctx_build_stage: ContextBuilderStage,
+        code_analysis_stage: CodeAnalysisStage,
         ev_val_stage: EvidenceValidationStage,
+        action_analysis_stage: ActionAnalysisStage,
+        suggestion_patch_stage: SuggestionPatchStage,
+        suggestion_validation_stage: SuggestionValidationStage,
+        final_triage_stage: FinalTriageStage,
         resp_gen_stage: ResponseGenerationStage,
     ) -> None:
+
         self.val_stage = val_stage
         self.intent_stage = intent_stage
         self.query_prep_stage = query_prep_stage
-        self.repo_ident_stage = repo_ident_stage
         self.coll_sel_stage = coll_sel_stage
         self.code_ret_stage = code_ret_stage
         self.code_ident_stage = code_ident_stage
         self.ctx_build_stage = ctx_build_stage
+        self.code_analysis_stage = code_analysis_stage
         self.ev_val_stage = ev_val_stage
+        self.action_analysis_stage = action_analysis_stage
+        self.suggestion_patch_stage = suggestion_patch_stage
+        self.suggestion_validation_stage = suggestion_validation_stage
+        self.final_triage_stage = final_triage_stage
         self.resp_gen_stage = resp_gen_stage
-        
+
+        # ---------------------------------------------------------
+        # Search pipeline
+        # ---------------------------------------------------------
+        #
+        # RepositoryIdentificationStage has intentionally been
+        # removed.
+        #
+        # repo_name is already supplied to run_pipeline() and is
+        # passed directly into SearchContext.
+        #
+        # CollectionSelectionStage is responsible for mapping
+        # repo_name -> Qdrant collection.
+        #
+        # FIX_VULNERABILITY is handled by FixVulnerabilityAnalyzer
+        # registered inside CodeAnalysisService — no extra pipeline
+        # stages are needed.
+        # ---------------------------------------------------------
+
         self.stages = [
-            self.val_stage,
-            self.intent_stage,
-            self.query_prep_stage,
-            self.repo_ident_stage,
-            self.coll_sel_stage,
-            self.code_ret_stage,
-            self.code_ident_stage,
-            self.ctx_build_stage,
-            self.ev_val_stage,
-            self.resp_gen_stage,
+            self.val_stage,                   #  1
+            self.intent_stage,                #  2
+            self.query_prep_stage,            #  3
+            self.coll_sel_stage,              #  4
+            self.code_ret_stage,              #  5
+            self.code_ident_stage,            #  6
+            self.ctx_build_stage,             #  7
+            self.code_analysis_stage,         #  8
+            self.ev_val_stage,                #  9
+            self.action_analysis_stage,       # 10
+            self.suggestion_patch_stage,      # 11
+            self.suggestion_validation_stage, # 12
+            self.final_triage_stage,          # 13
+            self.resp_gen_stage,              # 14
         ]
 
-    async def run_pipeline(self, repo_id: str, query: str) -> SearchResult:
-        """Executes the search pipeline."""
-        context = SearchContext(repo_id=repo_id, query=query)
-        
+    async def run_pipeline(
+        self,
+        source_type: str,
+        source_location: str,
+        query: str,
+    ) -> SearchResult:
+
+        # ---------------------------------------------------------
+        # Create search context
+        # ---------------------------------------------------------
+        #
+        # repo_name comes directly from the API request.
+        #
+        # Do NOT perform repository lookup through PostgreSQL here.
+        #
+        # repo_id is intentionally not supplied because the search
+        # pipeline uses repo_name + Qdrant collection.
+        #
+        # ---------------------------------------------------------
+
+        context = SearchContext(
+            source_type=source_type,
+            source_location=source_location,
+            query=query,
+        )
+
+        logger.info(
+            "search_pipeline_started",
+            source_type=source_type,
+            source_location=source_location,
+            query=query,
+            total_stages=len(self.stages),
+        )
+
         try:
-            for i, stage in enumerate(self.stages):
+
+            # -----------------------------------------------------
+            # Execute stages sequentially
+            # -----------------------------------------------------
+
+            for index, stage in enumerate(self.stages, start=1):
+
                 stage_name = stage.__class__.__name__
+
+                logger.info(
+                    "search_stage_started",
+                    stage_number=index,
+                    stage=stage_name,
+                    repo_name=context.repo_name,
+                    early_exit=context.early_exit,
+                )
+
+
+                # -------------------------------------------------
+                # Skip remaining processing stages if an early
+                # exit was already triggered.
+                #
+                # ResponseGenerationStage is still executed so
+                # that the user receives a proper response.
+                # -------------------------------------------------
+
+                if (
+                    context.early_exit
+                    and type(stage) not in _ALWAYS_RUN
+                ):
+                    logger.info(
+                        "search_stage_skipped",
+                        stage_number=index,
+                        stage=stage_name,
+                        reason="early_exit",
+                    )
+
+                    continue
+
+                # -------------------------------------------------
+                # Execute current stage
+                # -------------------------------------------------
+
+                logger.info(
+                    "search_stage_executing",
+                    stage_number=index,
+                    stage=stage_name,
+                    repo_name=context.repo_name,
+                )
+
+                # Snapshot early_exit before execution so we can
+                # detect whether this stage newly triggered it.
+                early_exit_before = context.early_exit
+
                 try:
+
                     await stage.execute(context)
+
+                    logger.info(
+                        "search_stage_completed",
+                        stage_number=index,
+                        stage=stage_name,
+                        repo_name=context.repo_name,
+                        early_exit=context.early_exit,
+                    )
+
+
+                    # ---------------------------------------------
+                    # Log early exit only when this stage is the
+                    # one that newly triggered it.
+                    # ---------------------------------------------
+
+                    if context.early_exit and not early_exit_before:
+
+                        logger.warning(
+                            "search_pipeline_early_exit",
+                            stage_number=index,
+                            stage=stage_name,
+                            repo_name=context.repo_name,
+                            early_exit=context.early_exit,
+                        )
+
+
                 except Exception as exc:
-                    logger.error("search_pipeline_stage_failed", stage=stage_name, repo_id=repo_id, exc_info=exc)
-                    raise RetrievalError(f"Pipeline stage {stage_name} failed: {str(exc)}")
-                    
-            return SearchResult(success=True, response=context.final_response)
-            
+
+                    logger.exception(
+                        "search_stage_failed",
+                        stage_number=index,
+                        stage=stage_name,
+                        repo_name=context.repo_name,
+                        error=str(exc),
+                    )
+
+                    if isinstance(stage, CodeAnalysisStage):
+                        context.analysis_result = (
+                            stage._build_fallback_analysis(
+                                context,
+                                "Code analysis was unavailable."
+                            )
+                        )
+                        context.validated = False
+                        context.validation_status = "unavailable"
+                        logger.warning(
+                            "code_analysis_stage_exception_using_fallback",
+                            stage=stage_name,
+                            error_type=type(exc).__name__,
+                        )
+                        continue
+
+                    if isinstance(stage, ResponseGenerationStage):
+                        context.final_response = (
+                            stage.build_failure_response(context, exc)
+                        )
+                        continue
+
+                    raise RetrievalError(
+                        f"Search stage '{stage_name}' failed: {exc}"
+                    ) from exc
+
+            # -----------------------------------------------------
+            # Pipeline completed
+            # -----------------------------------------------------
+
+            logger.info(
+                "search_pipeline_completed",
+                repo_name=context.repo_name,
+                early_exit=context.early_exit,
+            )
+
+            return SearchResult(
+                success=True,
+                response=context.final_response,
+            )
+
         except RetrievalError as exc:
-            return SearchResult(success=False, error_message=str(exc))
+
+            logger.error(
+                "search_pipeline_retrieval_error",
+                source_location=source_location,
+                error=str(exc),
+            )
+
+            return SearchResult(
+                success=True,
+                response=ResponseGenerationStage.build_failure_response(
+                    context,
+                    exc,
+                ),
+            )
+
         except Exception as exc:
-            logger.error("search_pipeline_failed", repo_id=repo_id, exc_info=exc)
-            return SearchResult(success=False, error_message="Internal search error")
+
+            logger.exception(
+                "search_pipeline_unexpected_error",
+                source_location=source_location,
+                error=str(exc),
+            )
+
+            return SearchResult(
+                success=True,
+                response=ResponseGenerationStage.build_failure_response(
+                    context,
+                    exc,
+                ),
+            )

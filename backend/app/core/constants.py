@@ -38,20 +38,23 @@ CHUNK_MAX_RAW_CODE_CHARS: int = 8_000
 
 # Embedding
 
-# Default Voyage embedding batch size
-EMBEDDING_BATCH_SIZE: int = 128
+# Default Jina embedding batch size
+EMBEDDING_BATCH_SIZE: int = 32
 
-# Default vector dimension (voyage-code-3)
+# Default vector dimension (jina-embeddings-v3)
 DEFAULT_EMBEDDING_DIMENSION: int = 1024
 
 # Maximum retries for embedding API calls
-EMBEDDING_MAX_RETRIES: int = 3
+EMBEDDING_MAX_RETRIES: int = 6
+
+# Inter-batch delay (seconds) to avoid Jina rate limits
+JINA_INTER_BATCH_DELAY: float = 2.0
 
 # Base delay for embedding retry backoff (seconds)
 EMBEDDING_RETRY_BASE_DELAY: float = 1.0
 
 # Maximum delay cap for embedding retry (seconds)
-EMBEDDING_RETRY_MAX_DELAY: float = 60.0
+EMBEDDING_RETRY_MAX_DELAY: float = 30.0
 
 
 # LLM

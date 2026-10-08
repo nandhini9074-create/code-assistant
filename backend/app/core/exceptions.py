@@ -183,7 +183,7 @@ class ChunkingError(IngestionError):
 # 429 Rate Limited
 
 class RateLimitError(CodeExplorerException):
-    """External API rate limit hit (GitHub, Voyage, Qwen)."""
+    """External API rate limit hit (GitHub, Jina, Qwen)."""
 
     http_status = 429
     code = "RATE_LIMIT_ERROR"
@@ -229,11 +229,62 @@ class GitHubRateLimitError(GitHubAPIError, RateLimitError):
     http_status = 429
 
 
+class GitHubWebhookError(GitHubAPIError):
+    """GitHub Hooks API returned an error (permissions, duplicate, invalid config, etc.)."""
+
+    code = "GITHUB_WEBHOOK_ERROR"
+    http_status = 502
+
+    # Safe user-facing messages keyed by HTTP status code
+    _STATUS_MESSAGES: dict[int, str] = {
+        401: "GitHub token is invalid or expired.",
+        403: "GitHub token does not have permission to manage repository webhooks. "
+             "Ensure the token has 'admin:repo_hook' scope (classic PAT) or "
+             "Webhooks write permission (fine-grained PAT).",
+        404: "Repository not found or the token cannot access it.",
+        422: "Invalid webhook configuration or a duplicate webhook already exists.",
+        429: "GitHub API rate limit exceeded. Please retry later.",
+    }
+
+    def __init__(
+        self,
+        message: str,
+        status_code: int | None = None,
+        *,
+        endpoint: str | None = None,
+    ) -> None:
+        super().__init__(message, status_code, endpoint=endpoint)
+        # Provide a safe, human-readable reason based on HTTP status
+        self.safe_reason: str = self._STATUS_MESSAGES.get(
+            status_code or 0,
+            "An unexpected error occurred while configuring the GitHub webhook.",
+        )
+
+
 class EmbeddingError(CodeExplorerException):
-    """Voyage embedding API returned an error or timed out."""
+    """Jina embedding API returned an error or timed out."""
 
     http_status = 502
     code = "EMBEDDING_ERROR"
+
+
+class EmbeddingAuthenticationError(EmbeddingError):
+    """Jina API authentication failed (401 Unauthorized / Invalid API Key)."""
+
+    http_status = 401
+    code = "EMBEDDING_AUTHENTICATION_ERROR"
+
+
+class EmbeddingGenerationError(EmbeddingError):
+    """Embedding generation failed or returned mismatched output counts."""
+
+    code = "EMBEDDING_GENERATION_ERROR"
+
+
+class EmbeddingDimensionMismatchError(EmbeddingError):
+    """Embedding vector dimension does not match configured collection dimension."""
+
+    code = "EMBEDDING_DIMENSION_MISMATCH"
 
 
 class LLMError(CodeExplorerException):

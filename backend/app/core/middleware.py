@@ -10,24 +10,18 @@ Provides:
 """
 
 from __future__ import annotations
-
 import time
 import traceback
 from typing import Any
 from uuid import uuid4
-
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
-
 from app.core.exceptions import CodeExplorerException
 from app.core.logging import get_logger, set_request_id
 
 logger = get_logger(__name__)
-
-
-# Request ID + Timing Middleware
-
+# ── Request ID + Timing Middleware ────────────────────────────────────────────
 class RequestContextMiddleware(BaseHTTPMiddleware):
     """
     Injects a unique request ID into each request and logs request/response
@@ -84,7 +78,7 @@ class RequestContextMiddleware(BaseHTTPMiddleware):
         return response
 
 
-# Error Response Builder
+# ── Error Response Builder ─────────────────────────────────────────────────────
 
 def _build_error_response(
     *,
@@ -110,7 +104,7 @@ def _build_error_response(
     return JSONResponse(status_code=status_code, content=body)
 
 
-# Exception Handlers
+# ── Exception Handlers ────────────────────────────────────────────────────────
 
 async def code_explorer_exception_handler(
     request: Request,
@@ -169,6 +163,27 @@ async def unhandled_exception_handler(
     )
 
 
+from starlette.requests import ClientDisconnect
+
+
+async def client_disconnect_exception_handler(
+    request: Request,
+    exc: ClientDisconnect,
+) -> JSONResponse:
+    """Handle client disconnections (e.g. GitHub/ngrok socket reset) gracefully."""
+    logger.info("client_disconnected", path=str(request.url.path), method=request.method)
+    return JSONResponse(
+        status_code=499,
+        content={
+            "success": False,
+            "error": {
+                "code": "CLIENT_DISCONNECTED",
+                "message": "Client disconnected before request completed.",
+            },
+        },
+    )
+
+
 # Registration Helper
 
 def register_middleware(app: FastAPI) -> None:
@@ -181,5 +196,7 @@ def register_middleware(app: FastAPI) -> None:
     app.add_middleware(RequestContextMiddleware)
 
     # Exception handlers
+    app.add_exception_handler(ClientDisconnect, client_disconnect_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(CodeExplorerException, code_explorer_exception_handler)  # type: ignore[arg-type]
     app.add_exception_handler(Exception, unhandled_exception_handler)
+

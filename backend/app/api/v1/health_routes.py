@@ -6,6 +6,9 @@ Health check API routes.
 from __future__ import annotations
 
 from fastapi import APIRouter
+from app.infrastructure.database.session import get_session_factory
+from app.infrastructure.qdrant.client import get_qdrant_client
+from app.infrastructure.cache.redis_client import get_redis_client
 
 router = APIRouter(prefix="/health", tags=["Health"])
 
@@ -20,8 +23,9 @@ async def health_check() -> dict:
 
     # PostgreSQL check
     try:
-        from app.infrastructure.database.session import async_session_maker
-        async with async_session_maker() as session:
+       
+        session_factory = get_session_factory()
+        async with session_factory() as session:
             await session.execute(__import__("sqlalchemy", fromlist=["text"]).text("SELECT 1"))
         checks["postgresql"] = "ok"
     except Exception:
@@ -29,7 +33,7 @@ async def health_check() -> dict:
 
     # Qdrant check
     try:
-        from app.infrastructure.qdrant.client import get_qdrant_client
+        
         client = get_qdrant_client()
         await client.get_collections()
         checks["qdrant"] = "ok"
@@ -38,10 +42,13 @@ async def health_check() -> dict:
 
     # Redis check
     try:
-        from app.infrastructure.cache.redis_client import get_redis_client
-        redis = await get_redis_client()
-        await redis.ping()
-        checks["redis"] = "ok"
+        
+        redis = get_redis_client()
+        if redis is not None:
+            await redis.ping()
+            checks["redis"] = "ok"
+        else:
+            checks["redis"] = "disabled"
     except Exception:
         checks["redis"] = "error"
 

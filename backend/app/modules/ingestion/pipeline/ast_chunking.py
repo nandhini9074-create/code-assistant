@@ -3,39 +3,58 @@ app/modules/ingestion/pipeline/ast_chunking.py
 Pipeline stage: AST Chunking.
 """
 
+from app.core.logging import get_logger
+from app.modules.embedding.chunking.ast_chunker import chunk_ast
 from app.modules.ingestion.domain.ingestion_domain import ChunkRecord, IngestionContext
+from app.shared.utils.file_utils import get_language_from_extension
 from app.shared.utils.hashing import sha256_text
+
+logger = get_logger(__name__)
 
 
 class AstChunkingStage:
     async def execute(self, context: IngestionContext) -> None:
         """Chunks modified files into meaningful segments."""
+        files_to_chunk = [f for f in context.files if f.is_new_or_modified and f.content]
+        logger.info("stage_6_ast_chunking_started", files_to_chunk_count=len(files_to_chunk))
+        total_chunks_created = 0
+
         for file in context.files:
             if not file.is_new_or_modified or not file.content:
                 continue
                 
-            # Simplified line-based chunker for the stub
-            # In a real app, this uses tree-sitter to build AST chunks
             text = file.content.decode("utf-8", errors="ignore")
-            lines = text.split("\n")
+            language = get_language_from_extension(file.file_path)
             
-            # Very basic chunking (every 50 lines)
-            chunk_size = 50
-            for i in range(0, len(lines), chunk_size):
-                chunk_text = "\n".join(lines[i:i + chunk_size])
+            ast_chunks = chunk_ast(text, language, file_path=file.file_path)
+            file_chunk_count = 0
+            
+            for chunk in ast_chunks:
+                chunk_text = str(chunk.get("content", ""))
                 if not chunk_text.strip():
                     continue
                     
                 chunk_hash = sha256_text(chunk_text)
+                func_name = chunk.get("function_name")
+                cls_name = chunk.get("class_name")
+                doc_str = chunk.get("docstring")
+                chunk_meta = chunk.get("metadata", {})
+
                 file.chunks.append(
                     ChunkRecord(
                         file_path=file.file_path,
                         chunk_hash=chunk_hash,
-                        content=chunk_text,
-                        metadata={
-                            "start_line": i + 1,
-                            "end_line": min(i + chunk_size, len(lines)),
-                            "type": "module" # Stub
-                        }
+                        chunk_type=str(chunk.get("type", "unknown")),
+                        function_name=str(func_name) if func_name is not None else None,
+                        class_name=str(cls_name) if cls_name is not None else None,
+                        start_line=int(chunk.get("start_line", 1)),
+                        end_line=int(chunk.get("end_line", 1)),
+                        code=chunk_text,
+                        docstring=str(doc_str) if doc_str is not None else None,
+                        metadata=dict(chunk_meta) if isinstance(chunk_meta, dict) else {},
                     )
                 )
+                file_chunk_count += 1
+                total_chunks_created += 1
+
+        logger.info("stage_6_ast_chunking_completed", total_chunks=total_chunks_created)

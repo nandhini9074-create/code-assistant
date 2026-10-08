@@ -14,6 +14,7 @@ async def fetch_repository_tree(
     owner: str,
     repo: str,
     commit_sha: str,
+    github_token: str | None = None,
 ) -> list[dict[str, Any]]:
     """
     Fetch the complete Git tree for a specific commit.
@@ -23,6 +24,7 @@ async def fetch_repository_tree(
         owner: GitHub repository owner.
         repo: GitHub repository name.
         commit_sha: The commit SHA or branch name to fetch the tree for.
+        github_token: Optional per-repo GitHub PAT.
         
     Returns:
         A list of tree nodes (dicts containing path, mode, type, sha, size, url).
@@ -30,7 +32,7 @@ async def fetch_repository_tree(
     client = get_github_client()
     endpoint = f"/repos/{owner}/{repo}/git/trees/{commit_sha}?recursive=1"
     
-    response = await client.request("GET", endpoint)
+    response = await client.request("GET", endpoint, github_token=github_token)
     data = response.json()
     
     # Return the flat list of items in the tree

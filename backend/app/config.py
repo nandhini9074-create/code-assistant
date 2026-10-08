@@ -45,6 +45,11 @@ class AppSettings(BaseSettings):
     app_secret_key: str = Field(
         default="change-me-in-production", alias="APP_SECRET_KEY"
     )
+    app_base_url: str = Field(
+        default="http://localhost:8000",
+        alias="APP_BASE_URL",
+        description="Publicly reachable base URL (e.g. ngrok URL). Used to construct GitHub webhook payload URL.",
+    )
 
     @property
     def is_production(self) -> bool:
@@ -63,6 +68,11 @@ class AppSettings(BaseSettings):
         """Use JSON logs in production / staging; pretty logs in development."""
         return self.app_env != "development"
 
+    @property
+    def webhook_payload_url(self) -> str:
+        """Fully constructed GitHub webhook target URL. Never contains secrets."""
+        return f"{self.app_base_url.rstrip('/')}/api/v1/webhooks/github"
+
 
 class DatabaseSettings(BaseSettings):
     """PostgreSQL connection settings."""
@@ -75,7 +85,7 @@ class DatabaseSettings(BaseSettings):
     )
 
     database_url: str = Field(
-        default="postgresql+asyncpg://postgres:postgres@localhost:5432/code_explorer",
+        default="postgresql+asyncpg://postgres:12345@localhost:5433/code_assistant",
         alias="DATABASE_URL",
         description="Async PostgreSQL DSN (postgresql+asyncpg://...)",
     )
@@ -106,10 +116,7 @@ class QdrantSettings(BaseSettings):
         alias="QDRANT_URL",
     )
     qdrant_api_key: str | None = Field(default=None, alias="QDRANT_API_KEY")
-    qdrant_collection_name: str = Field(
-        default="code_chunks", alias="QDRANT_COLLECTION_NAME"
-    )
-    qdrant_timeout: float = Field(default=30.0, alias="QDRANT_TIMEOUT")
+    qdrant_timeout: int = Field(default=30, alias="QDRANT_TIMEOUT")
 
 
 class RedisSettings(BaseSettings):
@@ -182,7 +189,7 @@ class GitHubSettings(BaseSettings):
 
 
 class EmbeddingSettings(BaseSettings):
-    """Voyage AI embedding settings."""
+    """Jina AI embedding settings."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -191,21 +198,27 @@ class EmbeddingSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    voyage_api_key: str | None = Field(default=None, alias="VOYAGE_API_KEY")
-    voyage_embedding_model: str = Field(
-        default="voyage-code-3", alias="VOYAGE_EMBEDDING_MODEL"
+    jina_api_key: str | None = Field(default=None, alias="JINA_API_KEY")
+    jina_api_url: str = Field(
+        default="https://api.jina.ai/v1/embeddings", alias="JINA_API_URL"
     )
-    voyage_embedding_batch_size: int = Field(
-        default=128, alias="VOYAGE_EMBEDDING_BATCH_SIZE"
+    jina_embedding_model: str = Field(
+        default="jina-embeddings-v3", alias="JINA_EMBEDDING_MODEL"
     )
-    voyage_max_retries: int = Field(default=3, alias="VOYAGE_MAX_RETRIES")
+    jina_embedding_batch_size: int = Field(
+        default=32, alias="JINA_EMBEDDING_BATCH_SIZE"
+    )
+    jina_max_retries: int = Field(default=6, alias="JINA_MAX_RETRIES")
+    jina_inter_batch_delay: float = Field(
+        default=2.0, alias="JINA_INTER_BATCH_DELAY"
+    )
     embedding_dimension: int = Field(
         default=1024, alias="EMBEDDING_DIMENSION"
     )
 
 
 class LLMSettings(BaseSettings):
-    """Qwen LLM settings (OpenAI-compatible DashScope endpoint)."""
+    """LLM provider settings for Ollama (active) and Groq (preserved)."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -214,16 +227,72 @@ class LLMSettings(BaseSettings):
         populate_by_name=True,
     )
 
-    qwen_api_key: str | None = Field(default=None, alias="QWEN_API_KEY")
-    qwen_model: str = Field(default="qwen-plus", alias="QWEN_MODEL")
-    qwen_base_url: str = Field(
-        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
-        alias="QWEN_BASE_URL",
+    # Active Provider Selection
+    llm_provider: str = Field(
+        default="ollama",
+        alias="LLM_PROVIDER",
     )
-    qwen_max_tokens: int = Field(default=4096, alias="QWEN_MAX_TOKENS")
-    qwen_temperature: float = Field(default=0.1, alias="QWEN_TEMPERATURE")
-    qwen_max_retries: int = Field(default=3, alias="QWEN_MAX_RETRIES")
-    qwen_timeout_seconds: int = Field(default=60, alias="QWEN_TIMEOUT_SECONDS")
+
+    # Ollama Settings (Active)
+    ollama_base_url: str = Field(
+        default="http://localhost:11434/v1",
+        alias="OLLAMA_BASE_URL",
+    )
+    ollama_model: str = Field(
+        default="qwen3:8b",
+        alias="OLLAMA_MODEL",
+    )
+    ollama_temperature: float = Field(
+        default=0.0,
+        alias="OLLAMA_TEMPERATURE",
+    )
+    ollama_max_tokens: int = Field(
+        default=1024,
+        alias="OLLAMA_MAX_TOKENS",
+    )
+    ollama_timeout_seconds: int = Field(
+        default=120,
+        alias="OLLAMA_TIMEOUT_SECONDS",
+    )
+    ollama_max_retries: int = Field(
+        default=3,
+        alias="OLLAMA_MAX_RETRIES",
+    )
+    ollama_think: bool = Field(
+        default=False,
+        alias="OLLAMA_THINK",
+    )
+
+    # Groq Settings (Preserved for future fallback)
+    groq_api_key: str | None = Field(
+        default=None,
+        alias="GROQ_API_KEY",
+    )
+    groq_model: str = Field(
+        default="qwen/qwen3-32b",
+        alias="GROQ_MODEL",
+    )
+    groq_base_url: str = Field(
+        default="https://api.groq.com/openai/v1",
+        alias="GROQ_BASE_URL",
+    )
+    groq_max_tokens: int = Field(
+        default=4096,
+        alias="GROQ_MAX_TOKENS",
+    )
+    groq_temperature: float = Field(
+        default=0.1,
+        alias="GROQ_TEMPERATURE",
+    )
+    groq_max_retries: int = Field(
+        default=3,
+        alias="GROQ_MAX_RETRIES",
+    )
+    groq_timeout_seconds: int = Field(
+        default=60,
+        alias="GROQ_TIMEOUT_SECONDS",
+    )
+
 
 
 class IngestionSettings(BaseSettings):
@@ -316,31 +385,34 @@ class Settings(
                 warnings.warn(
                     "GITHUB_TOKEN is not set in production", stacklevel=2
                 )
-            if not self.voyage_api_key:
+            if not self.jina_api_key:
                 warnings.warn(
-                    "VOYAGE_API_KEY is not set in production", stacklevel=2
+                    "JINA_API_KEY is not set in production", stacklevel=2
                 )
-            if not self.qwen_api_key:
+            if not self.groq_api_key:
                 warnings.warn(
-                    "QWEN_API_KEY is not set in production", stacklevel=2
+                    "GROQ_API_KEY is not set in production", stacklevel=2
                 )
             if not self.github_webhook_secret:
                 warnings.warn(
                     "GITHUB_WEBHOOK_SECRET is not set in production", stacklevel=2
                 )
+
+        # Warn if base URL is localhost — GitHub cannot send webhooks to localhost
+        if "localhost" in self.app_base_url or "127.0.0.1" in self.app_base_url:
+            warnings.warn(
+                f"APP_BASE_URL is set to '{self.app_base_url}'. "
+                "GitHub cannot reach localhost from the public internet. "
+                "Set APP_BASE_URL to your ngrok/public URL to enable automatic webhook creation.",
+                stacklevel=2,
+            )
+
         return self
 
 
-# Singleton accessor
-
-@lru_cache(maxsize=1)
 def get_settings() -> Settings:
     """
-    Return the cached application settings instance.
-
-    The first call reads from environment / .env file.
-    Subsequent calls return the same cached object.
-
-    In tests, call ``get_settings.cache_clear()`` to reset.
+    Return application settings instance read from environment / .env file.
     """
     return Settings()
+
