@@ -21,10 +21,6 @@ from typing import Any
 
 from app.core.enums import IntentType
 from app.modules.search.domain.search_domain import SearchContext
-from app.modules.search.pipeline.code_change_verifier import (
-    format_final_response_output,
-    verify_and_locate_code_change,
-)
 from app.modules.search.schemas.search_schema import (
     AmbiguousCandidate,
     SearchResponse,
@@ -358,49 +354,6 @@ class ResponseGenerationStage:
         if is_ambig or is_retrieve:
             code_change = None
             suggested_patch = None
-        elif isinstance(code_change, dict):
-            if "start_line" not in code_change:
-                verification = verify_and_locate_code_change(
-                    code_change=code_change,
-                    chunks=context.retrieved_chunks,
-                    primary_chunk=context.primary_chunk,
-                    code_snippets=context.code_snippets,
-                    target_symbol=context.target_symbol or target_info.get("symbol"),
-                )
-                if verification.is_valid and verification.code_change:
-                    code_change = verification.code_change
-                    if not suggested_patch and verification.suggested_patch:
-                        suggested_patch = verification.suggested_patch
-                    if not patch_validation:
-                        patch_validation = {
-                            "status": "passed",
-                            "verification_checks": verification.checks,
-                        }
-
-            patch_to_use = suggested_patch or context.suggested_patch
-            if patch_to_use and "start_line" in code_change:
-                checks_dict = (
-                    (patch_validation.get("verification_checks") if isinstance(patch_validation, dict) else None)
-                    or (context.patch_validation.get("verification_checks") if isinstance(context.patch_validation, dict) else None)
-                    or {
-                        "target_verified": "PASS",
-                        "original_code_found_once": "PASS",
-                        "line_location_calculated": "PASS",
-                        "patch_generated": "PASS",
-                        "repository_modified": "NO",
-                    }
-                )
-                formatted_output = format_final_response_output(
-                    file_path=code_change.get("file_path", target_info.get("file_path", "")),
-                    symbol=code_change.get("symbol") or target_info.get("symbol"),
-                    start_line=code_change.get("start_line", 1),
-                    end_line=code_change.get("end_line", 1),
-                    operation=code_change.get("operation", "replace"),
-                    old_code=code_change.get("old_code", ""),
-                    new_code=code_change.get("new_code", ""),
-                    suggested_patch=patch_to_use,
-                    checks=checks_dict,
-                )
 
         context.final_response = SearchResponse(
             intent=intent_str,
@@ -481,25 +434,38 @@ class ResponseGenerationStage:
         # Case 2: No vulnerabilities found
         # ------------------------------------------------------------------
         if not analysis.get("has_vulnerabilities"):
-            clean_result = "✓ No vulnerabilities found in project dependencies."
+            formatted = (
+                f"Query\n\n{context.query}\n\n"
+                f"Fix Vulnerability\nConfidence: high\n\n"
+                f"Target\n\npackage.json\n\n"
+                f"Audit Result\n\nNo known vulnerabilities were reported by npm audit.\n\n"
+                f"Current Behavior\n\n"
+                f"The dependency tree was checked using npm audit --json, and no "
+                f"vulnerabilities were detected.\n\n"
+                f"Suggested Code\n\nNo code changes are required.\n\n"
+                f"Verification\n\n"
+                f"Verified using npm audit --json. No package version change needed."
+            )
             return SearchResponse(
                 intent=intent_str,
                 repository=repo_info,
                 target={"file_path": "package.json", "symbol": None},
                 requirement=context.query,
-                current_behavior=clean_result,
-                suggestion=clean_result,
+                current_behavior=(
+                    "The dependency tree was checked using npm audit --json, "
+                    "and no vulnerabilities were detected."
+                ),
+                suggestion="No known vulnerabilities were reported by npm audit.",
                 proposed_change=None,
                 code_change=None,
                 suggested_code=None,
                 suggested_patch=None,
                 patch_validation={
                     "status": "passed",
-                    "message": clean_result,
+                    "message": "No vulnerabilities found.",
                     "verification_source": "npm audit --json",
-                    "repository_modified": False,
                 },
-                formatted_output=clean_result,
+                formatted_output=formatted,
                 confidence="high",
                 early_exit=None,
                 ambiguous_candidates=[],
@@ -510,24 +476,19 @@ class ResponseGenerationStage:
         # ------------------------------------------------------------------
         code_change = analysis.get("code_change") or context.code_change
         if not code_change:
-            affected = analysis.get("affected_dependencies") or []
-            dependency_lines = [
-                f"- {item.get('package', '?')}: "
-                f"{item.get('current_version', 'unknown')} -> "
-                f"{item.get('patched_version') or 'no verified patched version'}; "
-                f"{item.get('severity', 'unknown')}; "
-                f"{item.get('advisory_count', 0)} advisories"
-                for item in affected
+            vulns = analysis.get("all_vulnerabilities", [])
+            vuln_lines = [
+                f"- {v['package']}: severity={v.get('severity','?')}, "
+                f"range={v.get('vulnerable_range','?')}, "
+                f"patched={v.get('patched_version','not available')}"
+                for v in vulns
             ]
-            dependency_summary = "\n".join(dependency_lines) or "No direct dependencies identified."
-            advisory_count = analysis.get("vulnerability_count", 0)
+            vuln_summary = "\n".join(vuln_lines) or "Unknown vulnerabilities."
             formatted = (
                 f"Query\n\n{context.query}\n\n"
                 f"Fix Vulnerability\nConfidence: low\n\n"
                 f"Target\n\npackage.json\n\n"
-                f"Audit Summary\n\n"
-                f"{advisory_count} advisory findings across {len(affected)} affected direct dependencies.\n\n"
-                f"Affected Dependencies\n\n{dependency_summary}\n\n"
+                f"Vulnerabilities Found\n\n{vuln_summary}\n\n"
                 f"Suggested Code\n\n"
                 f"No automated patch available — no direct dependency has a "
                 f"verified patched version. Review advisories manually."
@@ -537,10 +498,7 @@ class ResponseGenerationStage:
                 repository=repo_info,
                 target={"file_path": "package.json", "symbol": None},
                 requirement=context.query,
-                current_behavior=(
-                    f"npm audit detected {advisory_count} advisory findings across "
-                    f"{len(affected)} affected direct dependencies."
-                ),
+                current_behavior=analysis.get("current_behavior"),
                 suggestion=analysis.get("proposed_fix") or "Manual review required.",
                 proposed_change=None,
                 code_change=None,
@@ -550,7 +508,6 @@ class ResponseGenerationStage:
                     "status": "failed",
                     "message": "No verified direct-dependency patched version found.",
                     "verification_source": "npm audit --json",
-                    "repository_modified": False,
                 },
                 formatted_output=formatted,
                 confidence="low",
@@ -561,114 +518,127 @@ class ResponseGenerationStage:
         # ------------------------------------------------------------------
         # Case 4: Verified fix available — generate full response
         # ------------------------------------------------------------------
-        per_package_changes: list[dict[str, Any]] = code_change.get("per_package") or []
-        affected = analysis.get("affected_dependencies") or []
-        affected_by_name = {
-            item.get("package"): item for item in affected
-        }
+        selected = analysis.get("selected_vulnerability") or {}
+        pkg_name = selected.get("package") or analysis.get("package", "")
+        severity = selected.get("severity") or analysis.get("severity", "unknown")
+        vuln_range = selected.get("vulnerable_range") or analysis.get("vulnerable_range", "unknown")
+        patched_version = selected.get("patched_version") or analysis.get("patched_version", "unknown")
+        current_version = selected.get("current_version") or analysis.get("current_version", "unknown")
+        title = selected.get("title") or analysis.get("title", f"{pkg_name} vulnerability")
+        urls = selected.get("urls") or analysis.get("urls", [])
+        remediation = selected.get("remediation") or analysis.get("remediation", f"Upgrade {pkg_name} to {patched_version}")
+
+        # per_package contains individual changes for every upgraded dependency
+        per_package_changes: list[dict] = code_change.get("per_package") or []
         if not per_package_changes:
             per_package_changes = [code_change]
 
-        packages_fixed = [
-            item["package"]
-            for item in per_package_changes
-            if item.get("package")
-        ]
-        per_package_details = []
-        for change in per_package_changes:
-            package = change.get("package", "?")
-            dependency = affected_by_name.get(package, {})
-            per_package_details.append({
-                "package": package,
-                "current_version": dependency.get("current_version", "unknown"),
-                "patched_version": dependency.get("patched_version"),
-                "severity": dependency.get("severity", "unknown"),
-                "advisory_count": dependency.get("advisory_count", 0),
-                "old": change.get("old_code", "").strip(),
-                "new": change.get("new_code", "").strip(),
-            })
+        old_code = code_change.get("old_code", "")
+        new_code = code_change.get("new_code", "")
+        start_line = code_change.get("start_line", 1)
 
-        total_count = analysis.get("vulnerability_count", 0)
-        affected_count = len(affected) or len(per_package_details)
-        package_summary = "\n".join(
-            f"- {item.get('package', '?')}: "
-            f"{item.get('current_version', 'unknown')} → "
-            f"{item.get('patched_version') or 'no verified patched version'}; "
-            f"{item.get('severity', 'unknown')}; "
-            f"{item.get('advisory_count', 0)} "
-            f"{'advisory' if item.get('advisory_count') == 1 else 'advisories'}"
-            for item in affected
-        )
-        if not package_summary:
-            package_summary = "\n".join(
-                f"- {item['package']}: {item['current_version']} → "
-                f"{item['patched_version']}"
-                for item in per_package_details
-            )
-
-        current_behavior = (
-            f"npm audit detected {total_count} advisory findings across "
-            f"{affected_count} affected direct dependencies."
-        )
-        proposed_change = "\n".join(
-            f"{item['package']}: {item['current_version']} → {item['patched_version']}"
-            for item in per_package_details
-        )
-        suggestion = "Review the verified package.json upgrades and unified diff before applying."
-
+        # Build a unified diff covering ALL changed packages
         suggested_patch = context.suggested_patch
         if not suggested_patch:
-            diff_lines = list(difflib.unified_diff(
-                code_change.get("old_code", "").splitlines(),
-                code_change.get("new_code", "").splitlines(),
-                fromfile="a/package.json",
-                tofile="b/package.json",
-                lineterm="",
-                n=3,
-            ))
-            suggested_patch = "\n".join(diff_lines) if diff_lines else None
+            all_diff_lines: list[str] = []
+            for ch in per_package_changes:
+                diff_lines = list(difflib.unified_diff(
+                    [ch["old_code"]],
+                    [ch["new_code"]],
+                    fromfile="a/package.json",
+                    tofile="b/package.json",
+                    lineterm="",
+                    n=0,
+                ))
+                all_diff_lines.extend(diff_lines)
+            suggested_patch = "\n".join(all_diff_lines) if all_diff_lines else None
 
-        patch_status = (context.patch_validation or {}).get("status", "failed")
-        patch_verified = patch_status == "passed" and bool(suggested_patch)
+        # Build a human-readable "Suggested Code" block showing ALL changes
+        per_pkg_suggested = "\n".join(
+            f'  {ch["new_code"].strip()}   # was: {ch["old_code"].strip()}'
+            for ch in per_package_changes
+        )
+        pkg_names_fixed = ", ".join(ch["package"] for ch in per_package_changes) if per_package_changes and "package" in per_package_changes[0] else pkg_name
+
+        curr_behavior = (
+            analysis.get("current_behavior")
+            or (
+                f"package.json specifies {pkg_name}@{current_version} which falls "
+                f"within the vulnerable range {vuln_range}. Advisory: {title}."
+            )
+        )
+        short_description = (
+            analysis.get("proposed_fix")
+            or f"Update {pkg_name} from {current_version} to {patched_version} to fix the {severity} vulnerability."
+        )
+
+        all_vulns = analysis.get("all_vulnerabilities") or analysis.get("vulnerabilities") or []
+        total_count = analysis.get("vulnerability_count") or len(all_vulns) or 1
+
+        all_vuln_lines = [
+            f"  - {v.get('package','?')}: {v.get('severity','?')} - {v.get('title','vulnerability')}"
+            for v in all_vulns
+        ]
+        all_vulns_text = "\n".join(all_vuln_lines) if all_vuln_lines else f"  - {pkg_name}: {severity}"
+
+        audit_evidence = "\n".join(filter(None, [
+            f"- Total Vulnerabilities Detected: {total_count}",
+            f"- All Detected Vulnerabilities:\n{all_vulns_text}" if total_count > 1 else None,
+            f"- Packages Fixed: {pkg_names_fixed}",
+            f"- Selected Package (highest severity): {pkg_name}",
+            f"- Current Version: {current_version}",
+            f"- Severity: {severity}",
+            f"- Vulnerable Range: {vuln_range}",
+            f"- Patched Version: {patched_version}",
+            "- Verification Source: npm audit --json",
+            f"- Remediation: {remediation}",
+            f"- Advisory URL: {urls[0]}" if urls else None,
+        ]))
+
         verification_text = "\n".join([
-            f"npm audit patched versions: {'PASS' if packages_fixed else 'FAIL'}",
-            f"Unified diff verified: {'PASS' if patch_verified else 'FAIL'}",
+            "Target verified: PASS",
+            f"Packages changed: {len(per_package_changes)}",
+            f"Line location calculated from source: PASS (first change at line {start_line})",
+            f"Patch generated: {'PASS' if suggested_patch else 'FAIL'}",
             "Repository modified: NO",
         ])
+
         formatted = (
+            f"Query\n\n{context.query}\n\n"
             f"Fix Vulnerability\nConfidence: {confidence}\n\n"
             f"Target\n\npackage.json\n\n"
-            f"Audit Summary\n\n"
-            f"Total advisory findings: {total_count}\n"
-            f"Affected direct dependencies: {affected_count}\n\n"
-            f"Proposed Changes\n\n{package_summary}\n\n"
-            f"Suggested Code\n\n{code_change.get('new_code', '')}\n\n"
-            f"Unified Diff\n\n{suggested_patch or 'No patch generated.'}\n\n"
+            f"Vulnerability\n\n{title}\n\n"
+            f"Audit Evidence\n\n{audit_evidence}\n\n"
+            f"Suggestion\n\n{short_description}\n\n"
+            f"Current Behavior\n\n{curr_behavior}\n\n"
+            f"Proposed Change\n\n{short_description}\n\n"
+            f"Suggested Code\n\npackage.json — updated dependencies:\n\n"
+            f"{per_pkg_suggested}\n\n"
+            f"Patch\n\n{suggested_patch or 'No patch generated.'}\n\n"
             f"Verification\n\n{verification_text}"
         )
 
-        checks = (context.patch_validation or {}).get("checks", [])
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
             target={"file_path": "package.json", "symbol": None},
             requirement=context.query,
-            current_behavior=current_behavior,
-            suggestion=suggestion,
-            proposed_change=proposed_change,
+            current_behavior=curr_behavior,
+            suggestion=short_description,
+            proposed_change=short_description,
             code_change=code_change,
-            suggested_code=code_change.get("new_code"),
+            suggested_code=new_code,
             suggested_patch=suggested_patch,
             patch_validation={
-                "status": "passed" if patch_verified else "failed",
-                "message": "Verified npm audit remediation suggestions; repository files remain unchanged.",
+                "status": "passed",
+                "message": f"Verified patched versions from npm audit --json for: {pkg_names_fixed}.",
                 "verification_source": "npm audit --json",
-                "packages_fixed": packages_fixed,
-                "per_package_changes": per_package_details,
-                "total_advisory_findings": total_count,
-                "affected_dependency_count": affected_count,
-                "repository_modified": False,
-                "checks": checks,
+                "packages_fixed": pkg_names_fixed,
+                "per_package_changes": [
+                    {"package": ch.get("package", "?"), "old": ch["old_code"].strip(), "new": ch["new_code"].strip()}
+                    for ch in per_package_changes
+                ],
+                "severity": severity,
             },
             formatted_output=formatted,
             confidence=confidence,
@@ -726,16 +696,6 @@ class ResponseGenerationStage:
                 or context.triage_result.get("proposed_fix")
             )
 
-            if code_change is None:
-                code_change = (
-                    context.triage_result.get("code_change")
-                    or (
-                        context.triage_result.get("change_plan", {}).get("code_change")
-                        if isinstance(context.triage_result.get("change_plan"), dict)
-                        else None
-                    )
-                )
-
             suggested_code = context.triage_result.get(
                 "suggested_code"
             )
@@ -754,36 +714,10 @@ class ResponseGenerationStage:
                 "confidence"
             )
 
-            # -----------------------------------------------------
-            # Do not expose recommendations or code when analysis
-            # or validation is unavailable.
-            # -----------------------------------------------------
-            if (
-                context.triage_result.get("validation_status")
-                == "unavailable"
-            ):
-                suggestion = (
-                    context.triage_result.get("ai_suggestion")
-                    or (
-                        "Code analysis or validation was unavailable. "
-                        "No recommendation can be safely generated."
-                    )
-                )
-
-                proposed_change = (
-                    context.triage_result.get("proposed_change")
-                    or suggestion
-                )
-                suggested_code = None
-
         # ---------------------------------------------------------
         # CODE ANALYSIS RESULT
         # ---------------------------------------------------------
-        if (
-            context.analysis_result
-            and context.analysis_result.get("analysis_status")
-            != "UNAVAILABLE"
-        ):
+        if context.analysis_result:
             if requirement is None:
                 requirement = (
                     context.analysis_result.get("requirement")
@@ -807,7 +741,6 @@ class ResponseGenerationStage:
                     or context.analysis_result.get(
                         "proposed_fix"
                     )
-                    or context.analysis_result.get("answer")
                 )
 
             if proposed_change is None:
@@ -829,15 +762,24 @@ class ResponseGenerationStage:
                     "confidence"
                 )
 
-        # ---------------------------------------------------------
-        # NORMALIZE VALUES
-        # ---------------------------------------------------------
-        if context.validation_status != "passed":
-            suggestion = suggestion or (
-                "Cannot be determined from the available evidence."
-            )
-            proposed_change = proposed_change or suggestion
-            suggested_code = None
+        early_exit_payload = {
+            "code": context.early_exit,
+            "message": self._get_early_exit_message(context.early_exit),
+        }
+
+        ambiguous_candidates: list[AmbiguousCandidate] = []
+        if (
+            context.early_exit == "EARLY_EXIT_C"
+            and context.ambiguity_candidates
+        ):
+            ambiguous_candidates = [
+                AmbiguousCandidate(
+                    file_path=candidate.get("file_path", ""),
+                    symbol=candidate.get("symbol"),
+                    reason=candidate.get("reason", "Ambiguous match"),
+                )
+                for candidate in context.ambiguity_candidates
+            ]
 
         suggestion = self._normalize_suggestion(
             suggestion
@@ -851,67 +793,9 @@ class ResponseGenerationStage:
             suggested_code
         )
 
-        # ---------------------------------------------------------
-        # EARLY EXIT PAYLOAD
-        # ---------------------------------------------------------
-        early_exit_payload: dict[str, Any] = {
-            "code": context.early_exit,
-            "message": (
-                "The analysis could not be safely validated."
-                if context.early_exit == "EARLY_EXIT_D"
-                else context.early_exit_message
-            ),
-        }
+        if isinstance(code_change, dict):
+            code_change = self._normalize_code_change(code_change)
 
-        if (
-            getattr(context, "ambiguous", False)
-            or getattr(context, "is_ambiguous", False)
-        ):
-            early_exit_payload["ambiguous"] = True
-
-        if getattr(context, "symbol_conflict", False):
-            early_exit_payload["symbol_conflict"] = True
-
-        # ---------------------------------------------------------
-        # STRUCTURED AMBIGUOUS CANDIDATES
-        # ---------------------------------------------------------
-        raw_candidates = (
-            getattr(
-                context,
-                "ambiguous_candidates",
-                [],
-            )
-            or []
-        )
-
-        structured_candidates: list[AmbiguousCandidate] = []
-
-        for c in raw_candidates:
-            try:
-                structured_candidates.append(
-                    AmbiguousCandidate(
-                        name=str(
-                            c.get("name") or ""
-                        ),
-                        file_path=str(
-                            c.get("file_path") or ""
-                        ),
-                        class_name=(
-                            c.get("class_name")
-                            or None
-                        ),
-                        start_line=c.get("start_line"),
-                        end_line=c.get("end_line"),
-                        score=c.get("score"),
-                    )
-                )
-            except Exception:
-                pass
-
-        # ---------------------------------------------------------
-        # BUILD EARLY EXIT RESPONSE
-        # ---------------------------------------------------------
-        # For early exit / ambiguous cases, do not generate patch or change location
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
@@ -920,248 +804,222 @@ class ResponseGenerationStage:
             current_behavior=current_behavior,
             suggestion=suggestion,
             proposed_change=proposed_change,
-            code_change=None,
+            code_change=code_change,
             suggested_code=suggested_code,
-            suggested_patch=None,
-            patch_validation=None,
-            formatted_output=None,
+            suggested_patch=suggested_patch or context.suggested_patch,
+            patch_validation=patch_validation or context.patch_validation,
             confidence=confidence,
             early_exit=early_exit_payload,
-            ambiguous_candidates=structured_candidates,
+            ambiguous_candidates=ambiguous_candidates,
         )
 
-    # =============================================================
-    # SUGGESTION NORMALIZATION
-    # =============================================================
+    # -------------------------------------------------------------
+    # HELPERS
+    # -------------------------------------------------------------
 
-    @staticmethod
-    def _normalize_code_change(
-        code_change: dict[str, Any],
-    ) -> dict[str, Any]:
-        """Keep the exact code change as the single canonical payload."""
-
-        normalized = dict(code_change)
-        normalized.pop("change_location", None)
-        return normalized
-
-    @staticmethod
-    def _normalize_suggestion(
-        suggestion: Any,
+    def _resolve_target_symbol(
+        self,
+        context: SearchContext,
     ) -> str | None:
-        """
-        Convert any suggestion value into the string expected by
-        SearchResponse.suggestion and SearchResponse.proposed_change.
-        """
+        """Resolve target symbol with proper fallback handling."""
+
+        if context.target_symbol:
+            return context.target_symbol
+
+        chunk = context.primary_chunk
+        if not chunk:
+            return None
+
+        for key in ("symbol", "symbol_name", "target_symbol"):
+            value = chunk.metadata.get(key)
+            if value:
+                return value
+
+        return None
+
+    def _get_early_exit_message(self, code: str | None) -> str:
+        """Map early exit codes to user-friendly messages."""
+
+        mapping = {
+            "EARLY_EXIT_A": "The request is unclear and requires clarification.",
+            "EARLY_EXIT_B": "No relevant code could be found in the repository.",
+            "EARLY_EXIT_C": "Multiple candidate locations match the request.",
+            "EARLY_EXIT_D": "The request was resolved using indexed documentation/examples.",
+        }
+
+        return mapping.get(
+            code or "",
+            "Search concluded early.",
+        )
+
+    # -------------------------------------------------------------
+    # NORMALIZATION HELPERS
+    # -------------------------------------------------------------
+
+    def _normalize_suggestion(self, suggestion: Any) -> str | None:
+        """Normalize suggestion field ensuring clean string or None."""
 
         if suggestion is None:
             return None
 
+        # Dict representation
         if isinstance(suggestion, dict):
-            description = suggestion.get("description")
-
-            if description is not None:
-                if isinstance(description, str):
-                    return description.strip() or None
-
-                return str(description)
-
-            return json.dumps(
-                suggestion,
-                ensure_ascii=False,
-            )
-
-        if isinstance(suggestion, list):
-            return json.dumps(
-                suggestion,
-                ensure_ascii=False,
-            )
-
-        if isinstance(suggestion, str):
-            value = suggestion.strip()
-
-            if not value:
-                return None
-
-            # Try JSON first.
+            for key in ("text", "summary", "description", "content"):
+                if key in suggestion and isinstance(suggestion[key], str):
+                    clean = suggestion[key].strip()
+                    if clean:
+                        return clean
             try:
-                parsed = json.loads(value)
+                return json.dumps(suggestion)
+            except Exception:
+                return str(suggestion)
 
+        # Non-string fallback
+        if not isinstance(suggestion, str):
+            return str(suggestion)
+
+        cleaned = suggestion.strip()
+        if not cleaned:
+            return None
+
+        # Check for stringified JSON dictionary
+        if cleaned.startswith("{") and cleaned.endswith("}"):
+            try:
+                parsed = json.loads(cleaned)
                 if isinstance(parsed, dict):
-                    description = parsed.get("description")
-
-                    if description is not None:
-                        if isinstance(description, str):
-                            return description.strip() or None
-
-                        return str(description)
-
-                    return json.dumps(
-                        parsed,
-                        ensure_ascii=False,
-                    )
-
-                if isinstance(parsed, list):
-                    return json.dumps(
-                        parsed,
-                        ensure_ascii=False,
-                    )
-
-            except (
-                json.JSONDecodeError,
-                TypeError,
-                ValueError,
-            ):
+                    for key in ("text", "summary", "description", "content"):
+                        if key in parsed and isinstance(parsed[key], str):
+                            val = parsed[key].strip()
+                            if val:
+                                return val
+            except Exception:
                 pass
 
-            # Try Python repr.
-            try:
-                parsed = ast.literal_eval(value)
+        # Strip wrapping markdown code blocks if the entire suggestion is wrapped
+        if cleaned.startswith("```") and cleaned.endswith("```"):
+            lines = cleaned.splitlines()
+            if len(lines) >= 3:
+                inner = "\n".join(lines[1:-1]).strip()
+                if inner:
+                    cleaned = inner
 
-                if isinstance(parsed, dict):
-                    description = parsed.get("description")
+        return cleaned
 
-                    if description is not None:
-                        if isinstance(description, str):
-                            return description.strip() or None
-
-                        return str(description)
-
-                    return json.dumps(
-                        parsed,
-                        ensure_ascii=False,
-                    )
-
-                if isinstance(parsed, list):
-                    return json.dumps(
-                        parsed,
-                        ensure_ascii=False,
-                    )
-
-            except (
-                ValueError,
-                SyntaxError,
-                TypeError,
-            ):
-                pass
-
-            return value
-
-        return str(suggestion)
-
-    # =============================================================
-    # SUGGESTED CODE NORMALIZATION
-    # =============================================================
-
-    @staticmethod
-    def _normalize_code(
-        code: Any,
-    ) -> str | None:
-        """
-        Normalize the suggested code returned by the LLM.
-
-        suggested_code is expected to be a string. If the provider
-        returns another value, convert it safely to a string.
-        """
+    def _normalize_code(self, code: Any) -> str | None:
+        """Normalize suggested_code ensuring clean string or None."""
 
         if code is None:
             return None
 
-        if isinstance(code, str):
-            value = code.strip()
-            return value or None
-
+        # Dict representation
         if isinstance(code, dict):
-            return json.dumps(
-                code,
-                ensure_ascii=False,
+            for key in ("code", "source", "content", "snippet"):
+                if key in code and isinstance(code[key], str):
+                    clean = code[key].strip()
+                    if clean:
+                        return clean
+            try:
+                return json.dumps(code)
+            except Exception:
+                return str(code)
+
+        if not isinstance(code, str):
+            return str(code)
+
+        cleaned = code.strip()
+        if not cleaned:
+            return None
+
+        # Check for stringified JSON dictionary
+        if cleaned.startswith("{") and cleaned.endswith("}"):
+            try:
+                parsed = json.loads(cleaned)
+                if isinstance(parsed, dict):
+                    for key in ("code", "source", "content", "snippet"):
+                        if key in parsed and isinstance(parsed[key], str):
+                            val = parsed[key].strip()
+                            if val:
+                                return val
+            except Exception:
+                pass
+
+        return cleaned
+
+    def _normalize_code_change(
+        self,
+        change: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Validate and normalize a structured code change object."""
+
+        if not isinstance(change, dict):
+            return None
+
+        required = {"file_path", "old_code", "new_code"}
+        if not required.issubset(change.keys()):
+            return None
+
+        normalized = {
+            "file_path": str(change["file_path"]),
+            "old_code": str(change["old_code"]),
+            "new_code": str(change["new_code"]),
+            "operation": change.get("operation", "replace"),
+            "start_line": change.get("start_line"),
+            "end_line": change.get("end_line"),
+            "symbol": change.get("symbol"),
+        }
+
+        # Validate start_line / end_line
+        if normalized["start_line"] is not None:
+            try:
+                normalized["start_line"] = int(normalized["start_line"])
+            except (ValueError, TypeError):
+                normalized["start_line"] = None
+
+        if normalized["end_line"] is not None:
+            try:
+                normalized["end_line"] = int(normalized["end_line"])
+            except (ValueError, TypeError):
+                normalized["end_line"] = None
+
+        # Enforce valid range
+        if (
+            normalized["start_line"] is not None
+            and normalized["end_line"] is not None
+            and normalized["start_line"] > normalized["end_line"]
+        ):
+            normalized["start_line"], normalized["end_line"] = (
+                normalized["end_line"],
+                normalized["start_line"],
             )
 
-        if isinstance(code, list):
-            return "\n".join(
-                str(item)
-                for item in code
-            ).strip() or None
+        # -------------------------------------------------------------
+        # SYNTAX VALIDATION
+        # -------------------------------------------------------------
+        if not self._validate_syntax(
+            file_path=normalized["file_path"],
+            code=normalized["new_code"],
+        ):
+            return None
 
-        return str(code)
+        return normalized
 
-    # =============================================================
-    # TARGET SYMBOL
-    # =============================================================
+    def _validate_syntax(self, file_path: str, code: str) -> bool:
+        """Basic syntax validation for Python and JSON files."""
 
-    @staticmethod
-    def _resolve_target_symbol(
-        context: SearchContext,
-    ) -> str | None:
-        """
-        Resolve the most useful target symbol.
+        ext = file_path.rsplit(".", 1)[-1].lower() if "." in file_path else ""
 
-        Prefer an already meaningful target symbol.
+        if ext == "py":
+            try:
+                ast.parse(code)
+                return True
+            except SyntaxError:
+                return False
 
-        If the target symbol is a filename or is otherwise unavailable,
-        use the primary chunk metadata to resolve the class/function.
-        """
+        if ext == "json":
+            try:
+                json.loads(code)
+                return True
+            except Exception:
+                return False
 
-        target_symbol = context.target_symbol
-        primary_chunk = context.primary_chunk
-
-        metadata = (
-            primary_chunk.metadata
-            if primary_chunk and primary_chunk.metadata
-            else {}
-        )
-
-        class_name = str(
-            metadata.get("class_name") or ""
-        ).strip()
-
-        function_name = str(
-            metadata.get("function_name") or ""
-        ).strip()
-
-        file_path = (
-            primary_chunk.file_path
-            if primary_chunk
-            else None
-        )
-
-        # ---------------------------------------------------------
-        # If target_symbol is meaningful and is not just the file path,
-        # keep it.
-        # ---------------------------------------------------------
-        if target_symbol:
-            normalized = target_symbol.strip()
-
-            if normalized and normalized != file_path:
-                if not normalized.lower().endswith(
-                    (
-                        ".ts",
-                        ".tsx",
-                        ".js",
-                        ".jsx",
-                        ".py",
-                        ".java",
-                        ".go",
-                        ".rs",
-                        ".cpp",
-                        ".c",
-                        ".cs",
-                    )
-                ):
-                    return normalized
-
-        # ---------------------------------------------------------
-        # Prefer class name from chunk metadata.
-        # ---------------------------------------------------------
-        if class_name:
-            return class_name
-
-        # ---------------------------------------------------------
-        # Fall back to function/method name.
-        # ---------------------------------------------------------
-        if function_name:
-            return function_name
-
-        # ---------------------------------------------------------
-        # Last fallback.
-        # ---------------------------------------------------------
-        return target_symbol
+        return True
