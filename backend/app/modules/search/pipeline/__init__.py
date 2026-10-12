@@ -5,6 +5,7 @@ from app.modules.search.pipeline.code_identification import CodeIdentificationSt
 from app.modules.search.pipeline.code_retrieval import CodeRetrievalStage
 from app.modules.search.pipeline.collection_selection import CollectionSelectionStage
 from app.modules.search.pipeline.context_builder import ContextBuilderStage
+from app.modules.search.pipeline.deep_search import DeepSearchStage
 from app.modules.search.pipeline.dependency_vulnerability_analysis import DependencyVulnerabilityAnalysisStage
 from app.modules.search.pipeline.evidence_validation import EvidenceValidationStage
 from app.modules.search.pipeline.intent_classification import IntentClassificationStage
@@ -28,6 +29,7 @@ __all__ = [
     "CodeRetrievalStage",
     "CollectionSelectionStage",
     "ContextBuilderStage",
+    "DeepSearchStage",
     "ContractAnalysisResult",
     "ContractIssueType",
     "DependencyVulnerabilityAnalysisStage",

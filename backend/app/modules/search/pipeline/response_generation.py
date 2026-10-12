@@ -1,3 +1,4 @@
+
 """
 app/modules/search/pipeline/response_generation.py
 
@@ -86,6 +87,47 @@ class ResponseGenerationStage:
             },
             ambiguous_candidates=[],
         )
+
+
+    # =============================================================
+    # TARGET SYMBOL
+    # =============================================================
+
+    @staticmethod
+    def _resolve_target_symbol(
+        context: SearchContext,
+    ) -> str | None:
+        """Resolve a meaningful symbol without mistaking a filename for one."""
+        primary_chunk = context.primary_chunk
+        metadata = (
+            primary_chunk.metadata
+            if primary_chunk and isinstance(primary_chunk.metadata, dict)
+            else {}
+        )
+        file_path = primary_chunk.file_path if primary_chunk else None
+        class_name = str(metadata.get("class_name") or "").strip()
+        function_name = str(metadata.get("function_name") or "").strip()
+
+        target_symbol = context.target_symbol
+        if isinstance(target_symbol, str):
+            target_symbol = target_symbol.strip()
+            source_extensions = (
+                ".py", ".js", ".jsx", ".ts", ".tsx", ".java",
+                ".go", ".rs", ".cpp", ".c", ".cs", ".php", ".rb",
+            )
+            if (
+                target_symbol
+                and target_symbol != file_path
+                and not target_symbol.lower().endswith(source_extensions)
+            ):
+                return target_symbol
+
+        # Prefer class, then function/method metadata when the target is a path.
+        if class_name:
+            return class_name
+        if function_name:
+            return function_name
+        return None
 
     async def execute(self, context: SearchContext) -> None:
         """Build and store the final compact SearchResponse."""
@@ -432,60 +474,119 @@ class ResponseGenerationStage:
         target_info: dict,
     ) -> SearchResponse:
         """
-        Format the final structured response for FIX_VULNERABILITY intent.
+        Format the final structured response for FIX_VULNERABILITY.
 
-        All vulnerability data comes from context.analysis_result, which is
-        populated by FixVulnerabilityAnalyzer (deterministic, no LLM).
+        The vulnerability analyzer is responsible for:
+          1. Running npm audit.
+          2. Running npm audit fix only inside a temporary directory.
+          3. Running npm audit again.
+          4. Comparing the original and fixed manifests.
+          5. Generating suggested_code/code_change.
+
+        This method only presents those results.
+
+        It does NOT:
+          - run npm,
+          - modify the repository,
+          - generate a new vulnerability fix,
+          - invent patched versions,
+          - or perform new analysis.
         """
+
         import difflib
 
         analysis = context.analysis_result or {}
-        audit_status = analysis.get("analysis_status")
+
+        analysis_status = analysis.get("analysis_status")
         confidence = analysis.get("confidence", "low")
 
-        # ------------------------------------------------------------------
-        # Case 1: Analyzer could not complete (missing npm, bad project dir…)
-        # ------------------------------------------------------------------
-        if audit_status == "UNAVAILABLE":
-            err = analysis.get("error") or "npm audit could not be completed."
+        fix_attempted = bool(
+            analysis.get("fix_attempted")
+        )
+
+        fix_verified = bool(
+            analysis.get("fix_verified")
+        )
+
+        # ---------------------------------------------------------
+        # CASE 1: AUDIT UNAVAILABLE
+        # ---------------------------------------------------------
+        if analysis_status == "UNAVAILABLE":
+            error_message = (
+                analysis.get("error")
+                or "npm audit could not be completed."
+            )
+
             formatted = (
-                f"Query\n\n{context.query}\n\n"
-                f"Fix Vulnerability\nConfidence: low\n\n"
-                f"Target\n\npackage.json\n\n"
+                f"Query\n\n"
+                f"{context.query}\n\n"
+                f"Fix Vulnerability\n"
+                f"Confidence: low\n\n"
+                f"Target\n\n"
+                f"package.json\n\n"
                 f"Verification\n\n"
                 f"The npm dependency audit could not be completed.\n\n"
-                f"Error: {err}\n\n"
+                f"Error: {error_message}\n\n"
                 f"Suggested Code\n\n"
-                f"No code change was generated because the vulnerability status "
-                f"or remediation could not be verified safely."
+                f"No code change was generated because the vulnerability "
+                f"status or remediation could not be verified safely."
             )
+
             return SearchResponse(
                 intent=intent_str,
                 repository=repo_info,
-                target={"file_path": "package.json", "symbol": None},
+                target={
+                    "file_path": "package.json",
+                    "symbol": None,
+                },
                 requirement=context.query,
                 current_behavior=None,
-                suggestion="The npm dependency audit could not be completed. No remediation was generated.",
+                suggestion=(
+                    "The npm dependency audit could not be completed. "
+                    "No remediation was generated."
+                ),
                 proposed_change=None,
                 code_change=None,
                 suggested_code=None,
                 suggested_patch=None,
-                patch_validation={"status": "failed", "message": err},
+                patch_validation={
+                    "status": "failed",
+                    "message": error_message,
+                    "verification_source": "npm audit --json",
+                    "repository_modified": False,
+                },
                 formatted_output=formatted,
                 confidence="low",
                 early_exit=None,
                 ambiguous_candidates=[],
             )
 
-        # ------------------------------------------------------------------
-        # Case 2: No vulnerabilities found
-        # ------------------------------------------------------------------
-        if not analysis.get("has_vulnerabilities"):
-            clean_result = "✓ No vulnerabilities found in project dependencies."
+        # ---------------------------------------------------------
+        # CASE 2: NO VULNERABILITIES FOUND INITIALLY
+        #
+        # This must be checked using fix_attempted.
+        #
+        # The analyzer uses has_vulnerabilities=False both when:
+        #   A) nothing was found initially, and
+        #   B) vulnerabilities were found and successfully fixed.
+        #
+        # Therefore fix_verified/fix_attempted must be checked first.
+        # ---------------------------------------------------------
+        if (
+            not fix_attempted
+            and not analysis.get("has_vulnerabilities")
+        ):
+            clean_result = (
+                "✓ No vulnerabilities found in project dependencies."
+            )
+
             return SearchResponse(
                 intent=intent_str,
                 repository=repo_info,
-                target={"file_path": "package.json", "symbol": None},
+                target={
+                    "file_path": "package.json",
+                    "symbol": None,
+                },
                 requirement=context.query,
                 current_behavior=clean_result,
                 suggestion=clean_result,
@@ -505,52 +606,361 @@ class ResponseGenerationStage:
                 ambiguous_candidates=[],
             )
 
-        # ------------------------------------------------------------------
-        # Case 3: Vulnerabilities detected but no verified direct fix
-        # ------------------------------------------------------------------
-        code_change = analysis.get("code_change") or context.code_change
-        if not code_change:
-            affected = analysis.get("affected_dependencies") or []
-            dependency_lines = [
-                f"- {item.get('package', '?')}: "
-                f"{item.get('current_version', 'unknown')} -> "
-                f"{item.get('patched_version') or 'no verified patched version'}; "
-                f"{item.get('severity', 'unknown')}; "
-                f"{item.get('advisory_count', 0)} advisories"
-                for item in affected
-            ]
-            dependency_summary = "\n".join(dependency_lines) or "No direct dependencies identified."
-            advisory_count = analysis.get("vulnerability_count", 0)
-            formatted = (
-                f"Query\n\n{context.query}\n\n"
-                f"Fix Vulnerability\nConfidence: low\n\n"
-                f"Target\n\npackage.json\n\n"
-                f"Audit Summary\n\n"
-                f"{advisory_count} advisory findings across {len(affected)} affected direct dependencies.\n\n"
-                f"Affected Dependencies\n\n{dependency_summary}\n\n"
-                f"Suggested Code\n\n"
-                f"No automated patch available — no direct dependency has a "
-                f"verified patched version. Review advisories manually."
+        # ---------------------------------------------------------
+        # CASE 3: VERIFIED FIX
+        #
+        # This is the new npm audit -> npm audit fix -> npm audit
+        # workflow.
+        #
+        # The analyzer has already generated:
+        #   - suggested_code
+        #   - suggested_changes
+        #   - code_change
+        #
+        # We only present them here.
+        # ---------------------------------------------------------
+        if fix_verified:
+            code_change = (
+                analysis.get("code_change")
+                or context.code_change
             )
+
+            suggested_code = analysis.get(
+                "suggested_code"
+            )
+
+            suggested_changes = (
+                analysis.get("suggested_changes")
+                or []
+            )
+
+            initial_vulnerabilities = (
+                analysis.get("all_vulnerabilities")
+                or analysis.get("vulnerabilities")
+                or []
+            )
+
+            initial_count = analysis.get(
+                "initial_vulnerability_count"
+            )
+
+            if initial_count is None:
+                initial_count = len(
+                    initial_vulnerabilities
+                )
+
+            changed_files = [
+                change.get("file_path")
+                for change in suggested_changes
+                if isinstance(change, dict)
+                and change.get("file_path")
+            ]
+
+            # -----------------------------------------------------
+            # Build a fallback suggested_code only if the analyzer
+            # did not already provide it.
+            #
+            # Normally the analyzer already supplies this value.
+            # -----------------------------------------------------
+            if not suggested_code and suggested_changes:
+                sections: list[str] = []
+
+                for change in suggested_changes:
+                    if not isinstance(change, dict):
+                        continue
+
+                    file_path = change.get(
+                        "file_path",
+                        "unknown",
+                    )
+
+                    diff = change.get(
+                        "diff",
+                        "",
+                    )
+
+                    if diff:
+                        sections.append(
+                            f"File: {file_path}\n\n{diff}"
+                        )
+                    else:
+                        sections.append(
+                            f"File: {file_path}\n\n"
+                            f"{change.get('new_code', '')}"
+                        )
+
+                suggested_code = (
+                    "\n\n".join(sections)
+                    if sections
+                    else None
+                )
+
+            # -----------------------------------------------------
+            # Fallback diff only for the primary code_change.
+            # This does not change the analyzer's logic.
+            # -----------------------------------------------------
+            suggested_patch = (
+                context.suggested_patch
+                or analysis.get("suggested_patch")
+            )
+
+            if (
+                not suggested_patch
+                and isinstance(code_change, dict)
+                and code_change.get("old_code") is not None
+                and code_change.get("new_code") is not None
+            ):
+                diff_lines = list(
+                    difflib.unified_diff(
+                        str(
+                            code_change.get(
+                                "old_code",
+                                "",
+                            )
+                        ).splitlines(),
+                        str(
+                            code_change.get(
+                                "new_code",
+                                "",
+                            )
+                        ).splitlines(),
+                        fromfile=(
+                            f"a/{code_change.get('file_path', 'package.json')}"
+                        ),
+                        tofile=(
+                            f"b/{code_change.get('file_path', 'package.json')}"
+                        ),
+                        lineterm="",
+                        n=3,
+                    )
+                )
+
+                suggested_patch = (
+                    "\n".join(diff_lines)
+                    if diff_lines
+                    else None
+                )
+
+            vulnerability_summary = (
+                self._format_vulnerability_summary_for_response(
+                    initial_vulnerabilities
+                )
+            )
+
+            changed_files_text = (
+                "\n".join(
+                    f"- {file_path}"
+                    for file_path in changed_files
+                )
+                if changed_files
+                else "No manifest changes were generated."
+            )
+
+            current_behavior = (
+                f"npm audit initially detected "
+                f"{initial_count} "
+                f"{'vulnerability' if initial_count == 1 else 'vulnerabilities'}.\n\n"
+                f"npm audit fix was executed in an isolated temporary "
+                f"directory. A second npm audit confirmed that no "
+                f"vulnerabilities remain."
+            )
+
+            if vulnerability_summary:
+                current_behavior += (
+                    f"\n\nInitial Findings\n\n"
+                    f"{vulnerability_summary}"
+                )
+
+            proposed_change = (
+                "Apply the verified dependency changes shown in "
+                "suggested_code after reviewing the generated diff."
+            )
+
+            if changed_files:
+                proposed_change += (
+                    "\n\nChanged files in the temporary fix:"
+                    f"\n{changed_files_text}"
+                )
+
+            suggestion = (
+                "npm audit fix successfully resolved the detected "
+                "vulnerabilities in the temporary copy. Review the "
+                "suggested changes before applying them to the repository."
+            )
+
+            verification_text = (
+                "Initial npm audit: PASS — vulnerabilities detected\n"
+                "npm audit fix in temporary directory: PASS\n"
+                "Second npm audit: PASS — no vulnerabilities remain\n"
+                "Repository modified: NO"
+            )
+
+            formatted = (
+                f"Fix Vulnerability\n"
+                f"Confidence: {confidence}\n\n"
+                f"Target\n\n"
+                f"package.json\n\n"
+                f"Audit Summary\n\n"
+                f"Initial vulnerabilities detected: {initial_count}\n"
+                f"Remaining vulnerabilities after fix: 0\n\n"
+                f"Suggested Changes\n\n"
+                f"{changed_files_text}\n\n"
+                f"Suggested Code\n\n"
+                f"{suggested_code or 'No suggested code generated.'}\n\n"
+                f"Verification\n\n"
+                f"{verification_text}"
+            )
+
+            patch_validation = {
+                "status": "passed",
+                "message": (
+                    "npm audit fix was executed in an isolated temporary "
+                    "directory and a second npm audit confirmed that no "
+                    "vulnerabilities remain. The repository was not modified."
+                ),
+                "verification_source": "npm audit --json",
+                "initial_vulnerability_count": initial_count,
+                "remaining_vulnerability_count": 0,
+                "fix_attempted": True,
+                "fix_verified": True,
+                "changed_files": changed_files,
+                "repository_modified": False,
+            }
+
             return SearchResponse(
                 intent=intent_str,
                 repository=repo_info,
-                target={"file_path": "package.json", "symbol": None},
+                target={
+                    "file_path": "package.json",
+                    "symbol": None,
+                },
                 requirement=context.query,
-                current_behavior=(
-                    f"npm audit detected {advisory_count} advisory findings across "
-                    f"{len(affected)} affected direct dependencies."
-                ),
-                suggestion=analysis.get("proposed_fix") or "Manual review required.",
-                proposed_change=None,
+                current_behavior=current_behavior,
+                suggestion=suggestion,
+                proposed_change=proposed_change,
+                code_change=code_change,
+                suggested_code=suggested_code,
+                suggested_patch=suggested_patch,
+                patch_validation=patch_validation,
+                formatted_output=formatted,
+                confidence=confidence,
+                early_exit=None,
+                ambiguous_candidates=[],
+            )
+
+        # ---------------------------------------------------------
+        # CASE 4: FIX ATTEMPTED BUT VULNERABILITIES REMAIN
+        # ---------------------------------------------------------
+        if fix_attempted and not fix_verified:
+            remaining_vulnerabilities = (
+                analysis.get("remaining_vulnerabilities")
+                or []
+            )
+
+            vulnerability_count = analysis.get(
+                "vulnerability_count",
+                len(remaining_vulnerabilities),
+            )
+
+            remaining_summary = (
+                analysis.get(
+                    "remaining_vulnerability_summary"
+                )
+                or self._format_vulnerability_summary_for_response(
+                    remaining_vulnerabilities
+                )
+            )
+
+            fix_error = (
+                analysis.get("fix_error")
+                or analysis.get("verification_error")
+            )
+
+            if remaining_vulnerabilities:
+                current_behavior = (
+                    f"npm audit detected vulnerabilities. "
+                    f"npm audit fix was attempted in an isolated "
+                    f"temporary directory, but "
+                    f"{vulnerability_count} "
+                    f"{'vulnerability remains' if vulnerability_count == 1 else 'vulnerabilities remain'} "
+                    f"after the second npm audit."
+                )
+            else:
+                current_behavior = (
+                    "npm audit detected vulnerabilities and an automatic "
+                    "fix was attempted, but the result could not be "
+                    "verified as fully resolved."
+                )
+
+            suggestion = (
+                analysis.get("proposed_fix")
+                or "Manual review is required."
+            )
+
+            proposed_change = (
+                analysis.get("proposed_change")
+                or "Manual review required."
+            )
+
+            error_text = (
+                f"\n\nError\n\n{fix_error}"
+                if fix_error
+                else ""
+            )
+
+            formatted = (
+                f"Fix Vulnerability\n"
+                f"Confidence: low\n\n"
+                f"Target\n\n"
+                f"package.json\n\n"
+                f"Audit Summary\n\n"
+                f"{current_behavior}\n\n"
+                f"Remaining Vulnerabilities\n\n"
+                f"{remaining_summary or 'No detailed vulnerability summary available.'}\n\n"
+                f"Suggested Code\n\n"
+                f"No verified automatic patch is available.\n\n"
+                f"Recommendation\n\n"
+                f"{suggestion}"
+                f"{error_text}\n\n"
+                f"Verification\n\n"
+                f"Initial npm audit: PASS — vulnerabilities detected\n"
+                f"npm audit fix attempted: PASS\n"
+                f"Second npm audit: FAIL — vulnerabilities remain or "
+                f"could not be verified\n"
+                f"Repository modified: NO"
+            )
+
+            return SearchResponse(
+                intent=intent_str,
+                repository=repo_info,
+                target={
+                    "file_path": "package.json",
+                    "symbol": None,
+                },
+                requirement=context.query,
+                current_behavior=current_behavior,
+                suggestion=suggestion,
+                proposed_change=proposed_change,
                 code_change=None,
                 suggested_code=None,
                 suggested_patch=None,
                 patch_validation={
                     "status": "failed",
-                    "message": "No verified direct-dependency patched version found.",
+                    "message": (
+                        "The vulnerability fix could not be verified "
+                        "as completely successful."
+                    ),
                     "verification_source": "npm audit --json",
+                    "initial_vulnerability_count": analysis.get(
+                        "initial_vulnerability_count"
+                    ),
+                    "remaining_vulnerability_count": len(
+                        remaining_vulnerabilities
+                    ),
+                    "fix_attempted": True,
+                    "fix_verified": False,
                     "repository_modified": False,
+                    "error": fix_error,
                 },
                 formatted_output=formatted,
                 confidence="low",
@@ -558,128 +968,137 @@ class ResponseGenerationStage:
                 ambiguous_candidates=[],
             )
 
-        # ------------------------------------------------------------------
-        # Case 4: Verified fix available — generate full response
-        # ------------------------------------------------------------------
-        per_package_changes: list[dict[str, Any]] = code_change.get("per_package") or []
-        affected = analysis.get("affected_dependencies") or []
-        affected_by_name = {
-            item.get("package"): item for item in affected
-        }
-        if not per_package_changes:
-            per_package_changes = [code_change]
-
-        packages_fixed = [
-            item["package"]
-            for item in per_package_changes
-            if item.get("package")
-        ]
-        per_package_details = []
-        for change in per_package_changes:
-            package = change.get("package", "?")
-            dependency = affected_by_name.get(package, {})
-            per_package_details.append({
-                "package": package,
-                "current_version": dependency.get("current_version", "unknown"),
-                "patched_version": dependency.get("patched_version"),
-                "severity": dependency.get("severity", "unknown"),
-                "advisory_count": dependency.get("advisory_count", 0),
-                "old": change.get("old_code", "").strip(),
-                "new": change.get("new_code", "").strip(),
-            })
-
-        total_count = analysis.get("vulnerability_count", 0)
-        affected_count = len(affected) or len(per_package_details)
-        package_summary = "\n".join(
-            f"- {item.get('package', '?')}: "
-            f"{item.get('current_version', 'unknown')} → "
-            f"{item.get('patched_version') or 'no verified patched version'}; "
-            f"{item.get('severity', 'unknown')}; "
-            f"{item.get('advisory_count', 0)} "
-            f"{'advisory' if item.get('advisory_count') == 1 else 'advisories'}"
-            for item in affected
+        # ---------------------------------------------------------
+        # CASE 5: FALLBACK FOR AN UNEXPECTED VULNERABILITY STATE
+        #
+        # This is intentionally conservative. It does not invent
+        # a patch or patched version.
+        # ---------------------------------------------------------
+        vulnerability_count = analysis.get(
+            "vulnerability_count",
+            0,
         )
-        if not package_summary:
-            package_summary = "\n".join(
-                f"- {item['package']}: {item['current_version']} → "
-                f"{item['patched_version']}"
-                for item in per_package_details
+
+        vulnerabilities = (
+            analysis.get("vulnerabilities")
+            or analysis.get("all_vulnerabilities")
+            or []
+        )
+
+        vulnerability_summary = (
+            self._format_vulnerability_summary_for_response(
+                vulnerabilities
+            )
+        )
+
+        formatted = (
+            f"Fix Vulnerability\n"
+            f"Confidence: low\n\n"
+            f"Target\n\n"
+            f"package.json\n\n"
+            f"Audit Summary\n\n"
+            f"npm audit reported {vulnerability_count} "
+            f"{'finding' if vulnerability_count == 1 else 'findings'}.\n\n"
+            f"Suggested Code\n\n"
+            f"No verified automatic patch is available.\n\n"
+            f"Recommendation\n\n"
+            f"Manual review is required."
+        )
+
+        if vulnerability_summary:
+            formatted += (
+                f"\n\nFindings\n\n"
+                f"{vulnerability_summary}"
             )
 
-        current_behavior = (
-            f"npm audit detected {total_count} advisory findings across "
-            f"{affected_count} affected direct dependencies."
-        )
-        proposed_change = "\n".join(
-            f"{item['package']}: {item['current_version']} → {item['patched_version']}"
-            for item in per_package_details
-        )
-        suggestion = "Review the verified package.json upgrades and unified diff before applying."
-
-        suggested_patch = context.suggested_patch
-        if not suggested_patch:
-            diff_lines = list(difflib.unified_diff(
-                code_change.get("old_code", "").splitlines(),
-                code_change.get("new_code", "").splitlines(),
-                fromfile="a/package.json",
-                tofile="b/package.json",
-                lineterm="",
-                n=3,
-            ))
-            suggested_patch = "\n".join(diff_lines) if diff_lines else None
-
-        patch_status = (context.patch_validation or {}).get("status", "failed")
-        patch_verified = patch_status == "passed" and bool(suggested_patch)
-        verification_text = "\n".join([
-            f"npm audit patched versions: {'PASS' if packages_fixed else 'FAIL'}",
-            f"Unified diff verified: {'PASS' if patch_verified else 'FAIL'}",
-            "Repository modified: NO",
-        ])
-        formatted = (
-            f"Fix Vulnerability\nConfidence: {confidence}\n\n"
-            f"Target\n\npackage.json\n\n"
-            f"Audit Summary\n\n"
-            f"Total advisory findings: {total_count}\n"
-            f"Affected direct dependencies: {affected_count}\n\n"
-            f"Proposed Changes\n\n{package_summary}\n\n"
-            f"Suggested Code\n\n{code_change.get('new_code', '')}\n\n"
-            f"Unified Diff\n\n{suggested_patch or 'No patch generated.'}\n\n"
-            f"Verification\n\n{verification_text}"
-        )
-
-        checks = (context.patch_validation or {}).get("checks", [])
         return SearchResponse(
             intent=intent_str,
             repository=repo_info,
-            target={"file_path": "package.json", "symbol": None},
+            target={
+                "file_path": "package.json",
+                "symbol": None,
+            },
             requirement=context.query,
-            current_behavior=current_behavior,
-            suggestion=suggestion,
-            proposed_change=proposed_change,
-            code_change=code_change,
-            suggested_code=code_change.get("new_code"),
-            suggested_patch=suggested_patch,
+            current_behavior=(
+                f"npm audit reported {vulnerability_count} "
+                f"{'vulnerability' if vulnerability_count == 1 else 'vulnerabilities'}."
+            ),
+            suggestion=(
+                analysis.get("proposed_fix")
+                or "Manual review required."
+            ),
+            proposed_change=(
+                analysis.get("proposed_change")
+                or "Manual review required."
+            ),
+            code_change=None,
+            suggested_code=None,
+            suggested_patch=None,
             patch_validation={
-                "status": "passed" if patch_verified else "failed",
-                "message": "Verified npm audit remediation suggestions; repository files remain unchanged.",
+                "status": "failed",
+                "message": (
+                    "No verified automatic vulnerability fix is available."
+                ),
                 "verification_source": "npm audit --json",
-                "packages_fixed": packages_fixed,
-                "per_package_changes": per_package_details,
-                "total_advisory_findings": total_count,
-                "affected_dependency_count": affected_count,
                 "repository_modified": False,
-                "checks": checks,
             },
             formatted_output=formatted,
-            confidence=confidence,
+            confidence="low",
             early_exit=None,
             ambiguous_candidates=[],
         )
 
+    @staticmethod
+    def _format_vulnerability_summary_for_response(
+        vulnerabilities: list[Any],
+    ) -> str:
+        """
+        Format vulnerability information already produced by the
+        vulnerability analyzer.
+
+        This method does not perform any new vulnerability analysis.
+        """
+
+        if not isinstance(vulnerabilities, list):
+            return ""
+
+        lines: list[str] = []
+
+        for vulnerability in vulnerabilities:
+            if not isinstance(vulnerability, dict):
+                continue
+
+            package = (
+                vulnerability.get("package")
+                or "unknown"
+            )
+
+            severity = (
+                vulnerability.get("severity")
+                or "unknown"
+            )
+
+            title = (
+                vulnerability.get("title")
+                or "vulnerability"
+            )
+
+            current_version = (
+                vulnerability.get("current_version")
+                or "unknown"
+            )
+
+            lines.append(
+                f"- {package} "
+                f"({severity}, current: {current_version}): "
+                f"{title}"
+            )
+
+        return "\n".join(lines)
+
     # =============================================================
     # EARLY EXIT RESPONSE
     # =============================================================
-
 
     def _build_early_exit_response(
         self,
@@ -1084,84 +1503,3 @@ class ResponseGenerationStage:
 
         return str(code)
 
-    # =============================================================
-    # TARGET SYMBOL
-    # =============================================================
-
-    @staticmethod
-    def _resolve_target_symbol(
-        context: SearchContext,
-    ) -> str | None:
-        """
-        Resolve the most useful target symbol.
-
-        Prefer an already meaningful target symbol.
-
-        If the target symbol is a filename or is otherwise unavailable,
-        use the primary chunk metadata to resolve the class/function.
-        """
-
-        target_symbol = context.target_symbol
-        primary_chunk = context.primary_chunk
-
-        metadata = (
-            primary_chunk.metadata
-            if primary_chunk and primary_chunk.metadata
-            else {}
-        )
-
-        class_name = str(
-            metadata.get("class_name") or ""
-        ).strip()
-
-        function_name = str(
-            metadata.get("function_name") or ""
-        ).strip()
-
-        file_path = (
-            primary_chunk.file_path
-            if primary_chunk
-            else None
-        )
-
-        # ---------------------------------------------------------
-        # If target_symbol is meaningful and is not just the file path,
-        # keep it.
-        # ---------------------------------------------------------
-        if target_symbol:
-            normalized = target_symbol.strip()
-
-            if normalized and normalized != file_path:
-                if not normalized.lower().endswith(
-                    (
-                        ".ts",
-                        ".tsx",
-                        ".js",
-                        ".jsx",
-                        ".py",
-                        ".java",
-                        ".go",
-                        ".rs",
-                        ".cpp",
-                        ".c",
-                        ".cs",
-                    )
-                ):
-                    return normalized
-
-        # ---------------------------------------------------------
-        # Prefer class name from chunk metadata.
-        # ---------------------------------------------------------
-        if class_name:
-            return class_name
-
-        # ---------------------------------------------------------
-        # Fall back to function/method name.
-        # ---------------------------------------------------------
-        if function_name:
-            return function_name
-
-        # ---------------------------------------------------------
-        # Last fallback.
-        # ---------------------------------------------------------
-        return target_symbol

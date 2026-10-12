@@ -466,8 +466,9 @@ def extract_suspicious_field_and_class(
     # Common bug patterns:
     # "AttributeError: 'Appointment' object has no attribute 'date'"
     # "'User' object has no attribute 'full_name'"
+    # "appointment has no attribute appointment_date"
     attr_err_match = re.search(
-        r"['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?\s+object has no attribute\s+['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
+        r"['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?\s+(?:object\s+)?has no (?:object\s+)?attribute\s+['\"]?([A-Za-z_][A-Za-z0-9_]*)['\"]?",
         query,
         re.IGNORECASE,
     )
@@ -550,6 +551,19 @@ def find_equivalent_field(
     2. Model method / property / composition (e.g. get_full_name() or property computing it)
     3. Direct usages across functions/queries in the repository operating on the same model.
     """
+    # 0. Close typo / spelling match on model fields (e.g. appointemnt_date -> appointment_date)
+    import difflib
+    for mfield in model.fields.keys():
+        if mfield.lower() == suspicious_field.lower():
+            continue
+        sim = difflib.SequenceMatcher(None, suspicious_field.lower(), mfield.lower()).ratio()
+        if sim >= 0.82:
+            evidence = (
+                f"Field '{suspicious_field}' in query is a typo/close match for model field "
+                f"'{mfield}' on {model.class_name} ({model.file_path})."
+            )
+            return mfield, evidence
+
     # 1. Schema mapping evidence
     for ref in schema_refs:
         if ref.field_name.lower() == suspicious_field.lower() and ref.mapping_target:
@@ -641,6 +655,27 @@ class ModelSchemaContractAnalyzer:
 
         # Step 2: Locate and inspect actual model/class definition
         all_models = inspect_model_definitions(chunks, target_class=target_class)
+
+        # Disambiguation: Check if target_file is already resolved in context
+        target_fp = getattr(context, "target_file", None)
+        if target_fp:
+            target_norm = target_fp.replace("\\", "/").lower()
+            matching_models = [m for m in all_models if m.file_path.replace("\\", "/").lower() == target_norm]
+            if matching_models:
+                all_models = matching_models
+
+        # Architectural separation: Differentiate database models from schemas/DTOs
+        if len(all_models) > 1:
+            db_models = [
+                m for m in all_models
+                if (
+                    any(p in m.file_path.replace("\\", "/").lower() for p in ["/models/", "/entities/", "model.py", "models.py"])
+                    or any(getattr(f, "is_column", False) for f in m.fields.values())
+                )
+                and not any(p in m.file_path.replace("\\", "/").lower() for p in ["/schemas/", "/serializers/", "/dto/"])
+            ]
+            if db_models:
+                all_models = db_models
 
         # Ambiguity check: Multiple conflicting candidate model definitions across files
         if len(all_models) > 1:

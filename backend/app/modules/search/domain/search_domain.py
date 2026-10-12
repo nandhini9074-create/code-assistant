@@ -14,10 +14,10 @@ from app.core.enums import IntentType
 class RetrievedChunk:
     """Represents a code chunk retrieved from Qdrant."""
 
-    chunk_hash: str
-    file_path: str
-    content: str
-    score: float
+    chunk_hash: str = ""
+    file_path: str = ""
+    content: str = ""
+    score: float = 0.0
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
@@ -157,6 +157,15 @@ class SearchContext:
     # Model-Schema Contract Analysis
     # ---------------------------------------------------------
     contract_analysis: Any | None = None
+
+    # ---------------------------------------------------------
+    # Deep Search / Root-Cause Investigation
+    # ---------------------------------------------------------
+    deep_search_result: dict[str, Any] | None = None
+    investigated_candidates: list[dict[str, Any]] = field(
+        default_factory=list
+    )
+    root_cause_analysis: dict[str, Any] | None = None
 
     # ---------------------------------------------------------
     # Pipeline control

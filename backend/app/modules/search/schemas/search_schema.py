@@ -131,3 +131,7 @@ class SearchResponse(BaseSchema):
     # cannot be uniquely resolved. Lists every matching candidate so
     # the caller can prompt the user to be more specific.
     ambiguous_candidates: list[AmbiguousCandidate] = Field(default_factory=list)
+
+    # Populated by Deep Search / Root-Cause Investigation when a cross-file
+    # contract mismatch, dependency trace, or root cause has been determined.
+    root_cause_analysis: dict[str, Any] | None = None
