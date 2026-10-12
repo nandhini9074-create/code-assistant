@@ -165,6 +165,25 @@ class ResponseGenerationStage:
             return
 
         # ---------------------------------------------------------
+        # DEEP SEARCH RESULT
+        #
+        # DeepSearchStage sets early_exit="DEEP_SEARCH_COMPLETE" and
+        # stores its structured result in context.deep_search_result.
+        # Present that result here before falling through to the normal
+        # pipeline path. The normal path is not executed for Deep Search.
+        # ---------------------------------------------------------
+        if (
+            context.early_exit == "DEEP_SEARCH_COMPLETE"
+            and isinstance(context.deep_search_result, dict)
+        ):
+            context.final_response = self._build_deep_search_response(
+                context=context,
+                intent_str=intent_str,
+                repo_info=repo_info,
+            )
+            return
+
+        # ---------------------------------------------------------
         # VULNERABILITY FIX RESPONSE
         # ---------------------------------------------------------
         if context.intent == IntentType.FIX_VULNERABILITY:
@@ -463,8 +482,172 @@ class ResponseGenerationStage:
         )
 
     # =============================================================
+    # DEEP SEARCH RESPONSE
+    # =============================================================
+
+    @staticmethod
+    def _build_deep_search_response(
+        context: SearchContext,
+        intent_str: str,
+        repo_info: dict,
+    ) -> "SearchResponse":
+        """
+        Format the final structured response for a Deep Search investigation.
+
+        Presents the diagnosis and evidence when status is 'complete'.
+        Presents an explicit explanation for 'incomplete' and 'unavailable'.
+
+        This method does NOT:
+        - generate new code changes,
+        - modify the repository,
+        - invent a root cause when evidence is insufficient,
+        - or claim a fix was validated unless the workflow confirmed it.
+        """
+        result: dict = context.deep_search_result or {}
+        status = result.get("status", "unavailable")
+        diagnosis = result.get("diagnosis")
+        confidence_raw = result.get("confidence", 0.0)
+        evidence_items = result.get("evidence", [])
+        reason = result.get("reason", "")
+        rounds = result.get("rounds", 0)
+        missing_targets = result.get("missing_targets", [])
+        searched_targets = result.get("searched_targets", [])
+        repo_name = result.get("repo_name") or repo_info.get("name")
+
+        # Map numeric confidence to categorical string used by SearchResponse.
+        if isinstance(confidence_raw, (int, float)):
+            confidence_val = float(confidence_raw)
+            if confidence_val >= 0.75:
+                confidence_str = "high"
+            elif confidence_val >= 0.50:
+                confidence_str = "medium"
+            else:
+                confidence_str = "low"
+        else:
+            confidence_str = "low"
+
+        # Build a human-readable evidence summary.
+        evidence_lines: list[str] = []
+        if isinstance(evidence_items, list):
+            for item in evidence_items:
+                if not isinstance(item, dict):
+                    continue
+                path = item.get("path", "")
+                claim = item.get("claim", "")
+                quote = item.get("quote", "")
+                line_start = item.get("line_start")
+                location = f"{path}:{line_start}" if line_start else path
+                if claim:
+                    evidence_lines.append(f"- [{location}] {claim}")
+                    if quote:
+                        evidence_lines.append(f"  Quote: {quote!r}")
+
+        evidence_text = (
+            "\n".join(evidence_lines)
+            if evidence_lines
+            else "No verified source evidence was collected."
+        )
+
+        if status == "complete" and diagnosis:
+            suggestion = diagnosis
+            proposed_change = (
+                "Review the diagnosis and evidence below. "
+                "No automatic code change was applied to the repository."
+            )
+            current_behavior = (
+                f"Deep Search investigated {len(searched_targets)} target(s) "
+                f"across {rounds} round(s)."
+            )
+            formatted_output = (
+                f"Deep Search — Root Cause Analysis\n"
+                f"Repository: {repo_name}\n"
+                f"Status: COMPLETE\n"
+                f"Confidence: {confidence_str}\n\n"
+                f"Diagnosis\n\n{diagnosis}\n\n"
+                f"Evidence ({len(evidence_items)} item(s))\n\n{evidence_text}\n\n"
+                f"Investigated targets: {', '.join(str(t) for t in searched_targets) or 'none'}\n"
+                f"Missing targets: {', '.join(str(t) for t in missing_targets) or 'none'}\n"
+                f"Investigation rounds: {rounds}"
+            )
+        elif status == "incomplete":
+            suggestion = (
+                reason
+                or "The investigation could not establish a verified root cause "
+                   "within the available evidence and round limits."
+            )
+            proposed_change = (
+                "Manual inspection of the repository is recommended. "
+                "No automatic code change was generated."
+            )
+            current_behavior = (
+                f"Deep Search investigated {len(searched_targets)} target(s) "
+                f"across {rounds} round(s) but evidence was insufficient."
+            )
+            formatted_output = (
+                f"Deep Search — Root Cause Analysis\n"
+                f"Repository: {repo_name}\n"
+                f"Status: INCOMPLETE\n"
+                f"Confidence: low\n\n"
+                f"Reason\n\n{suggestion}\n\n"
+                f"Partial Evidence ({len(evidence_items)} item(s))\n\n{evidence_text}\n\n"
+                f"Investigated targets: {', '.join(str(t) for t in searched_targets) or 'none'}\n"
+                f"Missing targets: {', '.join(str(t) for t in missing_targets) or 'none'}\n"
+                f"Investigation rounds: {rounds}"
+            )
+        else:
+            # unavailable or unrecognized status
+            suggestion = (
+                reason
+                or "Deep Search could not be completed. "
+                   "A required service or source provider was unavailable."
+            )
+            proposed_change = (
+                "Check that the repository is indexed and the search "
+                "backend is accessible before retrying."
+            )
+            current_behavior = (
+                "Deep Search could not access the required source or "
+                "search services."
+            )
+            formatted_output = (
+                f"Deep Search — Root Cause Analysis\n"
+                f"Repository: {repo_name}\n"
+                f"Status: UNAVAILABLE\n"
+                f"Confidence: low\n\n"
+                f"Reason\n\n{suggestion}"
+            )
+            confidence_str = "low"
+
+        return SearchResponse(
+            intent=intent_str,
+            repository=repo_info,
+            target={"file_path": None, "symbol": None},
+            requirement=context.query,
+            current_behavior=current_behavior,
+            suggestion=suggestion,
+            proposed_change=proposed_change,
+            code_change=None,
+            suggested_code=None,
+            suggested_patch=None,
+            patch_validation={
+                "status": status,
+                "deep_search": True,
+                "rounds": rounds,
+                "searched_targets": list(searched_targets),
+                "missing_targets": list(missing_targets),
+                "repository_modified": False,
+            },
+            formatted_output=formatted_output,
+            confidence=confidence_str,
+            early_exit=None,
+            ambiguous_candidates=[],
+            root_cause_analysis=result,
+        )
+
+    # =============================================================
     # VULNERABILITY FIX RESPONSE
     # =============================================================
+
 
     def _build_vulnerability_response(
         self,

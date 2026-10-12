@@ -788,7 +788,24 @@ class DeepSearchStage:
             **workflow_dependencies
         )
 
-    def execute(self, context: Any) -> Any:
+    async def execute(self, context: Any) -> Any:
+        """
+        Async adapter so SearchService can `await stage.execute(context)`.
+
+        Reads the Deep Search flag from context.intent_parameters (where
+        IntentClassificationStage stores it) rather than from a top-level
+        context attribute.
+
+        Passes qdrant_collection (the field set by CollectionSelectionStage)
+        as the primary collection name key.
+
+        Sets early_exit to the named string 'DEEP_SEARCH_COMPLETE' so that
+        ResponseGenerationStage can detect the Deep Search path without
+        treating it as a generic early-exit error.
+        """
+        # ----------------------------------------------------------------
+        # Resolve intent from the SearchContext.
+        # ----------------------------------------------------------------
         intent = self._context_value(
             context,
             "intent",
@@ -796,10 +813,23 @@ class DeepSearchStage:
             "request_intent",
         )
 
-        requested = self._context_value(
+        # IntentClassificationStage stores the Deep Search flag inside
+        # context.intent_parameters, not as a top-level attribute.
+        # Support both locations so tests and legacy code still work.
+        requested: Any = False
+        intent_parameters = self._context_value(
             context,
-            "deep_search_requested",
+            "intent_parameters",
         )
+        if isinstance(intent_parameters, Mapping):
+            requested = intent_parameters.get("deep_search_requested", False)
+
+        if requested is not True:
+            # Also check legacy top-level attribute used by older callers.
+            requested = self._context_value(
+                context,
+                "deep_search_requested",
+            )
 
         # Normal FIX_BUG requests and every other intent continue through
         # the existing search flow.
@@ -818,8 +848,12 @@ class DeepSearchStage:
                 "repo_name",
                 "repository_name",
             ),
+            # CollectionSelectionStage stores the resolved collection in
+            # context.qdrant_collection. Previous code used wrong field names
+            # and always produced None, causing the workflow to abort.
             "collection_name": self._context_value(
                 context,
+                "qdrant_collection",   # primary — set by CollectionSelectionStage
                 "collection_name",
                 "resolved_collection",
                 "selected_collection",
@@ -843,9 +877,14 @@ class DeepSearchStage:
             result,
         )
 
-        # Deep Search produces its own terminal diagnosis/evidence result.
-        # Downstream ordinary analysis stages should not overwrite it.
-        self._set_context_value(context, "early_exit", True)
+        # Signal to the pipeline that Deep Search is complete.
+        # Use a named string (not True) so ResponseGenerationStage can
+        # identify and render the deep_search_result correctly.
+        self._set_context_value(
+            context,
+            "early_exit",
+            "DEEP_SEARCH_COMPLETE",
+        )
 
         return context
 

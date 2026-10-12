@@ -112,36 +112,6 @@ class CollectionSelectionStage:
         context.repo_name = extracted_repo
         context.qdrant_collection = normalized_collection
 
-
-        
-        # Enter Deep Search only after the requested repository
-        # collection has been resolved successfully.
-        intent = str(
-            getattr(context, "intent", None)
-            or getattr(context, "classified_intent", None)
-            or getattr(context, "request_intent", None)
-            or ""
-        ).strip().upper()
-
-        deep_search_requested = (
-            getattr(context, "deep_search_requested", False) is True
-        )
-
-        if intent == "FIX_BUG" and deep_search_requested:
-            context.early_exit = "DEEP_SEARCH_SELECTED"
-            context.early_exit_message = (
-                "Deep Search selected. Investigating the bug across "
-                "verified repository dependencies."
-            )
-
-            logger.info(
-                "deep_search_selected",
-                repo_name=context.repo_name,
-                collection=context.qdrant_collection,
-            )
-            return
-
-
         logger.info(
             "repository_collection_selected",
             repo_name=context.repo_name,
