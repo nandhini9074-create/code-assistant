@@ -63,11 +63,9 @@ class CodeAnalysisStage:
             return
 
         # ---------------------------------------------------------
-        # Do not run normal analysis for a Deep Search request.
-        #
-        # This is a defensive safeguard. SearchService should
-        # already route initially selected Deep Search requests
-        # around the normal retrieval and analysis stages.
+        # Deep Search requests: If deep search produced context,
+        # proceed with normal analysis (e.g. FixBugAnalyzer).
+        # Only fallback if no context was produced.
         # ---------------------------------------------------------
         parameters = context.intent_parameters or {}
 
@@ -83,9 +81,9 @@ class CodeAnalysisStage:
             None,
         )
 
-        if deep_search_selected or deep_search_result is not None:
+        if (deep_search_selected or deep_search_result is not None) and not context.llm_context and not context.retrieved_chunks:
             logger.info(
-                "code_analysis_skipped_deep_search_owned",
+                "code_analysis_fallback_deep_search_empty",
                 repo_id=context.repo_id,
                 deep_search_selected=deep_search_selected,
                 deep_search_result_available=(
@@ -93,25 +91,16 @@ class CodeAnalysisStage:
                 ),
             )
 
-            # Do not create a second analysis or overwrite the
-            # result produced by the Deep Search workflow.
-            #
-            # If this stage was incorrectly invoked before Deep
-            # Search produced a result, retain an explicit
-            # UNAVAILABLE result rather than inventing a fix.
-            if deep_search_result is None:
-                context.analysis_result = (
-                    self._build_fallback_analysis(
-                        context,
-                        reason=(
-                            "This FIX_BUG request is assigned to "
-                            "Deep Search. Normal code analysis was "
-                            "skipped, and no Deep Search result was "
-                            "available at this stage."
-                        ),
-                    )
+            context.analysis_result = (
+                self._build_fallback_analysis(
+                    context,
+                    reason=(
+                        "This FIX_BUG request is assigned to "
+                        "Deep Search, but no code context was retrieved "
+                        "for code analysis."
+                    ),
                 )
-
+            )
             return
 
         # ---------------------------------------------------------

@@ -32,6 +32,7 @@ from app.core.exceptions import RetrievalError
 from app.core.logging import get_logger
 
 from app.modules.search.domain.search_domain import (
+    RetrievedChunk,
     SearchContext,
     SearchResult,
 )
@@ -199,6 +200,96 @@ class SearchService:
         )
 
         return decision.selected
+
+    @staticmethod
+    def _transfer_deep_search_chunks(context: SearchContext) -> None:
+        """
+        Transfer retrieved chunks from deep_search_result to context.retrieved_chunks.
+        """
+        result = getattr(context, "deep_search_result", None)
+        if not isinstance(result, dict):
+            return
+
+        raw_chunks = result.get("retrieved_chunks") or []
+        existing_chunks = list(context.retrieved_chunks or [])
+        existing_hashes = {
+            getattr(c, "chunk_hash", "")
+            or f"{getattr(c, 'file_path', '')}:{getattr(c, 'content', '')[:50]}"
+            for c in existing_chunks
+        }
+        new_chunks = list(existing_chunks)
+
+        for c in raw_chunks:
+            if isinstance(c, RetrievedChunk):
+                h = c.chunk_hash or f"{c.file_path}:{c.content[:50]}"
+                if h not in existing_hashes:
+                    existing_hashes.add(h)
+                    new_chunks.append(c)
+            elif isinstance(c, dict):
+                fp = str(
+                    c.get("file_path") or c.get("path") or ""
+                ).replace("\\", "/")
+                content = str(
+                    c.get("content") or c.get("code") or c.get("text") or ""
+                )
+                score = float(c.get("score") or 0.0)
+                meta = dict(c.get("metadata") or {})
+                if "file_path" not in meta and fp:
+                    meta["file_path"] = fp
+                line_start = (
+                    c.get("line_start")
+                    or c.get("start_line")
+                    or meta.get("start_line")
+                )
+                line_end = (
+                    c.get("line_end")
+                    or c.get("end_line")
+                    or meta.get("end_line")
+                )
+                if line_start is not None and "start_line" not in meta:
+                    meta["start_line"] = line_start
+                if line_end is not None and "end_line" not in meta:
+                    meta["end_line"] = line_end
+                h = str(c.get("chunk_hash") or f"{fp}:{line_start}-{line_end}")
+                if h not in existing_hashes:
+                    existing_hashes.add(h)
+                    new_chunks.append(
+                        RetrievedChunk(
+                            chunk_hash=h,
+                            file_path=fp,
+                            content=content,
+                            score=score,
+                            metadata=meta,
+                        )
+                    )
+
+        if not new_chunks and result.get("evidence"):
+            for ev in result["evidence"]:
+                if isinstance(ev, dict) and ev.get("quote"):
+                    fp = str(ev.get("path") or "").replace("\\", "/")
+                    content = str(ev.get("quote") or "")
+                    line_start = ev.get("line_start")
+                    line_end = ev.get("line_end")
+                    meta = {
+                        "file_path": fp,
+                        "start_line": line_start,
+                        "end_line": line_end,
+                        "evidence_claim": ev.get("claim"),
+                    }
+                    h = f"{fp}:{line_start}-{line_end}:{content[:30]}"
+                    if h not in existing_hashes:
+                        existing_hashes.add(h)
+                        new_chunks.append(
+                            RetrievedChunk(
+                                chunk_hash=h,
+                                file_path=fp,
+                                content=content,
+                                score=1.0,
+                                metadata=meta,
+                            )
+                        )
+
+        context.retrieved_chunks = new_chunks
 
     async def _execute_stage(
         self,
@@ -370,8 +461,10 @@ class SearchService:
                 return await self._generate_response(context)
 
             # 5. Deep Search branch.
-            # This runs before normal code retrieval and replaces the
-            # normal retrieval/analysis path only for selected requests.
+            # Only for FIX_BUG requiring Deep Search: execute Deep Search to
+            # retrieve cross-file context, transfer retrieved chunks into
+            # context.retrieved_chunks, and continue to context building
+            # and subsequent pipeline stages.
             if deep_search_selected:
                 logger.info(
                     "deep_search_stage_selected_and_executing",
@@ -388,9 +481,6 @@ class SearchService:
                 )
 
                 # Check the actual result before interpreting early_exit.
-                # DeepSearchStage intentionally sets early_exit after its
-                # workflow returns, including for incomplete/unavailable
-                # terminal results.
                 result = context.deep_search_result
 
                 if not isinstance(result, dict):
@@ -404,22 +494,52 @@ class SearchService:
 
                 result_status = result.get("status")
 
-                if result_status == "complete":
+                # Transfer retrieved chunks from deep search into context.retrieved_chunks
+                self._transfer_deep_search_chunks(context)
+
+                if not context.retrieved_chunks:
+                    logger.warning(
+                        f"[DeepSearch] Deep Search ended with status '{result_status}' for repo '{context.repo_name}' "
+                        f"(reason: {result.get('reason')}). No code chunks retrieved.",
+                        repo_name=context.repo_name,
+                        status=result_status,
+                        reason=result.get("reason"),
+                    )
+                    context.early_exit = "DEEP_SEARCH_UNAVAILABLE"
+                    context.early_exit_message = (
+                        result.get("reason")
+                        or "Deep Search did not retrieve code chunks. No root cause or fix will be assumed."
+                    )
                     return await self._generate_response(context)
 
-                # If Deep Search did not find a verified complete diagnosis across files
-                # (e.g. status is "unavailable" or "incomplete" or non-python repo),
-                # fall back to the normal search pipeline so that normal retrieval,
-                # code identification, analysis, and patch generation can still serve the request.
-                logger.warning(
-                    f"[DeepSearch] Deep Search ended with status '{result_status}' for repo '{context.repo_name}' "
-                    f"(reason: {result.get('reason')}). Falling back to normal search flow.",
-                    repo_name=context.repo_name,
-                    status=result_status,
-                    reason=result.get("reason"),
-                )
+                # Context was retrieved by Deep Search.
+                # Clear early_exit so context building and subsequent stages execute.
                 context.early_exit = None
-                context.early_exit_message = None
+
+                stages_after_deep_search = [
+                    self.code_ident_stage,
+                    self.ctx_build_stage,
+                    self.code_analysis_stage,
+                    self.ev_val_stage,
+                    self.action_analysis_stage,
+                    self.suggestion_patch_stage,
+                    self.suggestion_validation_stage,
+                    self.final_triage_stage,
+                ]
+
+                stage_number = 6
+                for stage in stages_after_deep_search:
+                    should_continue = await self._execute_stage(
+                        stage,
+                        context,
+                        stage_number,
+                    )
+                    stage_number += 1
+
+                    if not should_continue:
+                        break
+
+                return await self._generate_response(context)
 
             # 6. Normal pipeline.
             # Keep the existing stage list, ordering, and error behavior.
@@ -468,15 +588,37 @@ class SearchService:
                             context,
                             stage_number,
                         )
+                        stage_number += 1
 
-                        result = context.deep_search_result
+                        self._transfer_deep_search_chunks(context)
 
-                        if isinstance(result, dict) and result.get("status") == "complete":
+                        if context.retrieved_chunks:
+                            context.early_exit = None
+
+                            escalation_stages = [
+                                self.ctx_build_stage,
+                                self.code_analysis_stage,
+                                self.ev_val_stage,
+                                self.action_analysis_stage,
+                                self.suggestion_patch_stage,
+                                self.suggestion_validation_stage,
+                                self.final_triage_stage,
+                            ]
+
+                            for esc_stage in escalation_stages:
+                                should_continue = await self._execute_stage(
+                                    esc_stage,
+                                    context,
+                                    stage_number,
+                                )
+                                stage_number += 1
+
+                                if not should_continue:
+                                    break
+
                             return await self._generate_response(context)
 
-                        # If escalation did not produce a complete diagnosis, restore early_exit
-                        # so remaining stages (action_analysis, suggestion_patch, etc.) continue
-                        # using the analysis already generated by CodeAnalysisStage.
+                        result = context.deep_search_result
                         status_str = result.get("status") if isinstance(result, dict) else "unknown"
                         reason_str = result.get("reason") if isinstance(result, dict) else None
                         logger.warning(
