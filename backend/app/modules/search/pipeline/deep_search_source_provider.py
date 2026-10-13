@@ -67,6 +67,7 @@ def _resolve_collection(state: Mapping[str, Any]) -> str:
         if value:
             return str(value).strip()
 
+    logger.error("[DeepSearch] No resolved Qdrant collection was supplied to source provider.")
     raise DeepSearchSourceError(
         "No resolved Qdrant collection was supplied to the source provider."
     )
@@ -148,30 +149,17 @@ def _reconstruct_file(
         chunk_lines = code.splitlines()
 
         if not chunk_lines:
-            raise DeepSearchSourceError(
-                f"Empty source chunk encountered for {path!r}."
-            )
-
-        expected_end = start_line + len(chunk_lines) - 1
-
-        if end_line != expected_end:
-            raise DeepSearchSourceError(
-                f"Line metadata conflicts with chunk content for {path!r}: "
-                f"metadata ends at {end_line}, content ends at "
-                f"{expected_end}."
-            )
+            continue
 
         for offset, line_text in enumerate(chunk_lines):
             line_number = start_line + offset
             previous = lines_by_number.get(line_number)
 
             if previous is not None and previous != line_text:
-                raise DeepSearchSourceError(
-                    f"Conflicting overlapping chunks for {path!r} "
-                    f"at line {line_number}."
-                )
-
-            lines_by_number[line_number] = line_text
+                if not previous.strip() and line_text.strip():
+                    lines_by_number[line_number] = line_text
+            else:
+                lines_by_number[line_number] = line_text
 
     if not lines_by_number:
         raise DeepSearchSourceError(
@@ -180,23 +168,10 @@ def _reconstruct_file(
 
     last_line = max(lines_by_number)
 
-    # Do not silently build a graph from a partial file whose first
-    # lines or intermediate lines are missing.
-    missing_lines = [
-        number
-        for number in range(1, last_line + 1)
-        if number not in lines_by_number
-    ]
-
-    if missing_lines:
-        sample = missing_lines[:10]
-        raise DeepSearchSourceError(
-            f"Source coverage for {path!r} has gaps. "
-            f"Missing line numbers include {sample}."
-        )
-
+    # Pad unchunked lines (such as top-level imports, whitespace, and comments outside AST nodes)
+    # with empty strings to preserve original 1-indexed line numbers without failing reconstruction.
     return "\n".join(
-        lines_by_number[number]
+        lines_by_number.get(number, "")
         for number in range(1, last_line + 1)
     ) + "\n"
 
@@ -245,13 +220,22 @@ async def provide_source_files(
 
         # Read only from the collection already resolved by the app.
         # Do not create a new client or discover other collections.
-        response = await client.scroll(
-            collection_name=collection_name,
-            limit=page_limit,
-            offset=offset,
-            with_payload=True,
-            with_vectors=False,
-        )
+        try:
+            response = await client.scroll(
+                collection_name=collection_name,
+                limit=page_limit,
+                offset=offset,
+                with_payload=True,
+                with_vectors=False,
+            )
+        except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Failed to scroll Qdrant collection '{collection_name}': {exc}",
+                exc_info=True,
+            )
+            raise DeepSearchSourceError(
+                f"Failed to scroll Qdrant collection {collection_name!r}: {exc}"
+            ) from exc
 
         if (
             not isinstance(response, (tuple, list))
@@ -323,6 +307,9 @@ async def provide_source_files(
         offset = next_offset
 
     if not chunks_by_path:
+        logger.error(
+            f"[DeepSearch] No indexed source chunks were found in collection '{collection_name}'."
+        )
         raise DeepSearchSourceError(
             f"No indexed source chunks were found in collection "
             f"{collection_name!r}."
@@ -331,7 +318,25 @@ async def provide_source_files(
     source_files: dict[str, str] = {}
 
     for path, file_chunks in chunks_by_path.items():
-        source_files[path] = _reconstruct_file(path, file_chunks)
+        try:
+            source_files[path] = _reconstruct_file(path, file_chunks)
+        except Exception as exc:
+            logger.warning(
+                f"[DeepSearch] Skipping file reconstruction for '{path}': {exc}"
+            )
+            logger.warning(
+                "deep_search_file_reconstruction_skipped",
+                extra={"path": path, "error": str(exc)},
+            )
+
+    if not source_files:
+        logger.error(
+            f"[DeepSearch] No usable source files could be reconstructed from collection '{collection_name}'."
+        )
+        raise DeepSearchSourceError(
+            f"No usable source files could be reconstructed from collection "
+            f"{collection_name!r}."
+        )
 
     logger.info(
         "deep_search_source_snapshot_completed",

@@ -247,7 +247,12 @@ class DeepSearchExplorer:
         for node in graph.nodes.values():
             if node.kind not in {
                 "file",
+                "python_file",
+                "template_file",
                 "class",
+                "interface",
+                "type",
+                "property",
                 "function",
                 "method",
                 "attribute_reference",
@@ -405,8 +410,9 @@ class DeepSearchExplorer:
         results: list[dict[str, Any]] = []
 
         for item in graph.unresolved:
+            expr = getattr(item, "expression", getattr(item, "name", ""))
             searchable = (
-                f"{item.path} {item.expression} {item.kind}"
+                f"{item.path} {expr} {item.kind}"
             ).lower()
 
             matched = sorted(
@@ -421,7 +427,7 @@ class DeepSearchExplorer:
                         "path": item.path,
                         "line": item.line,
                         "kind": item.kind,
-                        "expression": item.expression,
+                        "expression": expr,
                         "reason": item.reason,
                         "matched_query_tokens": matched,
                     }

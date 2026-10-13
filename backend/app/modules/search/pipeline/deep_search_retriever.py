@@ -27,11 +27,14 @@ is an additional safeguard, not a substitute for backend filtering.
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Callable, Mapping, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_MAX_TARGETS = 12
@@ -159,6 +162,7 @@ class DeepSearchRetriever:
             )
 
         if self.search_adapter is None:
+            logger.error("[DeepSearch] No search adapter configured for DeepSearchRetriever.")
             return self._result(
                 status="UNAVAILABLE",
                 reason=(
@@ -177,6 +181,10 @@ class DeepSearchRetriever:
         )
 
         if not repo_name or not collection_name:
+            logger.error(
+                f"[DeepSearch] Repository identity or resolved collection is missing "
+                f"(repo_name={repo_name!r}, collection={collection_name!r})."
+            )
             return self._result(
                 status="UNAVAILABLE",
                 reason=(
@@ -257,6 +265,10 @@ class DeepSearchRetriever:
                 )
 
         except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Search adapter failed during targeted retrieval for targets {target_paths}: {exc}",
+                exc_info=True,
+            )
             return self._result(
                 status="UNAVAILABLE",
                 searched_targets=target_paths,

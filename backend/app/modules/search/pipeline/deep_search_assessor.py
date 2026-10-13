@@ -23,11 +23,14 @@ This module does not:
 from __future__ import annotations
 
 import inspect
+import logging
 import re
 
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, Callable, Mapping, Optional, Sequence
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_MAX_FOLLOW_UP_TARGETS = 8
@@ -213,6 +216,7 @@ class DeepSearchAssessor:
             )
 
         if self.assessment_adapter is None:
+            logger.warning("[DeepSearch] No assessment adapter configured for DeepSearchAssessor.")
             return self._incomplete(
                 reason=(
                     "No assessment adapter is configured. Retrieved code "
@@ -259,18 +263,24 @@ class DeepSearchAssessor:
                 if callable(close):
                     close()
 
+                logger.error("[DeepSearch] Assessment adapter returned an unawaited awaitable.")
                 return self._unavailable(
                     "The assessment adapter returned an awaitable, but this "
                     "assessor is configured for synchronous execution."
                 )
 
         except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Assessment adapter failed during evaluation: {exc}",
+                exc_info=True,
+            )
             return self._unavailable(
                 "The assessment adapter failed "
                 f"({type(exc).__name__})."
             )
 
         if not isinstance(raw_assessment, Mapping):
+            logger.error("[DeepSearch] Assessment adapter returned an invalid non-mapping result.")
             return self._unavailable(
                 "The assessment adapter returned an invalid result."
             )
@@ -567,8 +577,12 @@ class DeepSearchAssessor:
                     file_nodes = [
                         node_id
                         for node_id in matches
-                        if self._field(nodes[node_id], "kind") == "file"
-                        or node_id == f"file:{path}"
+                        if self._field(nodes[node_id], "kind") in {
+                            "file",
+                            "python_file",
+                            "template_file",
+                        }
+                        or node_id.startswith(f"file:{path}")
                     ]
 
                     if len(file_nodes) == 1:

@@ -558,6 +558,7 @@ class DeepSearchWorkflow:
         reason = self._input_error(state)
 
         if reason:
+            logger.error(f"[DeepSearch] Input validation failed: {reason}")
             logger.error(
                 "deep_search_validation_failed",
                 extra={
@@ -619,6 +620,9 @@ class DeepSearchWorkflow:
 
         if source_files is None:
             logger.error(
+                f"[DeepSearch] No source files available for repository '{state.get('repo_name')}'. Cannot build dependency graph."
+            )
+            logger.error(
                 "deep_search_source_provider_missing",
                 extra={
                     "diagnostic_code": (
@@ -638,6 +642,9 @@ class DeepSearchWorkflow:
             }
 
         if not isinstance(source_files, Mapping) or not source_files:
+            logger.error(
+                f"[DeepSearch] Source files empty for repository '{state.get('repo_name')}'. Cannot build dependency graph."
+            )
             return {
                 "status": STATUS_UNAVAILABLE,
                 "reason": (
@@ -679,6 +686,7 @@ class DeepSearchWorkflow:
                 }
 
             if not isinstance(source, str):
+                logger.error(f"[DeepSearch] Source snapshot contains non-text file content for '{normalized_path}'.")
                 return {
                     "status": STATUS_UNAVAILABLE,
                     "reason": (
@@ -693,8 +701,11 @@ class DeepSearchWorkflow:
 
         try:
             graph = build_dependency_graph(validated_files)
-        except Exception:
-            logger.exception("deep_search_graph_build_failed")
+        except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Dependency graph construction failed for repo '{state.get('repo_name')}': {exc}",
+                exc_info=True,
+            )
             return {
                 "status": STATUS_UNAVAILABLE,
                 "reason": "Dependency graph construction failed.",
@@ -734,6 +745,9 @@ class DeepSearchWorkflow:
         )
 
         if _safe_count(nodes) == 0:
+            logger.warning(
+                f"[DeepSearch] Dependency graph contains 0 nodes for repo '{state.get('repo_name')}'. Source files count: {len(validated_files)}."
+            )
             return {
                 "status": STATUS_INCOMPLETE,
                 "reason": (
@@ -784,8 +798,8 @@ class DeepSearchWorkflow:
 
             result = explore_method(**kwargs)
 
-        except Exception:
-            logger.exception("deep_search_exploration_failed")
+        except Exception as exc:
+            logger.error(f"[DeepSearch] Graph exploration failed: {exc}", exc_info=True)
             return {
                 "status": STATUS_UNAVAILABLE,
                 "reason": "Dependency graph exploration failed.",
@@ -803,11 +817,7 @@ class DeepSearchWorkflow:
 
         if not targets:
             logger.warning(
-                "deep_search_no_targets",
-                extra={
-                    "round": state.get("rounds", 0),
-                    "reason": reason,
-                },
+                f"[DeepSearch] Exploration found 0 targets in round {state.get('rounds', 0)}: {reason or 'no matching targets'}."
             )
             return {
                 "status": STATUS_INCOMPLETE,
@@ -865,10 +875,10 @@ class DeepSearchWorkflow:
                 targets=targets,
                 state=state,
             )
-        except Exception:
-            logger.exception(
-                "deep_search_targeted_retrieval_failed",
-                extra={"round": state.get("rounds", 0)},
+        except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Targeted code retrieval failed in round {state.get('rounds', 0)}: {exc}",
+                exc_info=True,
             )
             return {
                 "status": STATUS_UNAVAILABLE,
@@ -878,6 +888,7 @@ class DeepSearchWorkflow:
             }
 
         if not isinstance(result, Mapping):
+            logger.error("[DeepSearch] Targeted retrieval returned an invalid non-mapping result.")
             return {
                 "status": STATUS_UNAVAILABLE,
                 "retrieval_status": "INVALID_RESULT",
@@ -900,13 +911,8 @@ class DeepSearchWorkflow:
 
         if retrieval_status != "SUCCESS":
             logger.warning(
-                "deep_search_retrieval_incomplete",
-                extra={
-                    "round": state.get("rounds", 0),
-                    "retrieval_status": retrieval_status,
-                    "retrieved_chunk_count": len(chunks),
-                    "missing_target_count": len(missing),
-                },
+                f"[DeepSearch] Targeted retrieval incomplete (status='{retrieval_status}', "
+                f"chunks={len(chunks)}, missing={len(missing)} targets)."
             )
             return {
                 "status": STATUS_INCOMPLETE,
@@ -923,6 +929,7 @@ class DeepSearchWorkflow:
             }
 
         if not chunks:
+            logger.warning(f"[DeepSearch] Targeted retrieval returned 0 chunks for targets: {targets}.")
             return {
                 "status": STATUS_INCOMPLETE,
                 "retrieval_status": retrieval_status,
@@ -1021,10 +1028,10 @@ class DeepSearchWorkflow:
                 rounds=round_number,
                 max_rounds=max_rounds,
             )
-        except Exception:
-            logger.exception(
-                "deep_search_assessment_failed",
-                extra={"round": round_number},
+        except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Evidence assessment failed in round {round_number}: {exc}",
+                exc_info=True,
             )
             return {
                 "status": STATUS_UNAVAILABLE,
@@ -1035,6 +1042,7 @@ class DeepSearchWorkflow:
             }
 
         if not isinstance(result, Mapping):
+            logger.error(f"[DeepSearch] Assessment adapter returned an invalid non-mapping result in round {round_number}.")
             return {
                 "status": STATUS_UNAVAILABLE,
                 "rounds": round_number,
@@ -1056,11 +1064,7 @@ class DeepSearchWorkflow:
         if assessment_status == STATUS_RUNNING:
             if round_number >= max_rounds:
                 logger.warning(
-                    "deep_search_round_limit_reached",
-                    extra={
-                        "round": round_number,
-                        "max_rounds": max_rounds,
-                    },
+                    f"[DeepSearch] Round limit reached ({round_number}/{max_rounds}) without conclusive evidence."
                 )
                 return {
                     "status": STATUS_INCOMPLETE,
@@ -1271,18 +1275,16 @@ class DeepSearchWorkflow:
             "assessment_status": state.get("assessment_status"),
         }
 
-        logger.info(
-            "deep_search_finalization_completed",
-            extra={
-                "status": status,
-                "diagnosis_present": bool(result["diagnosis"]),
-                "evidence_count": len(result["evidence"]),
-                "retrieved_chunk_count": len(result["retrieved_chunks"]),
-                "searched_target_count": len(result["searched_targets"]),
-                "rounds": result["rounds"],
-                "diagnostic_code": result["diagnostic_code"],
-            },
-        )
+        if status != STATUS_COMPLETE:
+            logger.warning(
+                f"[DeepSearch] Finalized with status='{status}' (rounds={result['rounds']}): {result.get('reason')} "
+                f"(diagnostic_code={result.get('diagnostic_code')})."
+            )
+        else:
+            logger.info(
+                f"[DeepSearch] Finalized with STATUS_COMPLETE (rounds={result['rounds']}, "
+                f"confidence={result.get('confidence')}, evidence_count={len(result['evidence'])})."
+            )
 
         return {"final_result": result, "status": status}
 
@@ -1575,6 +1577,9 @@ class DeepSearchStage:
             result = dict(result_value)
 
         except DeepSearchSourceError as exc:
+            logger.error(
+                f"[DeepSearch] Source acquisition failed for repo '{repo_name}': {exc}"
+            )
             logger.warning(
                 "deep_search_source_acquisition_unavailable",
                 extra={
@@ -1603,16 +1608,11 @@ class DeepSearchStage:
                 ),
             }
 
-        except Exception:
-            logger.exception(
-                "deep_search_stage_execution_failed",
-                extra={
-                    "request_id": request_id,
-                    "repo_name": repo_name,
-                    "collection_name": collection_name,
-                },
+        except Exception as exc:
+            logger.error(
+                f"[DeepSearch] Unexpected error in DeepSearchStage for repo '{repo_name}': {exc}",
+                exc_info=True,
             )
-
             result = {
                 "status": STATUS_UNAVAILABLE,
                 "intent": INTENT_FIX_BUG,

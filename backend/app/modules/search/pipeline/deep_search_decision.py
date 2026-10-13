@@ -1,4 +1,4 @@
-﻿
+
 """
 app/modules/search/pipeline/deep_search_decision.py
 
@@ -76,6 +76,7 @@ _CROSS_COMPONENT_PATTERNS = (
     r"\bambiguous\s+(?:function|method|symbol|file|implementation)\b",
     r"\b(?:schema|dto|serializer)\b.*?\b(?:model|database|template)\b",
     r"\b(?:model|database|template)\b.*?\b(?:schema|dto|serializer)\b",
+    r"\bwrong\s+(?:field|attribute|property)(?:\s+reference)?\b",
     r"\b(?:template|router|route|crud|schema|model)\b.*?"
     r"\b(?:field|attribute|mapping|contract)\s+mismatch\b",
 )
