@@ -1,4 +1,3 @@
-
 """
 app/modules/search/pipeline/evidence_validation.py
 
@@ -22,7 +21,7 @@ from app.modules.code_analysis.service.code_analysis_service import (
 )
 from app.modules.search.domain.search_domain import SearchContext
 
-logger = get_logger(__name__)
+logger = get_logger("evidence_validation")
 
 MAX_VALIDATION_RETRIES = 2
 
@@ -34,18 +33,18 @@ class EvidenceValidationStage:
         self,
         code_analysis_service: CodeAnalysisService,
     ) -> None:
-        self.code_analysis_service = code_analysis_service
+         self.code_analysis_service = code_analysis_service
 
     async def execute(self, context: SearchContext) -> None:
         """
-        Validate Step 9 code analysis against retrieved evidence chunks.
+        Validate Step 9 code analysis against retrieved evidence chunks.
 
-        Normal validation and retry behavior is preserved.
+        Normal validation and retry behavior is preserved.
 
-        If Step 9 analysis is marked as unavailable because the LLM
-        failed, deterministic validation is used instead so the
-        pipeline can continue without generating unsupported claims.
-        """
+        If Step 9 analysis is marked as unavailable because the LLM
+        failed, deterministic validation is used instead so the
+        pipeline can continue without generating unsupported claims.
+        """
 
         if context.early_exit:
             logger.info(
@@ -59,7 +58,7 @@ class EvidenceValidationStage:
 
         # ---------------------------------------------------------
         # Deterministic fallback for unavailable Step 9 analysis.
-        # ---------------------------------------------------------
+         # ---------------------------------------------------------
         #
         # Do not attempt LLM validation/re-analysis when Step 9
         # explicitly reports that analysis is unavailable.
@@ -68,8 +67,8 @@ class EvidenceValidationStage:
         # It only records that validation could not be performed.
         #
         if analysis.get("analysis_status") == "UNAVAILABLE":
-            self._apply_unavailable_fallback(context, analysis)
-            return
+             self._apply_unavailable_fallback(context, analysis)
+             return
 
         retry_count = 0
 
@@ -216,7 +215,7 @@ class EvidenceValidationStage:
         analysis: dict,
         reason: str,
     ) -> None:
-        """
+        """ 
         Deterministic fallback when the validation mechanism itself fails.
 
         No validation success is claimed and no unsupported code

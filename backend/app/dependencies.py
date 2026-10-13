@@ -279,6 +279,14 @@ def get_search_service(
     resp_gen_stage = ResponseGenerationStage()
 
     # ---------------------------------------------------------------
+    # Deep Search: build the stage with real adapters
+    # ---------------------------------------------------------------
+    deep_search_stage = _build_deep_search_stage(
+        llm_provider=llm_service.provider,
+        dense_search=dense,
+    )
+
+    # ---------------------------------------------------------------
     # Build SearchService
     # ---------------------------------------------------------------
     return SearchService(
@@ -296,4 +304,284 @@ def get_search_service(
         suggestion_validation_stage=suggestion_validation_stage,
         final_triage_stage=final_triage_stage,
         resp_gen_stage=resp_gen_stage,
+        deep_search_stage=deep_search_stage,
     )
+
+
+def _build_deep_search_stage(llm_provider, dense_search):
+    """
+    Construct a fully wired DeepSearchStage using existing infrastructure.
+
+    Search adapter  — runs targeted dense retrieval against the
+                      repository-scoped Qdrant collection.
+    Assessment adapter — calls the configured LLM provider for
+                         evidence assessment.
+
+    Both adapters are synchronous (required by LangGraph nodes) and
+    delegate to existing async implementations via asyncio.
+    """
+    import asyncio
+    import json
+
+    from app.modules.search.pipeline.deep_search import (
+        DeepSearchStage,
+        DeepSearchWorkflow,
+    )
+    from app.modules.search.pipeline.deep_search_retriever import (
+        TargetedSearchRequest,
+    )
+
+    # -------------------------------------------------------------------
+    # Search adapter
+    # -------------------------------------------------------------------
+    # Performs path-constrained dense vector retrieval against the
+    # resolved Qdrant collection.  Does not introduce a new Qdrant client.
+    # -------------------------------------------------------------------
+
+    def _run_async(coro):
+        """Run a coroutine synchronously, reusing the running loop if any."""
+        try:
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # In an async context (e.g., during FastAPI request handling)
+                # we cannot call run_until_complete.  Use a thread instead.
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, coro)
+                    return future.result(timeout=60)
+            else:
+                return loop.run_until_complete(coro)
+        except RuntimeError:
+            return asyncio.run(coro)
+
+    def _search_adapter(request: TargetedSearchRequest):
+        """
+        Synchronous adapter around the existing dense vector search.
+
+        1. Generate a query embedding for the targeted query.
+        2. Run dense search against the repository-scoped collection.
+        3. Post-filter chunks to the requested target paths.
+        4. Return raw chunk dicts compatible with DeepSearchRetriever.
+        """
+        from app.modules.embedding.service.embedding_service import (
+            generate_embeddings,
+        )
+        from app.infrastructure.qdrant.vector_repository import search_vectors
+        from app.modules.search.domain.search_domain import SearchContext
+
+        async def _retrieve():
+            # Generate a query vector for the targeted query.
+            vectors = await generate_embeddings(
+                [request.query],
+                input_type="query",
+            )
+
+            if not vectors or not vectors[0]:
+                return []
+
+            query_vector = vectors[0]
+
+            # Search within the resolved repository collection only.
+            scored_points = await search_vectors(
+                collection_name=request.collection_name,
+                query_vector=query_vector,
+                limit=request.limit,
+            )
+
+            if not scored_points:
+                return []
+
+            # Normalise to the dict schema expected by DeepSearchRetriever.
+            target_paths_lower = {
+                p.replace("\\", "/").lower()
+                for p in request.target_paths
+            }
+
+            chunks = []
+            for point in scored_points:
+                payload = point.payload or {}
+                file_path = str(
+                    payload.get("file_path") or ""
+                ).replace("\\", "/")
+
+                # Post-filter: only accept chunks whose path is one of the
+                # requested targets (or a suffix match for repo-relative paths).
+                if target_paths_lower:
+                    fp_lower = file_path.lower()
+                    matched = any(
+                        fp_lower == tp
+                        or fp_lower.endswith("/" + tp)
+                        or tp.endswith("/" + fp_lower)
+                        for tp in target_paths_lower
+                    )
+                    if not matched:
+                        continue
+
+                chunks.append({
+                    "path": file_path,
+                    "content": payload.get("code") or payload.get("content") or "",
+                    "line_start": payload.get("start_line"),
+                    "line_end": payload.get("end_line"),
+                    "score": float(point.score),
+                    "metadata": payload,
+                })
+
+            return chunks
+
+        try:
+            return _run_async(_retrieve())
+        except Exception:
+            return []
+
+    # -------------------------------------------------------------------
+    # Assessment adapter
+    # -------------------------------------------------------------------
+    # Uses the existing LLM provider synchronously.  The adapter follows
+    # the contract expected by DeepSearchAssessor:
+    #   Input:  { query, retrieved_chunks, rounds, max_rounds, ... }
+    #   Output: { is_sufficient, diagnosis, confidence, evidence,
+    #             follow_up_targets, follow_up_query, reason }
+    # -------------------------------------------------------------------
+
+    _DEEP_SEARCH_ASSESSMENT_SYSTEM_PROMPT = (
+        "You are a precise software bug investigator. "
+        "Your task: analyse retrieved source code evidence and determine whether "
+        "it conclusively explains the reported bug.\n\n"
+        "Rules:\n"
+        "1. Only use information present in the retrieved code chunks.\n"
+        "2. Never invent field names, function names, file paths, or code.\n"
+        "3. Every evidence item MUST cite an exact verbatim quotation from a "
+        "retrieved chunk.\n"
+        "4. If more investigation is needed, propose ONLY existing file paths "
+        "from the retrieved graph targets.\n"
+        "5. Return valid JSON matching the output schema."
+    )
+
+    _DEEP_SEARCH_ASSESSMENT_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "is_sufficient": {"type": "boolean"},
+            "diagnosis": {"type": ["string", "null"]},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "evidence": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"},
+                        "quote": {"type": "string"},
+                        "claim": {"type": "string"},
+                        "line_start": {"type": ["integer", "null"]},
+                        "line_end": {"type": ["integer", "null"]},
+                    },
+                    "required": ["path", "quote", "claim"],
+                },
+            },
+            "follow_up_targets": {
+                "type": "array",
+                "items": {"type": "string"},
+            },
+            "follow_up_query": {"type": ["string", "null"]},
+            "reason": {"type": "string"},
+        },
+        "required": [
+            "is_sufficient",
+            "diagnosis",
+            "confidence",
+            "evidence",
+            "follow_up_targets",
+            "follow_up_query",
+            "reason",
+        ],
+        "additionalProperties": False,
+    }
+
+    def _assessment_adapter(payload: dict) -> dict:
+        """
+        Synchronous LLM assessment adapter for Deep Search.
+
+        Formats the evidence payload into a prompt, calls the existing
+        LLM provider, and returns a structured assessment dict.
+        """
+        query = payload.get("query", "")
+        retrieved_chunks = payload.get("retrieved_chunks", [])
+        rounds = payload.get("rounds", 0)
+        max_rounds = payload.get("max_rounds", 3)
+        targets = payload.get("targets", [])
+
+        # Build a compact evidence summary for the prompt.
+        chunk_summaries = []
+        for chunk in retrieved_chunks[:15]:  # cap to keep prompt bounded
+            path = chunk.get("path", "unknown")
+            line_start = chunk.get("line_start", "?")
+            line_end = chunk.get("line_end", "?")
+            content = (chunk.get("content") or "")[:800]
+            chunk_summaries.append(
+                f"--- {path} (lines {line_start}-{line_end}) ---\n{content}"
+            )
+
+        evidence_block = "\n\n".join(chunk_summaries) or "(no code retrieved)"
+        targets_block = json.dumps(
+            [str(t) for t in targets[:20]], ensure_ascii=False
+        )
+
+        user_prompt = (
+            f"Bug report: {query}\n\n"
+            f"Investigation round: {rounds + 1} of {max_rounds}\n\n"
+            f"Retrieved code evidence:\n{evidence_block}\n\n"
+            f"Investigation targets available for follow-up:\n{targets_block}\n\n"
+            "Based only on the retrieved code above, assess whether the bug "
+            "can be conclusively diagnosed.\n"
+            "If is_sufficient=true, provide a diagnosis with evidence items "
+            "each containing an exact verbatim quote from the retrieved code.\n"
+            "If is_sufficient=false and more investigation is needed, list "
+            "only existing file paths from the targets above as follow_up_targets."
+        )
+
+        async def _call_llm():
+            return await llm_provider.complete_json(
+                prompt=user_prompt,
+                system_prompt=_DEEP_SEARCH_ASSESSMENT_SYSTEM_PROMPT,
+                schema=_DEEP_SEARCH_ASSESSMENT_SCHEMA,
+            )
+
+        try:
+            result = _run_async(_call_llm())
+        except Exception:
+            return {
+                "is_sufficient": False,
+                "diagnosis": None,
+                "confidence": 0.0,
+                "evidence": [],
+                "follow_up_targets": [],
+                "follow_up_query": None,
+                "reason": "LLM assessment failed.",
+            }
+
+        if not isinstance(result, dict):
+            return {
+                "is_sufficient": False,
+                "diagnosis": None,
+                "confidence": 0.0,
+                "evidence": [],
+                "follow_up_targets": [],
+                "follow_up_query": None,
+                "reason": "LLM returned an invalid assessment.",
+            }
+
+        return result
+
+    # -------------------------------------------------------------------
+    # Assemble workflow and stage
+    # -------------------------------------------------------------------
+
+    workflow = DeepSearchWorkflow(
+        search_adapter=_search_adapter,
+        assessment_adapter=_assessment_adapter,
+        max_rounds=3,
+        max_graph_depth=3,
+        max_targets=12,
+    )
+
+    return DeepSearchStage(workflow=workflow)
+

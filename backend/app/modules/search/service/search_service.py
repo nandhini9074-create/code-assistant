@@ -83,6 +83,9 @@ from app.modules.search.pipeline.response_generation import (
 )
 
 from app.core.enums import IntentType
+from app.modules.search.pipeline.deep_search_decision import (
+    decide_deep_search_escalation,
+)
 
 logger = get_logger(__name__)
 
@@ -159,6 +162,43 @@ class SearchService:
             isinstance(parameters, dict)
             and parameters.get("deep_search_requested") is True
         )
+
+    @staticmethod
+    def _should_escalate_to_deep_search(context: SearchContext) -> bool:
+        """
+        Post-retrieval escalation check for FIX_BUG.
+
+        After normal retrieval and analysis, determine whether the
+        evidence is insufficient or signals a cross-component dependency
+        that Deep Search should investigate.
+
+        This only escalates when:
+        - Intent is FIX_BUG.
+        - Deep Search was NOT already selected initially.
+        - No early exit has already been triggered.
+        - The escalation decision returns selected=True.
+        """
+        if context.intent != IntentType.FIX_BUG:
+            return False
+
+        if context.early_exit:
+            return False
+
+        # Already selected by initial decision -- no escalation needed.
+        parameters = context.intent_parameters or {}
+        if (
+            isinstance(parameters, dict)
+            and parameters.get("deep_search_requested") is True
+        ):
+            return False
+
+        decision = decide_deep_search_escalation(
+            query=context.query,
+            retrieved_chunks=context.retrieved_chunks,
+            analysis_result=context.analysis_result,
+        )
+
+        return decision.selected
 
     async def _execute_stage(
         self,
@@ -280,20 +320,24 @@ class SearchService:
             deep_search_selected = self._deep_search_selected(context)
 
             logger.info(
-                "search_mode_selected",
-                repo_name=context.repo_name,
+                "deep_search_selection_check",
                 intent=(
                     context.intent.value
                     if context.intent is not None
                     else None
                 ),
-                mode=(
-                    "DEEP_SEARCH"
-                    if deep_search_selected
-                    else "NORMAL_SEARCH"
+                deep_search_requested=(
+                    (context.intent_parameters or {}).get(
+                        "deep_search_requested", False
+                    )
+                    if isinstance(context.intent_parameters, dict)
+                    else False
                 ),
-                reason=(context.intent_parameters or {}).get(
-                    "deep_search_reason"
+                deep_search_selected=deep_search_selected,
+                deep_search_reason=(
+                    (context.intent_parameters or {}).get("deep_search_reason")
+                    if isinstance(context.intent_parameters, dict)
+                    else None
                 ),
             )
 
@@ -330,9 +374,11 @@ class SearchService:
             # normal retrieval/analysis path only for selected requests.
             if deep_search_selected:
                 logger.info(
-                    "deep_search_branch_started",
+                    "deep_search_stage_selected_and_executing",
                     repo_name=context.repo_name,
+                    intent=context.intent.value if context.intent else None,
                     collection=context.qdrant_collection,
+                    deep_search_requested=True,
                 )
 
                 await self._execute_stage(
@@ -390,6 +436,43 @@ class SearchService:
 
                 if not should_continue:
                     break
+
+                # After CodeAnalysisStage, check whether the evidence
+                # warrants escalating to Deep Search.  The check is
+                # bounded and does not run for any other intent.
+                if isinstance(stage, CodeAnalysisStage):
+                    if self._should_escalate_to_deep_search(context):
+                        escalation_reason = decide_deep_search_escalation(
+                            query=context.query,
+                            retrieved_chunks=context.retrieved_chunks,
+                            analysis_result=context.analysis_result,
+                        ).reason
+
+                        logger.info(
+                            "deep_search_escalation_triggered",
+                            repo_name=context.repo_name,
+                            reason=escalation_reason,
+                        )
+
+                        # Mark the context so DeepSearchStage will execute.
+                        parameters = dict(context.intent_parameters or {})
+                        parameters["deep_search_requested"] = True
+                        parameters["deep_search_reason"] = escalation_reason
+                        parameters["deep_search_escalated"] = True
+                        context.intent_parameters = parameters
+
+                        # Reset early_exit so DeepSearchStage is not skipped.
+                        context.early_exit = None
+
+                        await self._execute_stage(
+                            self.deep_search_stage,
+                            context,
+                            stage_number,
+                        )
+
+                        # Deep Search sets early_exit after completion;
+                        # proceed directly to response generation.
+                        return await self._generate_response(context)
 
             return await self._generate_response(context)
 

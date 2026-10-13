@@ -6,7 +6,6 @@ High-accuracy Model–Schema Contract Analysis for RepoLens FIX_BUG flow.
 This module inspects real class/model definitions, schemas/DTOs, and field usages
 to verify contracts without relying on word matching, field-name similarity,
 or embedding similarity.
-
 Key Principles:
 1. Locate and inspect the actual model/class definition.
 2. Locate the schema/DTO and all meaningful references to the field.

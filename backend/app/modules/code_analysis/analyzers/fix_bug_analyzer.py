@@ -3,11 +3,18 @@
 app/modules/code_analysis/analyzers/fix_bug_analyzer.py
 
 Analyzer for FIX_BUG intent.
+
+Responsibilities:
+- Analyze retrieved repository evidence.
+- Incorporate model/schema contract evidence.
+- Reject unsupported or unverifiable fixes.
+- Validate proposed patch targets against retrieved chunks.
+- Preserve UNAVAILABLE behavior when analysis or evidence is insufficient.
+
+Deep Search orchestration belongs to the search pipeline, not this analyzer.
 """
 
 from __future__ import annotations
-
-import re
 
 from app.core.logging import get_logger
 
@@ -26,43 +33,23 @@ from app.modules.search.domain.search_domain import SearchContext
 
 logger = get_logger(__name__)
 
-
-# Keep the output bounded so the model does not spend the entire
-# completion budget generating a large code response.
 MAX_OUTPUT_TOKENS = 2048
-
-# Maximum repository-context characters sent to the FIX_BUG analyzer.
-#
-# This is a safety limit for the analysis prompt. The retrieved context
-# should already have been selected by the search pipeline.
 MAX_CONTEXT_CHARS = 12000
 
 
 _SCHEMA = {
     "type": "object",
     "properties": {
-        "current_behavior": {
-            "type": "string",
-        },
+        "current_behavior": {"type": "string"},
         "analysis_status": {
             "type": "string",
             "enum": ["OK", "UNAVAILABLE"],
         },
-        "evidence_summary": {
-            "type": "string",
-        },
-        "problematic_code": {
-            "type": "string",
-        },
-        "likely_cause": {
-            "type": "string",
-        },
-        "proposed_fix": {
-            "type": "string",
-        },
-        "proposed_change": {
-            "type": "string",
-        },
+        "evidence_summary": {"type": "string"},
+        "problematic_code": {"type": "string"},
+        "likely_cause": {"type": "string"},
+        "proposed_fix": {"type": "string"},
+        "proposed_change": {"type": "string"},
         "code_change": {
             "anyOf": [
                 {
@@ -88,9 +75,7 @@ _SCHEMA = {
                 {"type": "null"},
             ]
         },
-        "suggested_code": {
-            "type": "string",
-        },
+        "suggested_code": {"type": "string"},
     },
     "required": [
         "current_behavior",
@@ -107,27 +92,22 @@ _SCHEMA = {
 
 
 class FixBugAnalyzer(BaseAnalyzer):
+    """Analyze bug reports using verified repository evidence."""
 
     def __init__(self, llm_service: LLMService) -> None:
         self.llm_service = llm_service
 
     async def analyze(self, context: SearchContext) -> AnalysisResult:
         """
-        Analyze a FIX_BUG request using the retrieved repository context.
+        Analyze a FIX_BUG request.
 
-        The analyzer:
-        1. Uses the original bug query.
-        2. Adds validation feedback when retrying.
-        3. Limits the repository context sent to the LLM.
-        4. Requests a compact structured JSON response.
-        5. Propagates LLM failures to CodeAnalysisStage so the
-           centralized UNAVAILABLE fallback can be applied.
+        The search pipeline is responsible for choosing normal retrieval
+        or Deep Search. This analyzer consumes the evidence supplied by
+        that pipeline and does not initiate another retrieval workflow.
         """
 
         query_text = context.query
 
-        # Add validation feedback only when a previous validation attempt
-        # has provided concrete feedback.
         if context.validation_feedback:
             feedback_str = "\n".join(
                 f"- {error}"
@@ -142,7 +122,7 @@ class FixBugAnalyzer(BaseAnalyzer):
             )
 
         # ---------------------------------------------------------
-        # Model-Schema Contract Analysis
+        # Model-schema contract analysis
         # ---------------------------------------------------------
         from app.modules.search.pipeline.model_schema_contract_analysis import (
             ContractIssueType,
@@ -152,32 +132,40 @@ class FixBugAnalyzer(BaseAnalyzer):
 
         contract_analyzer = ModelSchemaContractAnalyzer()
         contract_result = contract_analyzer.analyze(context)
+
         context.contract_analysis = contract_result.to_dict()
 
         contract_fact_str = ""
         if contract_result.is_applicable:
-            contract_fact_str = format_contract_evidence_for_llm(contract_result)
+            contract_fact_str = format_contract_evidence_for_llm(
+                contract_result
+            )
 
-        # Limit the context before constructing the final LLM prompt.
         repository_context = _limit_context(
             context.llm_context or ""
         )
 
-        if contract_fact_str and contract_fact_str not in repository_context:
-            repository_context = f"{contract_fact_str}\n\n{repository_context}"
+        if (
+            contract_fact_str
+            and contract_fact_str not in repository_context
+        ):
+            repository_context = (
+                f"{contract_fact_str}\n\n{repository_context}"
+            )
 
         user_prompt = FIX_BUG_USER_PROMPT.format(
             context=repository_context,
             query=query_text,
         )
 
-        # Useful diagnostic information for token/prompt debugging.
         logger.info(
             "fix_bug_prompt_size",
             prompt_chars=len(user_prompt),
             context_chars=len(repository_context),
             query_chars=len(query_text),
-            validation_feedback_count=len(context.validation_feedback),
+            validation_feedback_count=len(
+                context.validation_feedback
+            ),
             contract_applicable=contract_result.is_applicable,
             contract_issue_type=contract_result.issue_type.value,
         )
@@ -210,24 +198,42 @@ class FixBugAnalyzer(BaseAnalyzer):
                 ],
             )
 
-            analysis["analysis_status"] = str(
-                analysis.get("analysis_status") or "UNAVAILABLE"
-            ).strip().upper()
+            analysis["analysis_status"] = (
+                str(
+                    analysis.get("analysis_status") or "UNAVAILABLE"
+                )
+                .strip()
+                .upper()
+            )
 
-            # If contract analysis found insufficient evidence or ambiguity, enforce UNAVAILABLE
+            # -----------------------------------------------------
+            # Validate contract evidence before accepting a fix.
+            # -----------------------------------------------------
             if (
                 contract_result.is_applicable
-                and contract_result.issue_type in (
+                and contract_result.issue_type
+                in (
                     ContractIssueType.AMBIGUOUS,
                     ContractIssueType.INSUFFICIENT_EVIDENCE,
                 )
-                and not contract_result.verified_facts.get("field_present")
+                and not contract_result.verified_facts.get(
+                    "field_present"
+                )
             ):
                 analysis["analysis_status"] = "UNAVAILABLE"
                 analysis["code_change"] = None
                 analysis["suggested_code"] = ""
-                analysis["evidence_summary"] = contract_result.evidence_summary
+                analysis["evidence_summary"] = (
+                    contract_result.evidence_summary
+                    or (
+                        "The available model/schema evidence does not "
+                        "establish a safe, specific fix."
+                    )
+                )
 
+            # -----------------------------------------------------
+            # Validate actual repository evidence.
+            # -----------------------------------------------------
             elif (
                 analysis["analysis_status"] != "OK"
                 or not _has_concrete_evidence(analysis, context)
@@ -235,42 +241,82 @@ class FixBugAnalyzer(BaseAnalyzer):
                 analysis["analysis_status"] = "UNAVAILABLE"
                 analysis["code_change"] = None
                 analysis["suggested_code"] = ""
-                analysis["evidence_summary"] = str(
-                    analysis.get("evidence_summary")
-                    or "The retrieved code does not establish a specific cause."
+
+                analysis["evidence_summary"] = (
+                    str(analysis.get("evidence_summary") or "").strip()
+                    or (
+                        "The retrieved repository evidence does not "
+                        "establish a verifiable cause and patch target."
+                    )
                 )
 
-            # Rule 8: Never automatically suggest adding a database/model field when
-            # the issue is a mapping mismatch or wrong field reference
+            # -----------------------------------------------------
+            # Prevent unsafe model changes for field-mapping issues.
+            # -----------------------------------------------------
             if (
-                contract_result.is_applicable
+                analysis["analysis_status"] == "OK"
+                and contract_result.is_applicable
                 and contract_result.field_confirmed_absent
-                and contract_result.issue_type in (
+                and contract_result.issue_type
+                in (
                     ContractIssueType.FIELD_MAPPING_MISMATCH,
                     ContractIssueType.WRONG_FIELD_REFERENCE,
                 )
                 and isinstance(analysis.get("code_change"), dict)
             ):
-                model_fp = (
-                    contract_result.model_definition.file_path.replace("\\", "/").lower()
+                model_path = (
+                    _normalize_path(
+                        contract_result.model_definition.file_path
+                    )
                     if contract_result.model_definition
                     else ""
                 )
-                cc_fp = str(analysis["code_change"].get("file_path") or "").replace("\\", "/").lower()
-                # If code change attempts to add fields to the database model file instead of the caller/schema
-                if model_fp and (cc_fp.endswith(model_fp) or model_fp.endswith(cc_fp)):
+
+                change_path = _normalize_path(
+                    analysis["code_change"].get("file_path")
+                )
+
+                if (
+                    model_path
+                    and change_path
+                    and _paths_match(model_path, change_path)
+                ):
                     logger.warning(
                         "fix_bug_prevented_unsafe_model_modification",
-                        target_model=model_fp,
+                        target_model=model_path,
                         issue_type=contract_result.issue_type.value,
                     )
+
+                    # A rejected patch must not be returned as a
+                    # successful fix.
+                    analysis["analysis_status"] = "UNAVAILABLE"
                     analysis["code_change"] = None
                     analysis["suggested_code"] = ""
+
                     analysis["proposed_fix"] = (
-                        f"Update the {contract_result.issue_type.value.lower().replace('_', ' ')} "
-                        f"to use verified field '{contract_result.equivalent_field}' "
-                        f"instead of modifying the database model."
+                        "The proposed change targets the database model, "
+                        "but the available contract evidence indicates "
+                        "a field-mapping mismatch or wrong field reference. "
+                        "Correct the verified caller/schema mapping instead "
+                        "of adding or modifying a model field."
                     )
+
+                    analysis["evidence_summary"] = (
+                        contract_result.evidence_summary
+                        or (
+                            "The proposed model modification was rejected "
+                            "because the evidence does not justify a "
+                            "database model change."
+                        )
+                    )
+
+            # -----------------------------------------------------
+            # Final response consistency.
+            # -----------------------------------------------------
+            if analysis["analysis_status"] != "OK":
+                analysis["analysis_status"] = "UNAVAILABLE"
+                analysis["code_change"] = None
+                analysis["suggested_code"] = ""
 
             logger.info(
                 "fix_bug_analysis_completed",
@@ -298,29 +344,15 @@ class FixBugAnalyzer(BaseAnalyzer):
                 exc_info=True,
             )
 
-            # Do not return an empty AnalysisResult here.
-            #
-            # Returning AnalysisResult would make the failed LLM call
-            # look like a completed analysis to CodeAnalysisService.
-            #
-            # Propagate the failure so CodeAnalysisStage can create the
-            # standardized UNAVAILABLE fallback.
+            # Preserve the existing centralized failure handling.
+            # Do not turn an LLM exception into a successful analysis.
             raise RuntimeError(
                 f"FIX_BUG analysis failed: {exc}"
             ) from exc
 
 
 def _limit_context(context_text: str) -> str:
-    """
-    Limit repository context sent to the FIX_BUG LLM.
-
-    The search pipeline may retrieve several chunks. Sending all of them
-    can unnecessarily increase prompt size and make structured JSON
-    generation harder.
-
-    The beginning of the context is preserved because ContextBuilder
-    normally places the most relevant/primary code there.
-    """
+    """Bound the repository context sent to the analysis LLM."""
 
     if not context_text:
         return ""
@@ -338,93 +370,153 @@ def _limit_context(context_text: str) -> str:
         context_text[:MAX_CONTEXT_CHARS]
         + "\n\n"
         "[CONTEXT TRUNCATED FOR FIX_BUG ANALYSIS]\n"
-        "Only the provided context above may be used."
+        "Only the provided repository evidence may be used."
     )
 
 
 def _coerce(raw: dict, required_keys: list[str]) -> dict:
-    """
-    Return raw with missing required keys added as empty strings.
-    """
+    """Fill missing response keys without inventing analysis results."""
+
+    result = dict(raw)
 
     for key in required_keys:
-        if key not in raw:
-            raw[key] = "" if key != "code_change" else None
+        if key not in result:
+            result[key] = None if key == "code_change" else ""
 
-    if raw.get("code_change") is None:
-        raw["code_change"] = None
+    if not isinstance(result.get("code_change"), dict):
+        result["code_change"] = None
 
-    return raw
+    return result
+
+
+def _normalize_path(path: object) -> str:
+    """
+    Normalize repository paths for comparison.
+
+    Handles Windows separators, leading './', repeated separators,
+    and case differences without assuming that the current working
+    directory is the repository root.
+    """
+
+    value = str(path or "").strip().replace("\\", "/")
+
+    while value.startswith("./"):
+        value = value[2:]
+
+    while "//" in value:
+        value = value.replace("//", "/")
+
+    return value.rstrip("/").casefold()
+
+
+def _paths_match(first: str, second: str) -> bool:
+    """
+    Match repository-relative paths against paths containing a
+    repository-root prefix.
+
+    Matching requires a complete path-component boundary, avoiding
+    accidental matches such as 'src/app.py' against 'old_src/app.py'.
+    """
+
+    first = _normalize_path(first)
+    second = _normalize_path(second)
+
+    if not first or not second:
+        return False
+
+    if first == second:
+        return True
+
+    return (
+        first.endswith("/" + second)
+        or second.endswith("/" + first)
+    )
 
 
 def _has_concrete_evidence(
     analysis: dict,
     context: SearchContext,
 ) -> bool:
-    """Require report-linked evidence and exact target code from retrieved chunks."""
-    evidence_summary = str(analysis.get("evidence_summary") or "").lower()
-    if not evidence_summary.strip():
+    """
+    Verify the analysis against retrieved repository evidence.
+
+    Evidence-summary wording is not required to repeat query keywords,
+    filenames, or symbol names verbatim.
+
+    When a patch is proposed, its file must exist in the retrieved
+    evidence and old_code must match the corresponding chunk exactly.
+    """
+
+    evidence_summary = str(
+        analysis.get("evidence_summary") or ""
+    ).strip()
+
+    if not evidence_summary:
         return False
-    query_terms = {
-        term.lower()
-        for term in re.findall(
-            r"[A-Za-z][A-Za-z0-9]*",
-            context.query,
-        )
-    }
-    generic_terms = {
-        "fix", "bug", "the", "a", "an", "in", "on", "at", "to", "for",
-        "with", "error", "issue", "problem", "please", "wrong", "broken",
-    }
-    report_terms = query_terms - generic_terms
-    if report_terms and not any(
-        re.search(rf"(?<!\w){re.escape(term)}(?!\w)", evidence_summary)
-        for term in report_terms
-    ):
+
+    retrieved_chunks = list(context.retrieved_chunks or [])
+
+    if not retrieved_chunks:
         return False
 
     code_change = analysis.get("code_change")
-    if code_change is not None and not isinstance(code_change, dict):
-        return False
 
-    target_path = (
-        str(code_change.get("file_path") or "").replace("\\", "/").lower()
-        if isinstance(code_change, dict)
-        else ""
-    )
-    if isinstance(code_change, dict) and not target_path:
-        return False
-
-    evidence_chunks = []
-    for chunk in context.retrieved_chunks:
-        chunk_path = (chunk.file_path or "").replace("\\", "/").lower()
-        if target_path and not (
-            chunk_path.endswith(target_path)
-            or target_path.endswith(chunk_path)
-        ):
-            continue
-
-        basename = chunk_path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-        symbols = [
-            str(chunk.metadata.get(key) or "").strip().lower()
-            for key in ("function_name", "class_name", "symbol")
-        ]
-        symbols = [symbol for symbol in symbols if symbol]
-        file_named = chunk_path in evidence_summary or basename in evidence_summary
-        symbol_named = not symbols or any(
-            symbol in evidence_summary for symbol in symbols
-        )
-        if file_named and symbol_named:
-            evidence_chunks.append(chunk)
-
-    if not evidence_chunks:
-        return False
     if code_change is None:
+        # An explanation without a patch may be returned only when
+        # repository evidence is available. The LLM must still mark
+        # the analysis OK, and contract safeguards remain applicable.
         return True
 
-    old_code = code_change.get("old_code")
-    return (
-        isinstance(old_code, str)
-        and bool(old_code.strip())
-        and any(old_code in chunk.content for chunk in evidence_chunks)
+    if not isinstance(code_change, dict):
+        return False
+
+    target_path = _normalize_path(
+        code_change.get("file_path")
     )
+
+    old_code = code_change.get("old_code")
+    new_code = code_change.get("new_code")
+
+    if not target_path:
+        return False
+
+    if not isinstance(old_code, str) or not old_code.strip():
+        return False
+
+    if not isinstance(new_code, str) or not new_code.strip():
+        return False
+
+    matching_chunks = []
+
+    for chunk in retrieved_chunks:
+        chunk_path = _normalize_path(
+            getattr(chunk, "file_path", "")
+        )
+
+        if not chunk_path:
+            continue
+
+        if _paths_match(chunk_path, target_path):
+            matching_chunks.append(chunk)
+
+    if not matching_chunks:
+        logger.warning(
+            "fix_bug_patch_target_not_in_retrieved_evidence",
+            target_path=target_path,
+        )
+        return False
+
+    # Strict validation: do not accept a patch when its old code
+    # cannot be located in the retrieved content for that file.
+    for chunk in matching_chunks:
+        chunk_content = getattr(chunk, "content", "")
+
+        if isinstance(chunk_content, str) and old_code in chunk_content:
+            return True
+
+    logger.warning(
+        "fix_bug_patch_old_code_not_in_retrieved_evidence",
+        target_path=target_path,
+    )
+
+    return False

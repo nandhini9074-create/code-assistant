@@ -5,19 +5,23 @@ app/modules/search/pipeline/code_analysis.py
 Pipeline stage: Intent-Specific Code Analysis (Step 9).
 
 Dispatches code analysis to the analyzer corresponding to the
-classified intent and stores the resulting analysis in the
-SearchContext.
+classified intent and stores the resulting analysis in SearchContext.
 
 Validation is handled separately by Step 10.
 
-If the LLM-backed analysis fails, a deterministic fallback result
-is stored so the pipeline can continue without inventing analysis.
+Deep Search owns analysis for requests selected for that workflow.
+Normal analysis must not run again after Deep Search has been selected
+or has produced a result.
+
+If analysis fails, a deterministic UNAVAILABLE result is stored.
+No unsupported cause, patch, or fix is fabricated.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
+from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.code_analysis.service.code_analysis_service import (
     CodeAnalysisService,
@@ -40,15 +44,15 @@ class CodeAnalysisStage:
         """
         Execute intent-specific code analysis.
 
-        Step 9 only performs analysis. Validation of the generated
-        analysis is handled by the separate Step 10 validation stage.
+        Normal requests use CodeAnalysisService.
 
-        If the analysis service fails, a deterministic fallback result
-        is stored and the pipeline continues.
+        Requests owned by Deep Search must not be analyzed again by
+        the normal analyzer. The search service remains responsible
+        for selecting and executing the Deep Search workflow.
         """
 
         # ---------------------------------------------------------
-        # Respect pipeline early-exit decisions from previous stages.
+        # Respect early exits from preceding stages.
         # ---------------------------------------------------------
         if context.early_exit:
             logger.info(
@@ -59,11 +63,59 @@ class CodeAnalysisStage:
             return
 
         # ---------------------------------------------------------
-        # Step 9 requires a classified intent.
+        # Do not run normal analysis for a Deep Search request.
         #
-        # Do not stop the pipeline if intent is unavailable.
-        # There is no safe way to perform intent-specific analysis,
-        # so store an explicit unavailable result instead.
+        # This is a defensive safeguard. SearchService should
+        # already route initially selected Deep Search requests
+        # around the normal retrieval and analysis stages.
+        # ---------------------------------------------------------
+        parameters = context.intent_parameters or {}
+
+        deep_search_selected = (
+            context.intent == IntentType.FIX_BUG
+            and isinstance(parameters, dict)
+            and parameters.get("deep_search_requested") is True
+        )
+
+        deep_search_result = getattr(
+            context,
+            "deep_search_result",
+            None,
+        )
+
+        if deep_search_selected or deep_search_result is not None:
+            logger.info(
+                "code_analysis_skipped_deep_search_owned",
+                repo_id=context.repo_id,
+                deep_search_selected=deep_search_selected,
+                deep_search_result_available=(
+                    deep_search_result is not None
+                ),
+            )
+
+            # Do not create a second analysis or overwrite the
+            # result produced by the Deep Search workflow.
+            #
+            # If this stage was incorrectly invoked before Deep
+            # Search produced a result, retain an explicit
+            # UNAVAILABLE result rather than inventing a fix.
+            if deep_search_result is None:
+                context.analysis_result = (
+                    self._build_fallback_analysis(
+                        context,
+                        reason=(
+                            "This FIX_BUG request is assigned to "
+                            "Deep Search. Normal code analysis was "
+                            "skipped, and no Deep Search result was "
+                            "available at this stage."
+                        ),
+                    )
+                )
+
+            return
+
+        # ---------------------------------------------------------
+        # A classified intent is required for normal analysis.
         # ---------------------------------------------------------
         if context.intent is None:
             logger.warning(
@@ -80,7 +132,6 @@ class CodeAnalysisStage:
                     ),
                 )
             )
-
             return
 
         logger.info(
@@ -90,7 +141,7 @@ class CodeAnalysisStage:
         )
 
         # ---------------------------------------------------------
-        # Preserve existing debugging/output behavior.
+        # Preserve the existing debugging output.
         # ---------------------------------------------------------
         print("\n" + "=" * 80)
         print("LLM INPUT")
@@ -105,11 +156,7 @@ class CodeAnalysisStage:
         print("=" * 80 + "\n")
 
         # ---------------------------------------------------------
-        # EXISTING ANALYSIS FLOW
-        #
-        # Do not change analyzer dispatching or CodeAnalysisService
-        # behavior. The service remains responsible for selecting
-        # the correct analyzer based on context.intent.
+        # Normal intent-specific analysis.
         # ---------------------------------------------------------
         try:
             analysis = await self.code_analysis_service.analyze(
@@ -117,14 +164,6 @@ class CodeAnalysisStage:
             )
 
         except Exception as exc:
-            # -----------------------------------------------------
-            # LLM/provider/analyzer failure.
-            #
-            # Do NOT raise the exception because that would stop
-            # the complete search pipeline.
-            #
-            # Do NOT fabricate analysis.
-            # -----------------------------------------------------
             logger.exception(
                 "code_analysis_failed_using_fallback",
                 intent=context.intent.value,
@@ -143,7 +182,7 @@ class CodeAnalysisStage:
             )
 
         # ---------------------------------------------------------
-        # Protect the pipeline from an invalid analyzer response.
+        # Reject invalid analyzer results.
         # ---------------------------------------------------------
         if not isinstance(analysis, dict):
             logger.warning(
@@ -162,9 +201,12 @@ class CodeAnalysisStage:
                 ),
             )
 
-        # Some analyzers convert provider failures into an error-shaped
-        # result instead of raising. Treat that result as a failed LLM call
-        # here so validation does not retry the provider unnecessarily.
+        # ---------------------------------------------------------
+        # Normalize error-shaped analyzer results.
+        #
+        # Do not send an error-shaped analysis into downstream
+        # validation as if it were a successful recommendation.
+        # ---------------------------------------------------------
         elif analysis.get("error"):
             logger.warning(
                 "code_analysis_llm_failed_using_fallback",
@@ -172,13 +214,36 @@ class CodeAnalysisStage:
                 repo_id=context.repo_id,
                 error_type="AnalyzerErrorResult",
             )
+
             analysis = self._build_fallback_analysis(
                 context,
                 reason=(
-                    "Code analysis was unavailable. The available repository "
-                    "evidence was preserved for a conservative recommendation."
+                    "Code analysis was unavailable because the "
+                    "analyzer reported an error. No verified fix "
+                    "was generated."
                 ),
             )
+
+        # ---------------------------------------------------------
+        # Normalize explicitly unavailable analyzer responses.
+        #
+        # Keep analyzer-specific evidence and diagnostics, but
+        # prevent downstream stages from treating an unavailable
+        # analysis as a successful patch proposal.
+        # ---------------------------------------------------------
+        elif (
+            str(analysis.get("analysis_status", ""))
+            .strip()
+            .upper()
+            == "UNAVAILABLE"
+        ):
+            analysis = dict(analysis)
+            analysis["analysis_status"] = "UNAVAILABLE"
+            analysis["suggested_code"] = ""
+            analysis["code_change"] = None
+
+            # Do not erase the analyzer's evidence_summary,
+            # reason, or other diagnostic fields.
 
         # ---------------------------------------------------------
         # Store the result in the shared pipeline context.
@@ -191,7 +256,9 @@ class CodeAnalysisStage:
             repo_id=context.repo_id,
             keys=list(analysis.keys()),
             fallback=(
-                analysis.get("analysis_status")
+                str(
+                    analysis.get("analysis_status", "")
+                ).upper()
                 == "UNAVAILABLE"
             ),
         )
@@ -202,17 +269,12 @@ class CodeAnalysisStage:
         reason: str,
     ) -> dict[str, Any]:
         """
-        Build a deterministic analysis result when semantic
-        LLM analysis is unavailable.
+        Build a deterministic unavailable analysis.
 
-        This method intentionally does NOT infer:
-        - bug causes
-        - implementation details
-        - optimization opportunities
-        - refactoring recommendations
-        - code changes
+        Only information already present in SearchContext is exposed.
 
-        It only exposes information already present in SearchContext.
+        This method does not infer bug causes, implementation details,
+        optimizations, refactoring recommendations, or code changes.
         """
 
         target = None
@@ -230,23 +292,22 @@ class CodeAnalysisStage:
             )
 
             metadata = (
-                context.primary_chunk.metadata
-                or {}
+                context.primary_chunk.metadata or {}
             )
 
             if metadata.get("class_name"):
                 target["class_name"] = (
-                    metadata.get("class_name")
+                    metadata["class_name"]
                 )
 
             if metadata.get("start_line") is not None:
                 target["start_line"] = (
-                    metadata.get("start_line")
+                    metadata["start_line"]
                 )
 
             if metadata.get("end_line") is not None:
                 target["end_line"] = (
-                    metadata.get("end_line")
+                    metadata["end_line"]
                 )
 
         return {
@@ -268,28 +329,10 @@ class CodeAnalysisStage:
                 if context.llm_context
                 else None
             ),
-            "suggestion": _build_fallback_suggestion(context),
-            "proposed_change": _build_fallback_suggestion(context),
-            "suggested_code": None,
-            "fallback_confidence": (
-                "medium"
-                if context.retrieved_chunks and target
-                else "low"
-            ),
+            # Never present a generic recommendation as a verified fix.
+            "suggestion": "",
+            "proposed_change": "",
+            "suggested_code": "",
+            "code_change": None,
+            "fallback_confidence": "low",
         }
-
-
-def _build_fallback_suggestion(context: SearchContext) -> str:
-    """Describe a conservative next step without inventing a patch."""
-
-    target = context.target_symbol
-    if not target and context.primary_chunk:
-        target = context.primary_chunk.file_path
-    target = target or "the identified repository code"
-
-    return (
-        f"Review {target} against the reported requirement: "
-        f"{context.query.strip()}. The available evidence supports a "
-        "descriptive recommendation, but not a safe exact code change."
-    )
-

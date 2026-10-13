@@ -53,16 +53,14 @@ class IntentClassificationStage:
             LLM failure -> deterministic code classification
             -> continue pipeline
 
-        Additional Deep Search flow:
-            Successfully resolved intent -> if FIX_BUG, decide whether
-            the query requires Deep Search.
+        Deep Search:
+            After resolving the intent, decide whether a FIX_BUG
+            request requires deeper investigation.
 
         Deep Search selection does not set early_exit in this stage.
         """
 
-        # -----------------------------------------------------------
         # Respect an early exit produced by an earlier pipeline stage.
-        # -----------------------------------------------------------
         if context.early_exit:
             logger.info(
                 "intent_classification_skipped",
@@ -71,10 +69,8 @@ class IntentClassificationStage:
             )
             return
 
-        # -----------------------------------------------------------
-        # Query must exist before classification.
-        # -----------------------------------------------------------
-        query = context.query.strip()
+        # Preserve the original user query for classification and routing.
+        query = str(context.query or "").strip()
 
         if not query:
             raise ValueError(
@@ -100,9 +96,6 @@ class IntentClassificationStage:
                 error=str(exc),
             )
 
-            # -------------------------------------------------------
-            # Fallback: deterministic code-based classification
-            # -------------------------------------------------------
             fallback_intent = self._fallback_classify_intent(query)
 
             if fallback_intent is None:
@@ -111,18 +104,14 @@ class IntentClassificationStage:
                     repo_id=context.repo_id,
                 )
 
-                # Do not guess an intent.
-                #
-                # The pipeline must not stop only because the LLM failed.
+                # Preserve existing behavior: do not guess an intent.
                 context.intent = None
                 context.intent_parameters = {}
-
                 return
 
             context.intent = fallback_intent
             context.intent_parameters = {}
 
-            # Additional behavior: decide Deep Search only for FIX_BUG.
             self._apply_deep_search_decision(context, query)
 
             logger.info(
@@ -130,11 +119,10 @@ class IntentClassificationStage:
                 repo_id=context.repo_id,
                 intent=fallback_intent.value,
             )
-
             return
 
         # -----------------------------------------------------------
-        # Validate successful LLM result
+        # Handle an empty LLM result using the existing fallback.
         # -----------------------------------------------------------
         if result is None:
             logger.warning(
@@ -152,7 +140,6 @@ class IntentClassificationStage:
                     "intent_classification_code_fallback_unresolved",
                     repo_id=context.repo_id,
                 )
-
                 return
 
             context.intent = fallback_intent
@@ -165,9 +152,11 @@ class IntentClassificationStage:
                 repo_id=context.repo_id,
                 intent=fallback_intent.value,
             )
-
             return
 
+        # -----------------------------------------------------------
+        # Handle an LLM result without a valid intent.
+        # -----------------------------------------------------------
         if result.intent is None:
             logger.warning(
                 "intent_classification_llm_missing_intent_using_code_fallback",
@@ -184,7 +173,6 @@ class IntentClassificationStage:
                     "intent_classification_code_fallback_unresolved",
                     repo_id=context.repo_id,
                 )
-
                 return
 
             context.intent = fallback_intent
@@ -197,9 +185,11 @@ class IntentClassificationStage:
                 repo_id=context.repo_id,
                 intent=fallback_intent.value,
             )
-
             return
 
+        # -----------------------------------------------------------
+        # Validate the LLM parameters.
+        # -----------------------------------------------------------
         if not isinstance(result.parameters, dict):
             logger.warning(
                 "intent_classification_invalid_parameters_using_code_fallback",
@@ -216,7 +206,6 @@ class IntentClassificationStage:
                     "intent_classification_code_fallback_unresolved",
                     repo_id=context.repo_id,
                 )
-
                 return
 
             context.intent = fallback_intent
@@ -229,17 +218,10 @@ class IntentClassificationStage:
                 repo_id=context.repo_id,
                 intent=fallback_intent.value,
             )
-
             return
 
         # -----------------------------------------------------------
         # Normalize the LLM result to the domain enum.
-        #
-        # The LLM/provider may return:
-        #     "ADD_FEATURE"
-        #
-        # while SearchContext expects:
-        #     IntentType.ADD_FEATURE
         # -----------------------------------------------------------
         try:
             context.intent = (
@@ -248,11 +230,11 @@ class IntentClassificationStage:
                 else IntentType(result.intent)
             )
 
-        except ValueError:
+        except (ValueError, TypeError):
             logger.warning(
                 "intent_classification_invalid_intent_using_code_fallback",
                 repo_id=context.repo_id,
-                intent=result.intent,
+                intent=str(result.intent),
             )
 
             fallback_intent = self._fallback_classify_intent(query)
@@ -265,7 +247,6 @@ class IntentClassificationStage:
                     "intent_classification_code_fallback_unresolved",
                     repo_id=context.repo_id,
                 )
-
                 return
 
             context.intent = fallback_intent
@@ -278,16 +259,14 @@ class IntentClassificationStage:
                 repo_id=context.repo_id,
                 intent=fallback_intent.value,
             )
-
             return
 
         # -----------------------------------------------------------
         # Successful LLM result.
-        #
-        # Preserve the original parameters, then apply the additional
-        # Deep Search decision only if the resolved intent is FIX_BUG.
+        # Preserve the original parameters and apply Deep Search
+        # routing only when the resolved intent is FIX_BUG.
         # -----------------------------------------------------------
-        context.intent_parameters = result.parameters
+        context.intent_parameters = dict(result.parameters)
 
         self._apply_deep_search_decision(context, query)
 
@@ -313,18 +292,39 @@ class IntentClassificationStage:
         Decide whether an already-classified FIX_BUG request requires
         Deep Search.
 
-        This method does not alter the classified intent, trigger early
-        exit, or change the behavior of other intents.
+        The original query is passed unchanged apart from the trimming
+        performed at the start of execute().
+
+        This method does not change the intent, trigger early exit,
+        or modify other intents.
         """
         if context.intent != IntentType.FIX_BUG:
             return
 
+        # Diagnostic only: never log the complete query or source code.
+        contains_attribute_error = bool(
+            re.search(
+                r"\bhas\s+no\s+(?:attribute|field|property)\b",
+                query,
+                flags=re.IGNORECASE,
+            )
+        )
+
+        logger.info(
+            "deep_search_input_diagnostic",
+            repo_id=context.repo_id,
+            intent=context.intent.value,
+            query_length=len(query),
+            contains_attribute_error=contains_attribute_error,
+        )
+
+        # Use the original user query, not extracted LLM parameters.
         decision = decide_deep_search(
             intent=context.intent.value,
             query=query,
         )
 
-        # Preserve parameters extracted by the existing classification.
+        # Preserve the classification parameters.
         parameters = dict(context.intent_parameters or {})
         parameters["deep_search_requested"] = decision.selected
         parameters["deep_search_reason"] = decision.reason
@@ -349,26 +349,14 @@ class IntentClassificationStage:
         """
         Determine intent using deterministic keyword matching.
 
-        This method is intentionally conservative.
+        Returns an IntentType when exactly one supported intent matches.
+        Returns None when the request is ambiguous or unsupported.
 
-        Returns:
-            IntentType:
-                When exactly one intent can be identified safely.
-
-            None:
-                When the query is ambiguous or no supported intent
-                can be determined.
-
-        The fallback does not attempt to extract LLM-style parameters.
-        It only provides the minimum information required to keep
-        the pipeline moving.
+        The fallback does not extract LLM-style parameters.
         """
 
         normalized_query = query.lower().strip()
 
-        # -----------------------------------------------------------
-        # Intent patterns
-        # -----------------------------------------------------------
         patterns: dict[IntentType, tuple[str, ...]] = {
             IntentType.RETRIEVE: (
                 r"\bfind\b",
@@ -420,8 +408,7 @@ class IntentClassificationStage:
             ),
         }
 
-        # Check vulnerability keywords first to ensure specific requests
-        # resolve to FIX_VULNERABILITY.
+        # Preserve the existing vulnerability-first classification.
         vuln_patterns = (
             r"\bvulnerab\w*\b",
             r"\baudit\b",
@@ -437,15 +424,6 @@ class IntentClassificationStage:
         ):
             return IntentType.FIX_VULNERABILITY
 
-        for intent, intent_patterns in patterns.items():
-            if any(
-                re.search(pattern, normalized_query)
-                for pattern in intent_patterns
-            ):
-                # Record every matching intent before making the
-                # conservative ambiguity decision below.
-                pass
-
         matched_intents: list[IntentType] = []
 
         for intent, intent_patterns in patterns.items():
@@ -455,19 +433,8 @@ class IntentClassificationStage:
             ):
                 matched_intents.append(intent)
 
-        # -----------------------------------------------------------
-        # Conservative behavior:
-        #
-        # Exactly one match -> safe fallback.
-        #
-        # Multiple matches -> ambiguous.
-        #
-        # No matches -> unknown.
-        # -----------------------------------------------------------
+        # Preserve conservative fallback behavior.
         if len(matched_intents) == 1:
             return matched_intents[0]
-
-        if len(matched_intents) > 1:
-            return None
 
         return None

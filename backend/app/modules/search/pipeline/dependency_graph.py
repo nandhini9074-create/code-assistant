@@ -1,48 +1,34 @@
 
 """
-Deterministic dependency graph builder for RepoLens Deep Search.
+app/modules/search/pipeline/dependency_graph.py
 
-Location:
-    app/modules/search/pipeline/dependency_graph.py
+Deterministic, read-only dependency graph builder for RepoLens Deep Search.
 
 Responsibilities:
-    - Discover Python file imports and verified module dependencies.
-    - Discover function, method, and class definitions.
-    - Discover statically resolvable function calls.
-    - Record attribute references in Python and common HTML/Jinja templates.
-    - Preserve source locations and evidence for graph relationships.
-    - Support bounded traversal for Deep Search.
+    - Discover Python files, imports, classes, functions, methods and calls.
+    - Resolve absolute/relative imports and imported aliases when unambiguous.
+    - Record Python attribute references with their containing scope.
+    - Discover template references and common render_template context mappings.
+    - Link template references to verified context variables and render callers.
+    - Preserve unresolved references rather than guessing relationships.
+    - Apply bounded node/edge/file construction with truncation metadata.
 
-Non-responsibilities:
-    - No LLM calls.
-    - No Qdrant calls.
-    - No repository writes.
-    - No repository identification or collection selection.
-    - No guessing unresolved dependencies.
-
-Input:
-    A mapping of repository-relative file paths to their source text.
-
-Important:
-    This module deliberately does not read files from disk. The caller must
-    supply source obtained through the application's existing read-only
-    repository source mechanism.
+This module does not access the filesystem, create a Qdrant client, call an
+LLM, write repository files, or infer a model type from a matching name.
+The caller supplies a read-only mapping of relative file paths to source text.
 """
 
 from __future__ import annotations
 
 import ast
+import logging
+import posixpath
 import re
-
 from collections import defaultdict, deque
-from dataclasses import asdict, dataclass, field
-from pathlib import PurePosixPath
+from dataclasses import dataclass, field
 from typing import Any, Iterable, Mapping, Optional
 
-
-# ---------------------------------------------------------------------------
-# Limits
-# ---------------------------------------------------------------------------
+logger = logging.getLogger(__name__)
 
 DEFAULT_MAX_FILES = 500
 DEFAULT_MAX_NODES = 10_000
@@ -52,418 +38,618 @@ DEFAULT_MAX_DEPTH = 3
 PYTHON_EXTENSIONS = {".py"}
 TEMPLATE_EXTENSIONS = {".html", ".htm", ".jinja", ".j2", ".jinja2"}
 
-IGNORED_DIRECTORIES = {
+IGNORED_DIRS = {
     ".git",
+    ".hg",
+    ".svn",
     ".venv",
     "venv",
-    "node_modules",
+    "env",
     "__pycache__",
+    "node_modules",
     "dist",
     "build",
+    ".mypy_cache",
+    ".pytest_cache",
+    ".tox",
+}
+
+TEMPLATE_REFERENCE_RE = re.compile(
+    r"""
+    \b
+    (?P<root>[A-Za-z_]\w*)
+    (?P<tail>(?:\s*(?:\.\s*[A-Za-z_]\w*|\[\s*["'][^"']+["']\s*\]))+)
+    """,
+    re.VERBOSE,
+)
+
+TEMPLATE_CALL_RE = re.compile(
+    r"""
+    \b(?:render_template|render_template_string)\s*
+    \(\s*
+    (?P<quote>['"])
+    (?P<template>[^'"]+)
+    (?P=quote)
+    """,
+    re.VERBOSE,
+)
+
+PYTHON_TEMPLATE_CALL_NAMES = {
+    "render_template",
+    "render_template_string",
 }
 
 
-# ---------------------------------------------------------------------------
-# Data models
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
+@dataclass
 class GraphNode:
-    """One repository file, class, function, or attribute."""
+    """One file, symbol, call, or source reference in the graph."""
 
     id: str
     kind: str
-    path: str
     name: str
+    path: str
     line: Optional[int] = None
     end_line: Optional[int] = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@dataclass
 class GraphEdge:
-    """A verified relationship between two graph nodes."""
+    """A directed, evidence-backed graph relationship."""
 
     source: str
     target: str
     kind: str
-    source_path: str
-    line: Optional[int]
-    evidence: str
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass(frozen=True)
+@dataclass
 class UnresolvedReference:
-    """
-    A reference that could not be linked to a verified graph target.
-
-    Keeping unresolved references explicit prevents the graph from inventing
-    relationships when imports, dynamic calls, or symbols cannot be resolved.
-    """
+    """A relationship that could not be resolved without guessing."""
 
     source: str
-    path: str
-    line: Optional[int]
+    name: str
     kind: str
-    expression: str
-    reason: str
+    path: str
+    line: Optional[int] = None
+    reason: str = "unresolved"
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class DependencyGraph:
-    """Graph for a single repository source snapshot."""
+    """Graph storage and bounded traversal helpers."""
 
     nodes: dict[str, GraphNode] = field(default_factory=dict)
     edges: list[GraphEdge] = field(default_factory=list)
-    unresolved: list[UnresolvedReference] = field(default_factory=list)
+    unresolved_references: list[UnresolvedReference] = field(
+        default_factory=list
+    )
     metadata: dict[str, Any] = field(default_factory=dict)
 
-    def add_node(self, node: GraphNode) -> None:
-        self.nodes.setdefault(node.id, node)
+    _edge_keys: set[tuple[str, str, str]] = field(
+        default_factory=set,
+        repr=False,
+    )
+    _outgoing: dict[str, list[GraphEdge]] = field(
+        default_factory=lambda: defaultdict(list),
+        repr=False,
+    )
+    _incoming: dict[str, list[GraphEdge]] = field(
+        default_factory=lambda: defaultdict(list),
+        repr=False,
+    )
 
-    def add_edge(self, edge: GraphEdge) -> None:
-        # Both endpoints must already exist. This prevents dangling edges.
+    @property
+    def unresolved(self) -> list[UnresolvedReference]:
+        """Compatibility alias for consumers using graph.unresolved."""
+        return self.unresolved_references
+
+    def add_node(self, node: GraphNode) -> bool:
+        if node.id in self.nodes:
+            return True
+
+        max_nodes = self.metadata.get("max_nodes", DEFAULT_MAX_NODES)
+        if len(self.nodes) >= max_nodes:
+            self.metadata["node_limit_reached"] = True
+            self.metadata["nodes_skipped_by_limit"] = (
+                self.metadata.get("nodes_skipped_by_limit", 0) + 1
+            )
+            return False
+
+        self.nodes[node.id] = node
+        return True
+
+    def add_edge(self, edge: GraphEdge) -> bool:
         if edge.source not in self.nodes or edge.target not in self.nodes:
-            return
-
-        if edge not in self.edges:
-            self.edges.append(edge)
-
-    def add_unresolved(self, item: UnresolvedReference) -> None:
-        if item not in self.unresolved:
-            self.unresolved.append(item)
-
-    def outgoing(
-        self,
-        node_id: str,
-        edge_kinds: Optional[set[str]] = None,
-    ) -> list[GraphEdge]:
-        return [
-            edge
-            for edge in self.edges
-            if edge.source == node_id
-            and (
-                edge_kinds is None
-                or edge.kind in edge_kinds
+            self.metadata["edges_skipped_missing_endpoint"] = (
+                self.metadata.get("edges_skipped_missing_endpoint", 0) + 1
             )
-        ]
+            return False
 
-    def incoming(
-        self,
-        node_id: str,
-        edge_kinds: Optional[set[str]] = None,
-    ) -> list[GraphEdge]:
-        return [
-            edge
-            for edge in self.edges
-            if edge.target == node_id
-            and (
-                edge_kinds is None
-                or edge.kind in edge_kinds
+        key = (edge.source, edge.target, edge.kind)
+        if key in self._edge_keys:
+            return True
+
+        max_edges = self.metadata.get("max_edges", DEFAULT_MAX_EDGES)
+        if len(self.edges) >= max_edges:
+            self.metadata["edge_limit_reached"] = True
+            self.metadata["edges_skipped_by_limit"] = (
+                self.metadata.get("edges_skipped_by_limit", 0) + 1
             )
-        ]
+            return False
+
+        self._edge_keys.add(key)
+        self.edges.append(edge)
+        self._outgoing[edge.source].append(edge)
+        self._incoming[edge.target].append(edge)
+        return True
+
+    def add_unresolved(self, reference: UnresolvedReference) -> None:
+        self.unresolved_references.append(reference)
+
+    def outgoing(self, node_id: str) -> list[GraphEdge]:
+        return list(self._outgoing.get(node_id, []))
+
+    def incoming(self, node_id: str) -> list[GraphEdge]:
+        return list(self._incoming.get(node_id, []))
 
     def traverse(
         self,
-        start_node_ids: Iterable[str],
-        *,
+        start_ids: Iterable[str],
         max_depth: int = DEFAULT_MAX_DEPTH,
-        max_nodes: int = 100,
-        edge_kinds: Optional[set[str]] = None,
-        include_incoming: bool = True,
+        bidirectional: bool = True,
     ) -> list[GraphNode]:
-        """
-        Traverse verified graph relationships with strict bounds.
-
-        The returned nodes include the starting nodes when those nodes exist.
-        Both outgoing and incoming relationships are considered by default,
-        allowing investigation of callers and dependencies.
-        """
-        if max_depth < 0 or max_nodes <= 0:
-            return []
-
+        """Return nodes reachable within max_depth, without repeating nodes."""
+        depth_limit = max(0, int(max_depth))
         queue: deque[tuple[str, int]] = deque()
         visited: set[str] = set()
         result: list[GraphNode] = []
 
-        for node_id in start_node_ids:
-            if node_id in self.nodes and node_id not in visited:
-                visited.add(node_id)
-                queue.append((node_id, 0))
+        for start_id in start_ids:
+            if start_id in self.nodes and start_id not in visited:
+                visited.add(start_id)
+                queue.append((start_id, 0))
+                result.append(self.nodes[start_id])
 
-        while queue and len(result) < max_nodes:
-            node_id, depth = queue.popleft()
-            node = self.nodes.get(node_id)
-
-            if node is None:
+        while queue:
+            current_id, depth = queue.popleft()
+            if depth >= depth_limit:
                 continue
 
-            result.append(node)
+            edges = list(self._outgoing.get(current_id, []))
+            if bidirectional:
+                edges.extend(self._incoming.get(current_id, []))
 
-            if depth >= max_depth:
-                continue
-
-            adjacent = self.outgoing(node_id, edge_kinds)
-
-            if include_incoming:
-                adjacent.extend(self.incoming(node_id, edge_kinds))
-
-            for edge in adjacent:
+            for edge in edges:
                 neighbor = (
                     edge.target
-                    if edge.source == node_id
+                    if edge.source == current_id
                     else edge.source
                 )
 
-                if neighbor in visited:
-                    continue
-
-                if neighbor not in self.nodes:
+                if neighbor in visited or neighbor not in self.nodes:
                     continue
 
                 visited.add(neighbor)
                 queue.append((neighbor, depth + 1))
+                result.append(self.nodes[neighbor])
 
         return result
 
     def to_dict(self) -> dict[str, Any]:
-        """Serialize the graph into a JSON-compatible dictionary."""
         return {
-            "nodes": {
-                node_id: asdict(node)
-                for node_id, node in self.nodes.items()
-            },
-            "edges": [asdict(edge) for edge in self.edges],
-            "unresolved": [
-                asdict(item) for item in self.unresolved
+            "nodes": [
+                {
+                    "id": node.id,
+                    "kind": node.kind,
+                    "name": node.name,
+                    "path": node.path,
+                    "line": node.line,
+                    "end_line": node.end_line,
+                    "metadata": dict(node.metadata),
+                }
+                for node in self.nodes.values()
+            ],
+            "edges": [
+                {
+                    "source": edge.source,
+                    "target": edge.target,
+                    "kind": edge.kind,
+                    "metadata": dict(edge.metadata),
+                }
+                for edge in self.edges
+            ],
+            "unresolved_references": [
+                {
+                    "source": ref.source,
+                    "name": ref.name,
+                    "kind": ref.kind,
+                    "path": ref.path,
+                    "line": ref.line,
+                    "reason": ref.reason,
+                    "metadata": dict(ref.metadata),
+                }
+                for ref in self.unresolved_references
             ],
             "metadata": dict(self.metadata),
         }
 
 
-# ---------------------------------------------------------------------------
-# Internal Python analysis records
-# ---------------------------------------------------------------------------
-
-@dataclass(frozen=True)
-class _Definition:
-    node_id: str
-    kind: str
-    path: str
-    name: str
-    qualified_name: str
-    line: int
-    end_line: int
-    parent_class: Optional[str] = None
-
-
-@dataclass(frozen=True)
-class _ImportBinding:
-    local_name: str
-    module_name: str
-    imported_name: Optional[str]
-    line: int
-
-
-@dataclass(frozen=True)
-class _Reference:
-    source_node_id: str
-    path: str
-    line: int
-    kind: str
-    expression: str
-
-
-# ---------------------------------------------------------------------------
-# Path and identifier helpers
-# ---------------------------------------------------------------------------
-
 def _normalize_path(path: str) -> str:
-    """Normalize a repository-relative path without accessing the filesystem."""
-    raw = str(path or "").replace("\\", "/").strip()
-    parts = PurePosixPath(raw).parts
+    """Normalize a relative repository path without accessing the filesystem."""
+    normalized = path.replace("\\", "/").strip()
+    normalized = posixpath.normpath(normalized)
 
-    if not raw or raw.startswith("/") or PurePosixPath(raw).is_absolute():
-        raise ValueError(
-            f"Expected a repository-relative path, received: {path!r}"
-        )
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
 
-    if any(part in {"..", "."} for part in parts):
-        raise ValueError(
-            f"Path traversal or ambiguous path is not allowed: {path!r}"
-        )
-
-    if not parts:
-        raise ValueError("Repository-relative path cannot be empty.")
-
-    return "/".join(parts)
+    return normalized
 
 
 def _is_ignored_path(path: str) -> bool:
-    return any(
-        part in IGNORED_DIRECTORIES
-        for part in PurePosixPath(path).parts
-    )
+    return any(part in IGNORED_DIRS for part in path.split("/"))
 
 
-def _file_node_id(path: str) -> str:
-    return f"file:{path}"
+def _extension(path: str) -> str:
+    return posixpath.splitext(path)[1].lower()
 
 
-def _symbol_node_id(path: str, qualified_name: str) -> str:
-    return f"symbol:{path}::{qualified_name}"
-
-
-def _attribute_node_id(path: str, owner: str, attribute: str) -> str:
-    return f"attribute:{path}::{owner}.{attribute}"
-
-
-def _module_name_from_path(path: str) -> Optional[str]:
-    """Convert a Python source path into a possible import module name."""
+def _module_name(path: str) -> Optional[str]:
+    """Convert a Python path to a best-effort importable module name."""
     if not path.endswith(".py"):
         return None
 
-    parts = list(PurePosixPath(path).parts)
+    module_path = path[:-3]
+    if module_path == "__init__":
+        return ""
 
-    if not parts:
+    if module_path.endswith("/__init__"):
+        module_path = module_path[: -len("/__init__")]
+
+    module = module_path.replace("/", ".").strip(".")
+    if not module:
         return None
 
-    if parts[-1] == "__init__.py":
-        parts = parts[:-1]
-    else:
-        parts[-1] = parts[-1][:-3]
-
-    if not parts:
-        return None
-
+    parts = module.split(".")
     if not all(part.isidentifier() for part in parts):
         return None
 
-    return ".".join(parts)
+    return module
 
 
-def _module_candidates(module_name: str) -> tuple[str, ...]:
-    """Possible source paths for a module import."""
-    module_path = module_name.replace(".", "/")
+def _package_name(path: str) -> str:
+    """Return the containing Python package for relative import resolution."""
+    module = _module_name(path)
+    if module is None:
+        return ""
 
-    return (
-        f"{module_path}.py",
-        f"{module_path}/__init__.py",
-    )
+    if path.endswith("/__init__.py") or path == "__init__.py":
+        return module
+
+    if "." not in module:
+        return ""
+
+    return module.rsplit(".", 1)[0]
 
 
-def _dotted_name(node: ast.AST) -> Optional[str]:
-    """Resolve a syntactically dotted name without evaluating code."""
-    if isinstance(node, ast.Name):
-        return node.id
+def _node_id(kind: str, path: str, line: Optional[int], name: str) -> str:
+    safe_name = name.replace("\\", "/")
+    return f"{kind}:{path}:{line if line is not None else 0}:{safe_name}"
 
-    if isinstance(node, ast.Attribute):
-        parent = _dotted_name(node.value)
-        if parent:
-            return f"{parent}.{node.attr}"
+
+def _attribute_expression(node: ast.AST) -> Optional[str]:
+    """Render a simple dotted attribute expression without evaluating it."""
+    parts: list[str] = []
+    current = node
+
+    while isinstance(current, ast.Attribute):
+        parts.append(current.attr)
+        current = current.value
+
+    if isinstance(current, ast.Name):
+        parts.append(current.id)
+        return ".".join(reversed(parts))
 
     return None
 
 
-def _node_line(node: ast.AST) -> int:
-    return int(getattr(node, "lineno", 1))
+def _call_expression(node: ast.AST) -> Optional[str]:
+    if isinstance(node, ast.Name):
+        return node.id
+
+    if isinstance(node, ast.Attribute):
+        return _attribute_expression(node)
+
+    return None
 
 
-def _node_end_line(node: ast.AST) -> int:
-    return int(
-        getattr(node, "end_lineno", getattr(node, "lineno", 1))
-    )
+def _template_attribute_expression(match: re.Match[str]) -> str:
+    root = match.group("root")
+    tail = match.group("tail")
+    parts = re.findall(r"\.\s*([A-Za-z_]\w*)", tail)
+    return ".".join([root, *parts])
 
 
-# ---------------------------------------------------------------------------
-# AST visitors
-# ---------------------------------------------------------------------------
+@dataclass
+class _ImportBinding:
+    local_name: str
+    module_name: str
+    symbol_name: Optional[str]
+    line: int
+    import_node_id: str
+
+
+@dataclass
+class _Definition:
+    name: str
+    qualified_name: str
+    kind: str
+    path: str
+    line: int
+    end_line: int
+    node_id: str
+    parent_class: Optional[str] = None
+
+
+@dataclass
+class _CallReference:
+    expression: str
+    path: str
+    line: int
+    containing_symbol_id: str
+    containing_qualname: str
+    node_id: str
+
+
+@dataclass
+class _AttributeReference:
+    expression: str
+    path: str
+    line: int
+    containing_symbol_id: str
+    node_id: str
+
+
+@dataclass
+class _TemplateReference:
+    expression: str
+    root: str
+    path: str
+    line: int
+    node_id: str
+
+
+@dataclass
+class _TemplateRender:
+    template_name: str
+    path: str
+    line: int
+    containing_symbol_id: str
+    context_bindings: dict[str, str]
+    node_id: str
+
 
 class _PythonFileAnalyzer(ast.NodeVisitor):
-    """Extract definitions, imports, calls, and attribute references."""
+    """Collect syntax-level evidence from one Python file."""
 
     def __init__(
         self,
-        *,
         path: str,
-        tree: ast.AST,
         graph: DependencyGraph,
+        file_node_id: str,
     ) -> None:
         self.path = path
-        self.tree = tree
         self.graph = graph
+        self.file_node_id = file_node_id
 
         self.definitions: list[_Definition] = []
-        self.imports: list[_ImportBinding] = []
-        self.references: list[_Reference] = []
+        self.import_bindings: list[_ImportBinding] = []
+        self.calls: list[_CallReference] = []
+        self.attributes: list[_AttributeReference] = []
+        self.template_renders: list[_TemplateRender] = []
 
-        self._scope: list[str] = []
-        self._class_scope: list[str] = []
-        self._scope_node_ids: list[str] = []
+        self._scope: list[tuple[str, str, Optional[str]]] = []
+        self._class_stack: list[str] = []
 
-        self.file_id = _file_node_id(path)
+    def _current_symbol_id(self) -> str:
+        return self._scope[-1][1] if self._scope else self.file_node_id
+
+    def _current_qualname(self) -> str:
+        return self._scope[-1][0] if self._scope else "<module>"
+
+    def _add_symbol(
+        self,
+        node: ast.AST,
+        name: str,
+        kind: str,
+        parent_qualname: Optional[str] = None,
+    ) -> _Definition:
+        line = getattr(node, "lineno", 1)
+        end_line = getattr(node, "end_lineno", line)
+
+        if parent_qualname:
+            qualified_name = f"{parent_qualname}.{name}"
+        else:
+            qualified_name = name
+
+        parent_class = self._class_stack[-1] if self._class_stack else None
+
+        symbol_node_id = _node_id(kind, self.path, line, qualified_name)
+        graph_node = GraphNode(
+            id=symbol_node_id,
+            kind=kind,
+            name=name,
+            path=self.path,
+            line=line,
+            end_line=end_line,
+            metadata={
+                "qualified_name": qualified_name,
+                "parent_class": parent_class,
+            },
+        )
+
+        if self.graph.add_node(graph_node):
+            self.graph.add_edge(
+                GraphEdge(
+                    source=self.file_node_id,
+                    target=symbol_node_id,
+                    kind="defines",
+                    metadata={"line": line},
+                )
+            )
+
+        definition = _Definition(
+            name=name,
+            qualified_name=qualified_name,
+            kind=kind,
+            path=self.path,
+            line=line,
+            end_line=end_line,
+            node_id=symbol_node_id,
+            parent_class=parent_class,
+        )
+        self.definitions.append(definition)
+        return definition
+
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            local_name = alias.asname or alias.name.split(".")[0]
+            import_id = _node_id(
+                "import",
+                self.path,
+                node.lineno,
+                f"{local_name}={alias.name}",
+            )
+            if self.graph.add_node(
+                GraphNode(
+                    id=import_id,
+                    kind="import",
+                    name=alias.name,
+                    path=self.path,
+                    line=node.lineno,
+                    metadata={
+                        "local_name": local_name,
+                        "module_name": alias.name,
+                        "symbol_name": None,
+                        "alias": alias.asname,
+                    },
+                )
+            ):
+                self.graph.add_edge(
+                    GraphEdge(
+                        source=self.file_node_id,
+                        target=import_id,
+                        kind="imports",
+                        metadata={"line": node.lineno},
+                    )
+                )
+
+            self.import_bindings.append(
+                _ImportBinding(
+                    local_name=local_name,
+                    module_name=alias.name,
+                    symbol_name=None,
+                    line=node.lineno,
+                    import_node_id=import_id,
+                )
+            )
+
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        module_name = node.module or ""
+
+        # Store the relative level. The resolver computes the absolute module
+        # using the current file's package context.
+        for alias in node.names:
+            if alias.name == "*":
+                self.graph.add_unresolved(
+                    UnresolvedReference(
+                        source=self.file_node_id,
+                        name=f"from {'.' * node.level}{module_name} import *",
+                        kind="wildcard_import",
+                        path=self.path,
+                        line=node.lineno,
+                        reason="wildcard_import_not_expanded",
+                    )
+                )
+                continue
+
+            local_name = alias.asname or alias.name
+            import_id = _node_id(
+                "import",
+                self.path,
+                node.lineno,
+                f"{'.' * node.level}{module_name}.{alias.name}",
+            )
+
+            if self.graph.add_node(
+                GraphNode(
+                    id=import_id,
+                    kind="import",
+                    name=alias.name,
+                    path=self.path,
+                    line=node.lineno,
+                    metadata={
+                        "local_name": local_name,
+                        "module_name": module_name,
+                        "symbol_name": alias.name,
+                        "relative_level": node.level,
+                        "alias": alias.asname,
+                    },
+                )
+            ):
+                self.graph.add_edge(
+                    GraphEdge(
+                        source=self.file_node_id,
+                        target=import_id,
+                        kind="imports",
+                        metadata={"line": node.lineno},
+                    )
+                )
+
+            self.import_bindings.append(
+                _ImportBinding(
+                    local_name=local_name,
+                    module_name=("." * node.level) + module_name,
+                    symbol_name=alias.name,
+                    line=node.lineno,
+                    import_node_id=import_id,
+                )
+            )
 
     def visit_ClassDef(self, node: ast.ClassDef) -> None:
-        qualified = ".".join([*self._scope, node.name])
-        node_id = _symbol_node_id(self.path, qualified)
+        parent = self._current_qualname()
+        parent_name = None if parent == "<module>" else parent
+        definition = self._add_symbol(node, node.name, "class", parent_name)
 
-        self.graph.add_node(
-            GraphNode(
-                id=node_id,
-                kind="class",
-                path=self.path,
-                name=node.name,
-                line=node.lineno,
-                end_line=_node_end_line(node),
-                metadata={"qualified_name": qualified},
-            )
-        )
-
-        self.graph.add_edge(
-            GraphEdge(
-                source=self.file_id,
-                target=node_id,
-                kind="defines",
-                source_path=self.path,
-                line=node.lineno,
-                evidence=f"class {qualified}",
-            )
-        )
-
-        self.definitions.append(
-            _Definition(
-                node_id=node_id,
-                kind="class",
-                path=self.path,
-                name=node.name,
-                qualified_name=qualified,
-                line=node.lineno,
-                end_line=_node_end_line(node),
-                parent_class=self._class_scope[-1]
-                if self._class_scope
-                else None,
-            )
-        )
-
-        self._scope.append(node.name)
-        self._class_scope.append(qualified)
-        self._scope_node_ids.append(node_id)
-
-        for decorator in node.decorator_list:
-            self.visit(decorator)
-
+        # Record declared base expressions as evidence, but do not assume
+        # that an unresolved base is a local class.
         for base in node.bases:
-            self.visit(base)
+            base_name = _call_expression(base) or ast.dump(
+                base,
+                include_attributes=False,
+            )
+            self.graph.add_unresolved(
+                UnresolvedReference(
+                    source=definition.node_id,
+                    name=base_name,
+                    kind="class_base",
+                    path=self.path,
+                    line=getattr(base, "lineno", node.lineno),
+                    reason="base_class_resolution_not_guaranteed",
+                )
+            )
 
-        for keyword in node.keywords:
-            self.visit(keyword.value)
+        self._class_stack.append(definition.qualified_name)
+        self._scope.append(
+            (definition.qualified_name, definition.node_id, "class")
+        )
 
-        for statement in node.body:
-            self.visit(statement)
+        for child in node.body:
+            self.visit(child)
 
-        self._scope_node_ids.pop()
-        self._class_scope.pop()
         self._scope.pop()
+        self._class_stack.pop()
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         self._visit_function(node)
@@ -475,729 +661,970 @@ class _PythonFileAnalyzer(ast.NodeVisitor):
         self,
         node: ast.FunctionDef | ast.AsyncFunctionDef,
     ) -> None:
-        qualified = ".".join([*self._scope, node.name])
-        node_id = _symbol_node_id(self.path, qualified)
-        kind = "method" if self._class_scope else "function"
+        parent = self._current_qualname()
+        parent_name = None if parent == "<module>" else parent
+        kind = "method" if self._class_stack else "function"
+        definition = self._add_symbol(node, node.name, kind, parent_name)
 
-        self.graph.add_node(
-            GraphNode(
-                id=node_id,
-                kind=kind,
-                path=self.path,
-                name=node.name,
-                line=node.lineno,
-                end_line=_node_end_line(node),
-                metadata={
-                    "qualified_name": qualified,
-                    "async": isinstance(node, ast.AsyncFunctionDef),
-                },
-            )
+        self._scope.append(
+            (definition.qualified_name, definition.node_id, kind)
         )
-
-        parent_id = (
-            self._scope_node_ids[-1]
-            if self._scope_node_ids
-            else self.file_id
-        )
-
-        self.graph.add_edge(
-            GraphEdge(
-                source=parent_id,
-                target=node_id,
-                kind="defines",
-                source_path=self.path,
-                line=node.lineno,
-                evidence=f"definition {qualified}",
-            )
-        )
-
-        self.definitions.append(
-            _Definition(
-                node_id=node_id,
-                kind=kind,
-                path=self.path,
-                name=node.name,
-                qualified_name=qualified,
-                line=node.lineno,
-                end_line=_node_end_line(node),
-                parent_class=self._class_scope[-1]
-                if self._class_scope
-                else None,
-            )
-        )
-
-        # Defaults and decorators execute in the surrounding scope.
-        for decorator in node.decorator_list:
-            self.visit(decorator)
-
-        for default in node.args.defaults:
-            self.visit(default)
-
-        for default in node.args.kw_defaults:
-            if default is not None:
-                self.visit(default)
-
-        self._scope.append(node.name)
-        self._scope_node_ids.append(node_id)
-
-        for statement in node.body:
-            self.visit(statement)
-
-        self._scope_node_ids.pop()
+        for child in node.body:
+            self.visit(child)
         self._scope.pop()
 
-    def visit_Import(self, node: ast.Import) -> None:
-        for alias in node.names:
-            local_name = alias.asname or alias.name.split(".")[0]
+    def visit_Call(self, node: ast.Call) -> None:
+        expression = _call_expression(node.func)
 
-            self.imports.append(
-                _ImportBinding(
-                    local_name=local_name,
-                    module_name=alias.name,
-                    imported_name=None,
-                    line=node.lineno,
+        if expression:
+            line = getattr(node, "lineno", 1)
+            call_id = _node_id("call", self.path, line, expression)
+
+            if self.graph.add_node(
+                GraphNode(
+                    id=call_id,
+                    kind="call",
+                    name=expression,
+                    path=self.path,
+                    line=line,
+                    metadata={
+                        "expression": expression,
+                        "containing_qualname": self._current_qualname(),
+                    },
                 )
-            )
-
-    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
-        if node.level:
-            # Relative import resolution requires the package context.
-            # It is resolved later only when a safe package candidate exists.
-            module_name = "." * node.level + (node.module or "")
-        else:
-            module_name = node.module or ""
-
-        for alias in node.names:
-            if alias.name == "*":
-                self.graph.add_unresolved(
-                    UnresolvedReference(
-                        source=self._current_scope_id(),
-                        path=self.path,
-                        line=node.lineno,
-                        kind="wildcard_import",
-                        expression=f"from {module_name} import *",
-                        reason="Wildcard imports do not identify individual symbols.",
+            ):
+                self.graph.add_edge(
+                    GraphEdge(
+                        source=self._current_symbol_id(),
+                        target=call_id,
+                        kind="contains_call",
+                        metadata={"line": line},
                     )
                 )
+
+            self.calls.append(
+                _CallReference(
+                    expression=expression,
+                    path=self.path,
+                    line=line,
+                    containing_symbol_id=self._current_symbol_id(),
+                    containing_qualname=self._current_qualname(),
+                    node_id=call_id,
+                )
+            )
+
+            leaf_name = expression.rsplit(".", 1)[-1]
+            if leaf_name in PYTHON_TEMPLATE_CALL_NAMES:
+                self._record_template_render(node, call_id)
+
+        self.generic_visit(node)
+
+    def _record_template_render(
+        self,
+        node: ast.Call,
+        call_id: str,
+    ) -> None:
+        if not node.args or not isinstance(node.args[0], ast.Constant):
+            return
+
+        template_value = node.args[0].value
+        if not isinstance(template_value, str):
+            return
+
+        bindings: dict[str, str] = {}
+
+        for keyword in node.keywords:
+            if keyword.arg is None:
+                # **kwargs cannot be safely expanded statically.
                 continue
 
-            self.imports.append(
-                _ImportBinding(
-                    local_name=alias.asname or alias.name,
-                    module_name=module_name,
-                    imported_name=alias.name,
-                    line=node.lineno,
-                )
+            value_expression = (
+                _call_expression(keyword.value)
+                or _attribute_expression(keyword.value)
             )
 
-    def visit_Call(self, node: ast.Call) -> None:
-        expression = _dotted_name(node.func)
+            if value_expression is None and isinstance(
+                keyword.value, ast.Constant
+            ):
+                value_expression = repr(keyword.value.value)
 
-        if expression:
-            self.references.append(
-                _Reference(
-                    source_node_id=self._current_scope_id(),
-                    path=self.path,
-                    line=_node_line(node),
-                    kind="call",
-                    expression=expression,
-                )
+            if value_expression is not None:
+                bindings[keyword.arg] = value_expression
+
+        self.template_renders.append(
+            _TemplateRender(
+                template_name=template_value,
+                path=self.path,
+                line=getattr(node, "lineno", 1),
+                containing_symbol_id=self._current_symbol_id(),
+                context_bindings=bindings,
+                node_id=call_id,
             )
-        else:
-            self.graph.add_unresolved(
-                UnresolvedReference(
-                    source=self._current_scope_id(),
-                    path=self.path,
-                    line=_node_line(node),
-                    kind="call",
-                    expression=ast.dump(node.func, include_attributes=False),
-                    reason="Dynamic call target cannot be resolved statically.",
-                )
-            )
-
-        self.generic_visit(node)
-
-    def visit_Attribute(self, node: ast.Attribute) -> None:
-        expression = _dotted_name(node)
-
-        if expression:
-            # Record attribute references, but do not infer which model object
-            # an arbitrary variable represents.
-            self.references.append(
-                _Reference(
-                    source_node_id=self._current_scope_id(),
-                    path=self.path,
-                    line=_node_line(node),
-                    kind="attribute_reference",
-                    expression=expression,
-                )
-            )
-
-        self.generic_visit(node)
-
-    def _current_scope_id(self) -> str:
-        return (
-            self._scope_node_ids[-1]
-            if self._scope_node_ids
-            else self.file_id
         )
 
+    def visit_Attribute(self, node: ast.Attribute) -> None:
+        expression = _attribute_expression(node)
+        if expression:
+            line = getattr(node, "lineno", 1)
+            attribute_id = _node_id(
+                "attribute",
+                self.path,
+                line,
+                expression,
+            )
 
-# ---------------------------------------------------------------------------
-# Graph builder
-# ---------------------------------------------------------------------------
+            if self.graph.add_node(
+                GraphNode(
+                    id=attribute_id,
+                    kind="attribute_reference",
+                    name=expression,
+                    path=self.path,
+                    line=line,
+                    metadata={
+                        "expression": expression,
+                        "root": expression.split(".", 1)[0],
+                        "containing_qualname": self._current_qualname(),
+                    },
+                )
+            ):
+                self.graph.add_edge(
+                    GraphEdge(
+                        source=self._current_symbol_id(),
+                        target=attribute_id,
+                        kind="references_attribute",
+                        metadata={"line": line},
+                    )
+                )
+
+            self.attributes.append(
+                _AttributeReference(
+                    expression=expression,
+                    path=self.path,
+                    line=line,
+                    containing_symbol_id=self._current_symbol_id(),
+                    node_id=attribute_id,
+                )
+            )
+
+        self.generic_visit(node)
+
 
 class DependencyGraphBuilder:
-    """
-    Build a bounded dependency graph from repository source text.
-
-    All supplied paths are normalized and treated as one repository snapshot.
-    Pass only files belonging to the already-selected repository.
-    """
+    """Build a bounded graph from a supplied read-only source snapshot."""
 
     def __init__(
         self,
-        *,
         max_files: int = DEFAULT_MAX_FILES,
         max_nodes: int = DEFAULT_MAX_NODES,
         max_edges: int = DEFAULT_MAX_EDGES,
     ) -> None:
-        if max_files <= 0 or max_nodes <= 0 or max_edges <= 0:
-            raise ValueError("Graph limits must be positive integers.")
-
-        self.max_files = max_files
-        self.max_nodes = max_nodes
-        self.max_edges = max_edges
+        self.max_files = max(1, int(max_files))
+        self.max_nodes = max(1, int(max_nodes))
+        self.max_edges = max(1, int(max_edges))
 
     def build(
         self,
         source_files: Mapping[str, str],
     ) -> DependencyGraph:
-        """
-        Build a graph from repository-relative paths and source contents.
-
-        Files beyond max_files are not silently accepted: the returned graph
-        records truncation in metadata. Invalid paths are rejected.
-        """
-        normalized: dict[str, str] = {}
-
-        for original_path, source in source_files.items():
-            path = _normalize_path(original_path)
-
-            if _is_ignored_path(path):
-                continue
-
-            if not isinstance(source, str):
-                raise TypeError(
-                    f"Source content for {path!r} must be a string."
-                )
-
-            normalized[path] = source
-
-        sorted_paths = sorted(normalized)
-        truncated_files = len(sorted_paths) > self.max_files
-        selected_paths = sorted_paths[: self.max_files]
-
         graph = DependencyGraph(
             metadata={
-                "builder": "DependencyGraphBuilder",
-                "source_file_count": len(selected_paths),
-                "input_file_count": len(normalized),
-                "truncated_files": truncated_files,
                 "max_files": self.max_files,
                 "max_nodes": self.max_nodes,
                 "max_edges": self.max_edges,
-                "supported_python_analysis": True,
-                "supported_template_analysis": True,
+                "source_file_count": 0,
+                "python_file_count": 0,
+                "template_file_count": 0,
+                "parsed_python_file_count": 0,
+                "parse_error_count": 0,
+                "node_limit_reached": False,
+                "edge_limit_reached": False,
+                "file_limit_reached": False,
+                "nodes_skipped_by_limit": 0,
+                "edges_skipped_by_limit": 0,
+                "edges_skipped_missing_endpoint": 0,
             }
         )
 
-        selected_sources = {
-            path: normalized[path]
-            for path in selected_paths
+        if not isinstance(source_files, Mapping):
+            graph.metadata["input_invalid"] = True
+            return graph
+
+        normalized_files: dict[str, str] = {}
+
+        for raw_path, content in source_files.items():
+            if not isinstance(raw_path, str) or not isinstance(content, str):
+                graph.metadata["invalid_source_entry_count"] = (
+                    graph.metadata.get("invalid_source_entry_count", 0) + 1
+                )
+                continue
+
+            path = _normalize_path(raw_path)
+            if (
+                not path
+                or path == "."
+                or path.startswith("/")
+                or (len(path) > 1 and path[1] == ":")
+                or ".." in path.split("/")
+                or _is_ignored_path(path)
+            ):
+                graph.metadata["unsafe_or_ignored_path_count"] = (
+                    graph.metadata.get("unsafe_or_ignored_path_count", 0)
+                    + 1
+                )
+                continue
+
+            normalized_files[path] = content
+
+        ordered_paths = sorted(normalized_files)
+        if len(ordered_paths) > self.max_files:
+            graph.metadata["file_limit_reached"] = True
+            graph.metadata["files_skipped_by_limit"] = (
+                len(ordered_paths) - self.max_files
+            )
+            ordered_paths = ordered_paths[: self.max_files]
+
+        normalized_files = {
+            path: normalized_files[path] for path in ordered_paths
         }
+        graph.metadata["source_file_count"] = len(normalized_files)
+
+        file_nodes: dict[str, str] = {}
+        analyzers: dict[str, _PythonFileAnalyzer] = {}
+        module_to_paths: dict[str, list[str]] = defaultdict(list)
+        parsed_trees: dict[str, ast.Module] = {}
 
         # First pass: create file nodes and parse Python source.
-        analyzers: dict[str, _PythonFileAnalyzer] = {}
+        for path, content in normalized_files.items():
+            extension = _extension(path)
 
-        for path, source in selected_sources.items():
-            file_id = _file_node_id(path)
-            suffix = PurePosixPath(path).suffix.lower()
+            if extension not in PYTHON_EXTENSIONS | TEMPLATE_EXTENSIONS:
+                continue
 
-            graph.add_node(
+            kind = "python_file" if extension in PYTHON_EXTENSIONS else "template_file"
+            file_id = _node_id("file", path, None, path)
+
+            if not graph.add_node(
                 GraphNode(
                     id=file_id,
-                    kind="file",
+                    kind=kind,
+                    name=posixpath.basename(path),
                     path=path,
-                    name=PurePosixPath(path).name,
-                    metadata={"extension": suffix},
+                    metadata={"extension": extension},
                 )
-            )
+            ):
+                continue
 
-            if suffix in PYTHON_EXTENSIONS:
+            file_nodes[path] = file_id
+
+            if extension == ".py":
+                graph.metadata["python_file_count"] += 1
+                module = _module_name(path)
+                if module is not None:
+                    module_to_paths[module].append(path)
+
                 try:
-                    tree = ast.parse(source, filename=path)
-                except (SyntaxError, ValueError) as exc:
+                    tree = ast.parse(content, filename=path)
+                except (SyntaxError, ValueError, TypeError) as exc:
+                    graph.metadata["parse_error_count"] += 1
                     graph.add_unresolved(
                         UnresolvedReference(
                             source=file_id,
+                            name=path,
+                            kind="python_parse",
                             path=path,
                             line=getattr(exc, "lineno", None),
-                            kind="parse_error",
-                            expression=str(exc),
-                            reason="Python source could not be parsed.",
+                            reason="python_source_parse_failed",
+                            metadata={"error_type": type(exc).__name__},
                         )
                     )
                     continue
 
-                analyzer = _PythonFileAnalyzer(
-                    path=path,
-                    tree=tree,
-                    graph=graph,
-                )
+                parsed_trees[path] = tree
+                analyzer = _PythonFileAnalyzer(path, graph, file_id)
                 analyzer.visit(tree)
                 analyzers[path] = analyzer
+                graph.metadata["parsed_python_file_count"] += 1
 
-            elif suffix in TEMPLATE_EXTENSIONS:
-                self._analyze_template(
-                    path=path,
-                    source=source,
-                    graph=graph,
-                )
+            else:
+                graph.metadata["template_file_count"] += 1
+                self._analyze_template(path, content, graph, file_id)
 
-        # Second pass: resolve imports, then resolve symbol calls and attributes.
-        module_to_path = self._build_module_index(selected_paths)
+        # Resolve import targets with one shared module index.
+        module_index: dict[str, str] = {
+            module: paths[0]
+            for module, paths in module_to_paths.items()
+            if len(paths) == 1
+        }
 
+        ambiguous_modules = {
+            module: paths
+            for module, paths in module_to_paths.items()
+            if len(paths) > 1
+        }
+
+        graph.metadata["ambiguous_module_count"] = len(ambiguous_modules)
+
+        resolved_bindings: dict[str, dict[str, list[tuple[str, str]]]] = {}
         for path, analyzer in analyzers.items():
-            self._resolve_imports(
+            resolved_bindings[path] = self._resolve_imports(
+                path=path,
                 analyzer=analyzer,
-                module_to_path=module_to_path,
-                selected_paths=set(selected_paths),
+                module_index=module_index,
+                ambiguous_modules=ambiguous_modules,
                 graph=graph,
             )
 
-        if len(graph.nodes) <= self.max_nodes:
-            self._resolve_references(analyzers, graph)
-        else:
-            graph.metadata["node_limit_reached_before_reference_resolution"] = True
+        # Resolve local/imported calls and local attribute evidence.
+        definitions_by_path: dict[str, list[_Definition]] = {
+            path: analyzer.definitions
+            for path, analyzer in analyzers.items()
+        }
 
-        # Apply strict output limits. Keep edges only when both endpoints exist.
-        if len(graph.nodes) > self.max_nodes:
-            graph.metadata["truncated_nodes"] = (
-                len(graph.nodes) - self.max_nodes
+        definitions_by_module_name: dict[
+            tuple[str, str], list[_Definition]
+        ] = defaultdict(list)
+
+        for path, definitions in definitions_by_path.items():
+            module = _module_name(path)
+            if module is None:
+                continue
+            for definition in definitions:
+                definitions_by_module_name[
+                    (module, definition.name)
+                ].append(definition)
+
+        for path, analyzer in analyzers.items():
+            bindings = resolved_bindings.get(path, {})
+            module = _module_name(path) or ""
+
+            self._resolve_calls(
+                path=path,
+                analyzer=analyzer,
+                bindings=bindings,
+                module_name=module,
+                definitions_by_path=definitions_by_path,
+                definitions_by_module_name=definitions_by_module_name,
+                graph=graph,
             )
-            keep_ids = set(list(graph.nodes)[: self.max_nodes])
-            graph.nodes = {
-                node_id: node
-                for node_id, node in graph.nodes.items()
-                if node_id in keep_ids
+
+            self._record_unresolved_attributes(analyzer, graph)
+
+        # Connect Python render calls to the exact template path when that
+        # path can be uniquely resolved in the supplied snapshot.
+        template_references_by_path: dict[
+            str, list[_TemplateReference]
+        ] = {}
+        for path, content in normalized_files.items():
+            if path in file_nodes and _extension(path) in TEMPLATE_EXTENSIONS:
+                template_references_by_path[path] = self._get_template_refs(
+                    path, content, graph, file_nodes[path]
+                )
+
+        self._resolve_template_renders(
+            analyzers=analyzers,
+            template_paths=[
+                path
+                for path in file_nodes
+                if _extension(path) in TEMPLATE_EXTENSIONS
+            ],
+            template_references_by_path=template_references_by_path,
+            graph=graph,
+        )
+
+        graph.metadata.update(
+            {
+                "node_count": len(graph.nodes),
+                "edge_count": len(graph.edges),
+                "unresolved_reference_count": len(
+                    graph.unresolved_references
+                ),
+                "ambiguous_module_paths": {
+                    module: sorted(paths)
+                    for module, paths in ambiguous_modules.items()
+                },
             }
+        )
 
-        if len(graph.edges) > self.max_edges:
-            graph.metadata["truncated_edges"] = (
-                len(graph.edges) - self.max_edges
-            )
-            graph.edges = graph.edges[: self.max_edges]
-
-        graph.edges = [
-            edge
-            for edge in graph.edges
-            if edge.source in graph.nodes
-            and edge.target in graph.nodes
-        ]
-
-        graph.metadata["final_node_count"] = len(graph.nodes)
-        graph.metadata["final_edge_count"] = len(graph.edges)
-        graph.metadata["unresolved_count"] = len(graph.unresolved)
+        logger.info(
+            "dependency_graph_built",
+            extra={
+                "source_file_count": graph.metadata["source_file_count"],
+                "node_count": len(graph.nodes),
+                "edge_count": len(graph.edges),
+                "unresolved_reference_count": len(
+                    graph.unresolved_references
+                ),
+                "node_limit_reached": graph.metadata[
+                    "node_limit_reached"
+                ],
+                "edge_limit_reached": graph.metadata[
+                    "edge_limit_reached"
+                ],
+                "file_limit_reached": graph.metadata[
+                    "file_limit_reached"
+                ],
+            },
+        )
 
         return graph
 
-    @staticmethod
-    def _build_module_index(
-        paths: Iterable[str],
-    ) -> dict[str, str]:
-        """
-        Map importable Python module names to paths.
-
-        Duplicate module names are intentionally excluded because the module
-        target would otherwise be ambiguous.
-        """
-        candidates: dict[str, list[str]] = defaultdict(list)
-
-        for path in paths:
-            module_name = _module_name_from_path(path)
-            if module_name:
-                candidates[module_name].append(path)
-
-        return {
-            name: module_paths[0]
-            for name, module_paths in candidates.items()
-            if len(module_paths) == 1
-        }
-
     def _resolve_imports(
         self,
-        *,
+        path: str,
         analyzer: _PythonFileAnalyzer,
-        module_to_path: dict[str, str],
-        selected_paths: set[str],
+        module_index: Mapping[str, str],
+        ambiguous_modules: Mapping[str, list[str]],
         graph: DependencyGraph,
-    ) -> None:
-        path = analyzer.path
-        current_module = _module_name_from_path(path)
-        current_package = (
-            current_module
-            if path.endswith("/__init__.py")
-            else (
-                current_module.rpartition(".")[0]
-                if current_module
-                else ""
-            )
-        )
+    ) -> dict[str, list[tuple[str, str]]]:
+        """
+        Resolve import bindings.
 
-        for binding in analyzer.imports:
-            module_name = binding.module_name
+        Result:
+            local name -> [(target module path, target symbol node id or "")]
 
-            if module_name.startswith("."):
-                relative_level = len(module_name) - len(
-                    module_name.lstrip(".")
-                )
-                suffix = module_name[relative_level:]
+        An empty symbol id means the import resolved to a module, not a symbol.
+        """
+        result: dict[str, list[tuple[str, str]]] = defaultdict(list)
 
-                package_parts = current_package.split(".") if current_package else []
-
-                if relative_level > len(package_parts) + 1:
-                    resolved_module = None
-                else:
-                    keep_count = max(0, len(package_parts) - relative_level + 1)
-                    base = package_parts[:keep_count]
-                    if suffix:
-                        base.extend(suffix.split("."))
-                    resolved_module = ".".join(part for part in base if part)
-            else:
-                resolved_module = module_name
-
-            target_path = (
-                module_to_path.get(resolved_module)
-                if resolved_module
-                else None
+        for binding in analyzer.import_bindings:
+            absolute_module = self._absolute_import_module(
+                current_path=path,
+                imported_module=binding.module_name,
             )
 
-            # `from package import symbol` may refer to a submodule.
-            if target_path is None and resolved_module and binding.imported_name:
-                submodule = f"{resolved_module}.{binding.imported_name}"
-                target_path = module_to_path.get(submodule)
-
-            if target_path is None or target_path not in selected_paths:
+            if not absolute_module:
                 graph.add_unresolved(
                     UnresolvedReference(
-                        source=_file_node_id(path),
+                        source=binding.import_node_id,
+                        name=binding.module_name,
+                        kind="import",
                         path=path,
                         line=binding.line,
-                        kind="import",
-                        expression=(
-                            f"{binding.module_name}"
-                            + (
-                                f".{binding.imported_name}"
-                                if binding.imported_name
-                                else ""
-                            )
-                        ),
-                        reason=(
-                            "Import target is not uniquely resolvable within "
-                            "the supplied repository source snapshot."
-                        ),
+                        reason="relative_import_could_not_be_resolved",
                     )
                 )
                 continue
 
+            target_path = module_index.get(absolute_module)
+
+            # `from package import symbol` can refer to a symbol in package
+            # or to a submodule package.symbol. Prefer a direct submodule
+            # only when it exists unambiguously.
+            if binding.symbol_name:
+                submodule_name = (
+                    f"{absolute_module}.{binding.symbol_name}"
+                    if absolute_module
+                    else binding.symbol_name
+                )
+                submodule_path = module_index.get(submodule_name)
+
+                if target_path is None and submodule_path is not None:
+                    target_path = submodule_path
+                    target_symbol_id = ""
+                elif target_path is not None:
+                    target_symbol_id = self._find_definition_id(
+                        target_path,
+                        binding.symbol_name,
+                        graph,
+                    )
+                    if not target_symbol_id and submodule_path:
+                        target_path = submodule_path
+                        target_symbol_id = ""
+                else:
+                    target_symbol_id = ""
+            else:
+                target_symbol_id = ""
+
+            if target_path is None:
+                if absolute_module in ambiguous_modules:
+                    reason = "ambiguous_import_module"
+                    paths = ambiguous_modules[absolute_module]
+                else:
+                    reason = "import_target_not_in_source_snapshot"
+                    paths = []
+
+                graph.add_unresolved(
+                    UnresolvedReference(
+                        source=binding.import_node_id,
+                        name=absolute_module,
+                        kind="import",
+                        path=path,
+                        line=binding.line,
+                        reason=reason,
+                        metadata={"candidate_paths": paths},
+                    )
+                )
+                continue
+
+            target_file_id = _node_id(
+                "file",
+                target_path,
+                None,
+                target_path,
+            )
+
             graph.add_edge(
                 GraphEdge(
-                    source=_file_node_id(path),
-                    target=_file_node_id(target_path),
-                    kind="imports",
-                    source_path=path,
-                    line=binding.line,
-                    evidence=(
-                        f"import {binding.module_name}"
-                        + (
-                            f" / {binding.imported_name}"
-                            if binding.imported_name
-                            else ""
-                        )
-                    ),
+                    source=binding.import_node_id,
+                    target=target_file_id,
+                    kind="imports_module",
+                    metadata={
+                        "imported_module": absolute_module,
+                        "line": binding.line,
+                    },
                 )
             )
 
-            # If a named symbol is imported, link it only when exactly one
-            # definition of that name exists in the imported file.
-            if binding.imported_name:
-                matching = [
-                    node
-                    for node in graph.nodes.values()
-                    if node.path == target_path
-                    and node.name == binding.imported_name
-                    and node.kind in {"function", "method", "class"}
-                ]
-
-                if len(matching) == 1:
-                    graph.add_edge(
-                        GraphEdge(
-                            source=_file_node_id(path),
-                            target=matching[0].id,
-                            kind="imports_symbol",
-                            source_path=path,
-                            line=binding.line,
-                            evidence=(
-                                f"from {resolved_module} import "
-                                f"{binding.imported_name}"
-                            ),
-                        )
+            if target_symbol_id and target_symbol_id in graph.nodes:
+                graph.add_edge(
+                    GraphEdge(
+                        source=binding.import_node_id,
+                        target=target_symbol_id,
+                        kind="imports_symbol",
+                        metadata={"line": binding.line},
                     )
-
-    def _resolve_references(
-        self,
-        analyzers: Mapping[str, _PythonFileAnalyzer],
-        graph: DependencyGraph,
-    ) -> None:
-        """
-        Resolve local and explicitly imported symbols.
-
-        This intentionally does not infer runtime types or guess which class
-        an arbitrary variable refers to.
-        """
-        definitions_by_path_and_name: dict[
-            tuple[str, str], list[_Definition]
-        ] = defaultdict(list)
-
-        definitions_by_name: dict[str, list[_Definition]] = defaultdict(list)
-
-        for analyzer in analyzers.values():
-            for definition in analyzer.definitions:
-                definitions_by_path_and_name[
-                    (definition.path, definition.name)
-                ].append(definition)
-                definitions_by_name[definition.name].append(definition)
-
-        imports_by_path: dict[str, dict[str, str]] = defaultdict(dict)
-
-        for path, analyzer in analyzers.items():
-            for binding in analyzer.imports:
-                module_name = binding.module_name.lstrip(".")
-                target_module_path = self._build_module_index(
-                    analyzers.keys()
-                ).get(module_name)
-
-                if not target_module_path and binding.imported_name:
-                    target_module_path = self._build_module_index(
-                        analyzers.keys()
-                    ).get(f"{module_name}.{binding.imported_name}")
-
-                if target_module_path:
-                    imports_by_path[path][binding.local_name] = target_module_path
-
-        for path, analyzer in analyzers.items():
-            for reference in analyzer.references:
-                expression_parts = reference.expression.split(".")
-                first_name = expression_parts[0]
-                resolved: Optional[_Definition] = None
-                resolution_kind = "calls"
-
-                # Calls to a local function or method can be linked when the
-                # name has exactly one candidate in the current file.
-                local_candidates = definitions_by_path_and_name.get(
-                    (path, first_name),
-                    [],
                 )
 
-                if reference.kind == "call" and len(local_candidates) == 1:
-                    resolved = local_candidates[0]
+            result[binding.local_name].append(
+                (target_path, target_symbol_id)
+            )
 
-                # Calls through an imported module: module.function().
-                elif reference.kind == "call" and first_name in imports_by_path[path]:
-                    imported_path = imports_by_path[path][first_name]
-                    if len(expression_parts) >= 2:
-                        symbol_name = expression_parts[-1]
-                        candidates = definitions_by_path_and_name.get(
-                            (imported_path, symbol_name),
-                            [],
-                        )
-                        if len(candidates) == 1:
-                            resolved = candidates[0]
-
-                # Direct imported symbol call: imported_function().
-                elif reference.kind == "call":
-                    imported_binding = next(
-                        (
-                            binding
-                            for binding in analyzer.imports
-                            if binding.local_name == first_name
-                            and binding.imported_name
-                        ),
-                        None,
-                    )
-
-                    if imported_binding:
-                        module_name = imported_binding.module_name.lstrip(".")
-                        module_index = self._build_module_index(
-                            analyzers.keys()
-                        )
-                        target_path = module_index.get(module_name)
-
-                        if target_path is None:
-                            target_path = module_index.get(
-                                f"{module_name}.{imported_binding.imported_name}"
-                            )
-
-                        if target_path:
-                            candidates = definitions_by_path_and_name.get(
-                                (target_path, imported_binding.imported_name),
-                                [],
-                            )
-                            if len(candidates) == 1:
-                                resolved = candidates[0]
-
-                if resolved is not None:
-                    graph.add_edge(
-                        GraphEdge(
-                            source=reference.source_node_id,
-                            target=resolved.node_id,
-                            kind=resolution_kind,
-                            source_path=path,
-                            line=reference.line,
-                            evidence=reference.expression,
-                        )
-                    )
-                    continue
-
-                if reference.kind == "call":
-                    # Builtins and common language primitives do not represent
-                    # repository-local dependencies.
-                    if first_name in dir(__builtins__):
-                        continue
-
-                    graph.add_unresolved(
-                        UnresolvedReference(
-                            source=reference.source_node_id,
-                            path=path,
-                            line=reference.line,
-                            kind="call",
-                            expression=reference.expression,
-                            reason=(
-                                "No unique repository-local call target "
-                                "could be established statically."
-                            ),
-                        )
-                    )
-
-                elif reference.kind == "attribute_reference":
-                    # Record a source-level attribute node without claiming
-                    # that the receiver is a specific model or object type.
-                    attribute_name = expression_parts[-1]
-
-                    attribute_id = _attribute_node_id(
-                        path,
-                        reference.source_node_id,
-                        attribute_name,
-                    )
-
-                    graph.add_node(
-                        GraphNode(
-                            id=attribute_id,
-                            kind="attribute_reference",
-                            path=path,
-                            name=attribute_name,
-                            line=reference.line,
-                            metadata={
-                                "expression": reference.expression,
-                                "owner_node_id": reference.source_node_id,
-                                "receiver_type": "unknown",
-                            },
-                        )
-                    )
-
-                    graph.add_edge(
-                        GraphEdge(
-                            source=reference.source_node_id,
-                            target=attribute_id,
-                            kind="references_attribute",
-                            source_path=path,
-                            line=reference.line,
-                            evidence=reference.expression,
-                        )
-                    )
+        return result
 
     @staticmethod
-    def _analyze_template(
-        *,
+    def _absolute_import_module(
+        current_path: str,
+        imported_module: str,
+    ) -> Optional[str]:
+        if not imported_module.startswith("."):
+            return imported_module.strip(".") or None
+
+        level = len(imported_module) - len(imported_module.lstrip("."))
+        remainder = imported_module[level:].strip(".")
+        package = _package_name(current_path)
+        package_parts = package.split(".") if package else []
+
+        # One leading dot means the current package; each additional dot
+        # ascends one package level.
+        ascend = level - 1
+        if ascend > len(package_parts):
+            return None
+
+        if ascend:
+            package_parts = package_parts[: len(package_parts) - ascend]
+
+        if remainder:
+            package_parts.extend(remainder.split("."))
+
+        resolved = ".".join(part for part in package_parts if part)
+        return resolved or None
+
+    @staticmethod
+    def _find_definition_id(
+        target_path: str,
+        symbol_name: str,
+        graph: DependencyGraph,
+    ) -> str:
+        candidates = [
+            node.id
+            for node in graph.nodes.values()
+            if node.path == target_path
+            and node.kind in {"function", "method", "class"}
+            and node.name == symbol_name
+        ]
+
+        # Multiple same-named nested definitions are ambiguous unless there
+        # is exactly one definition.
+        return candidates[0] if len(candidates) == 1 else ""
+
+    def _resolve_calls(
+        self,
         path: str,
-        source: str,
+        analyzer: _PythonFileAnalyzer,
+        bindings: Mapping[str, list[tuple[str, str]]],
+        module_name: str,
+        definitions_by_path: Mapping[str, list[_Definition]],
+        definitions_by_module_name: Mapping[
+            tuple[str, str], list[_Definition]
+        ],
         graph: DependencyGraph,
     ) -> None:
-        """
-        Record syntactic Jinja-style attribute references.
+        local_definitions = definitions_by_path.get(path, [])
 
-        A template reference is not linked to a Python model unless another
-        verified relationship explicitly establishes that connection.
-        """
-        file_id = _file_node_id(path)
+        for call in analyzer.calls:
+            expression = call.expression
+            parts = expression.split(".")
+            candidates: list[_Definition] = []
 
-        # Examples: appointment.date, patient.name, item.doctor.full_name
-        pattern = re.compile(
-            r"\b([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)\b"
-        )
+            if len(parts) == 1:
+                name = parts[0]
 
-        for line_number, line_text in enumerate(source.splitlines(), start=1):
-            for match in pattern.finditer(line_text):
-                expression = match.group(1)
-                attribute_name = expression.rsplit(".", 1)[-1]
+                # Prefer a definition in the same lexical scope. A unique
+                # same-file definition is the only fallback if scope matching
+                # cannot identify one exact target.
+                scoped = [
+                    definition
+                    for definition in local_definitions
+                    if definition.name == name
+                    and (
+                        call.containing_qualname == definition.qualified_name
+                        or call.containing_qualname.startswith(
+                            definition.qualified_name + "."
+                        )
+                    )
+                ]
 
-                attribute_id = _attribute_node_id(
-                    path,
-                    "template",
-                    f"line_{line_number}.{attribute_name}",
-                )
+                if len(scoped) == 1:
+                    candidates = scoped
+                else:
+                    same_file = [
+                        definition
+                        for definition in local_definitions
+                        if definition.name == name
+                        and definition.kind in {"function", "method"}
+                    ]
+                    if len(same_file) == 1:
+                        candidates = same_file
 
-                graph.add_node(
-                    GraphNode(
-                        id=attribute_id,
-                        kind="template_attribute_reference",
-                        path=path,
-                        name=attribute_name,
-                        line=line_number,
+                if not candidates and name in bindings:
+                    imported_targets = bindings[name]
+                    symbol_candidates: list[str] = []
+
+                    for target_path, target_symbol_id in imported_targets:
+                        if target_symbol_id:
+                            symbol_candidates.append(target_symbol_id)
+                        else:
+                            symbol_candidates.extend(
+                                definition.node_id
+                                for definition in definitions_by_path.get(
+                                    target_path, []
+                                )
+                                if definition.name == name
+                            )
+
+                    unique_ids = sorted(set(symbol_candidates))
+                    if len(unique_ids) == 1:
+                        target = graph.nodes.get(unique_ids[0])
+                        if target:
+                            graph.add_edge(
+                                GraphEdge(
+                                    source=call.node_id,
+                                    target=target.id,
+                                    kind="calls",
+                                    metadata={
+                                        "expression": expression,
+                                        "resolution": "imported_symbol",
+                                    },
+                                )
+                            )
+                            continue
+
+            elif len(parts) >= 2:
+                root, member = parts[0], parts[-1]
+
+                # Resolve self.method() only inside the containing class.
+                if root == "self":
+                    containing_class = call.containing_qualname.rsplit(
+                        ".", 1
+                    )[0]
+                    scoped = [
+                        definition
+                        for definition in local_definitions
+                        if definition.name == member
+                        and definition.kind == "method"
+                        and definition.qualified_name.startswith(
+                            containing_class + "."
+                        )
+                    ]
+                    if len(scoped) == 1:
+                        candidates = scoped
+
+                # Resolve a class method only if the class name uniquely
+                # identifies a local or imported class.
+                if not candidates:
+                    class_candidates = [
+                        definition
+                        for definition in local_definitions
+                        if definition.name == root
+                        and definition.kind == "class"
+                    ]
+
+                    if len(class_candidates) == 1:
+                        class_name = class_candidates[0].qualified_name
+                        candidates = [
+                            definition
+                            for definition in local_definitions
+                            if definition.name == member
+                            and definition.kind == "method"
+                            and definition.qualified_name
+                            == f"{class_name}.{member}"
+                        ]
+
+                # Resolve module_alias.function() only when the import
+                # binding identifies exactly one source module.
+                if not candidates and root in bindings:
+                    imported = bindings[root]
+                    target_paths = {target_path for target_path, _ in imported}
+
+                    if len(target_paths) == 1:
+                        target_path = next(iter(target_paths))
+                        candidates = [
+                            definition
+                            for definition in definitions_by_path.get(
+                                target_path, []
+                            )
+                            if definition.name == member
+                            and definition.kind in {"function", "method"}
+                        ]
+
+            candidate_ids = sorted(
+                {definition.node_id for definition in candidates}
+            )
+
+            if len(candidate_ids) == 1:
+                graph.add_edge(
+                    GraphEdge(
+                        source=call.node_id,
+                        target=candidate_ids[0],
+                        kind="calls",
                         metadata={
                             "expression": expression,
-                            "receiver_type": "unknown",
+                            "resolution": "unambiguous_static_call",
+                        },
+                    )
+                )
+            else:
+                graph.add_unresolved(
+                    UnresolvedReference(
+                        source=call.node_id,
+                        name=expression,
+                        kind="call",
+                        path=path,
+                        line=call.line,
+                        reason=(
+                            "ambiguous_call_target"
+                            if len(candidate_ids) > 1
+                            else "call_target_not_resolved"
+                        ),
+                        metadata={
+                            "candidate_ids": candidate_ids,
+                            "module": module_name,
                         },
                     )
                 )
 
-                graph.add_edge(
-                    GraphEdge(
-                        source=file_id,
-                        target=attribute_id,
-                        kind="references_attribute",
-                        source_path=path,
+    @staticmethod
+    def _record_unresolved_attributes(
+        analyzer: _PythonFileAnalyzer,
+        graph: DependencyGraph,
+    ) -> None:
+        for reference in analyzer.attributes:
+            # A syntactic attribute is evidence of usage, not proof of its
+            # runtime owner or of a model/schema field.
+            graph.add_unresolved(
+                UnresolvedReference(
+                    source=reference.node_id,
+                    name=reference.expression,
+                    kind="attribute",
+                    path=reference.path,
+                    line=reference.line,
+                    reason="attribute_owner_not_statically_proven",
+                    metadata={
+                        "containing_symbol_id": (
+                            reference.containing_symbol_id
+                        )
+                    },
+                )
+            )
+
+    def _analyze_template(
+        self,
+        path: str,
+        content: str,
+        graph: DependencyGraph,
+        file_node_id: str,
+    ) -> None:
+        """Create template reference nodes; resolution occurs after parsing."""
+        self._get_template_refs(path, content, graph, file_node_id)
+
+    def _get_template_refs(
+        self,
+        path: str,
+        content: str,
+        graph: DependencyGraph,
+        file_node_id: str,
+    ) -> list[_TemplateReference]:
+        references: list[_TemplateReference] = []
+        seen: set[tuple[int, str]] = set()
+
+        for line_number, line_text in enumerate(content.splitlines(), start=1):
+            for match in TEMPLATE_REFERENCE_RE.finditer(line_text):
+                expression = _template_attribute_expression(match)
+                if "." not in expression:
+                    continue
+
+                key = (line_number, expression)
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                reference_id = _node_id(
+                    "template_ref",
+                    path,
+                    line_number,
+                    expression,
+                )
+
+                if graph.add_node(
+                    GraphNode(
+                        id=reference_id,
+                        kind="template_attribute_reference",
+                        name=expression,
+                        path=path,
                         line=line_number,
-                        evidence=expression,
+                        metadata={
+                            "expression": expression,
+                            "root": expression.split(".", 1)[0],
+                        },
+                    )
+                ):
+                    graph.add_edge(
+                        GraphEdge(
+                            source=file_node_id,
+                            target=reference_id,
+                            kind="contains_template_reference",
+                            metadata={"line": line_number},
+                        )
+                    )
+
+                references.append(
+                    _TemplateReference(
+                        expression=expression,
+                        root=expression.split(".", 1)[0],
+                        path=path,
+                        line=line_number,
+                        node_id=reference_id,
                     )
                 )
 
+                graph.add_unresolved(
+                    UnresolvedReference(
+                        source=reference_id,
+                        name=expression,
+                        kind="template_attribute",
+                        path=path,
+                        line=line_number,
+                        reason="template_attribute_owner_not_proven",
+                    )
+                )
 
-# ---------------------------------------------------------------------------
-# Public convenience function
-# ---------------------------------------------------------------------------
+        return references
+
+    def _resolve_template_renders(
+        self,
+        analyzers: Mapping[str, _PythonFileAnalyzer],
+        template_paths: list[str],
+        template_references_by_path: Mapping[
+            str, list[_TemplateReference]
+        ],
+        graph: DependencyGraph,
+    ) -> None:
+        """Connect render callers to templates and verified context roots."""
+        templates_by_name: dict[str, list[str]] = defaultdict(list)
+
+        for template_path in template_paths:
+            templates_by_name[posixpath.basename(template_path)].append(
+                template_path
+            )
+
+        for analyzer in analyzers.values():
+            for render in analyzer.template_renders:
+                basename = posixpath.basename(render.template_name)
+                candidates = templates_by_name.get(basename, [])
+
+                if len(candidates) != 1:
+                    graph.add_unresolved(
+                        UnresolvedReference(
+                            source=render.node_id,
+                            name=render.template_name,
+                            kind="template_render",
+                            path=render.path,
+                            line=render.line,
+                            reason=(
+                                "ambiguous_template_path"
+                                if candidates
+                                else "template_not_in_source_snapshot"
+                            ),
+                            metadata={"candidate_paths": sorted(candidates)},
+                        )
+                    )
+                    continue
+
+                template_path = candidates[0]
+                template_file_id = _node_id(
+                    "file",
+                    template_path,
+                    None,
+                    template_path,
+                )
+
+                graph.add_edge(
+                    GraphEdge(
+                        source=render.node_id,
+                        target=template_file_id,
+                        kind="renders_template",
+                        metadata={
+                            "template_name": render.template_name,
+                            "line": render.line,
+                        },
+                    )
+                )
+
+                template_refs = template_references_by_path.get(
+                    template_path, []
+                )
+
+                for context_name, source_expression in (
+                    render.context_bindings.items()
+                ):
+                    matching_refs = [
+                        reference
+                        for reference in template_refs
+                        if reference.root == context_name
+                    ]
+
+                    if not matching_refs:
+                        continue
+
+                    # This edge establishes that the renderer supplies a
+                    # context key used by the template. It does not prove
+                    # that the supplied expression is a particular model.
+                    for reference in matching_refs:
+                        graph.add_edge(
+                            GraphEdge(
+                                source=render.node_id,
+                                target=reference.node_id,
+                                kind="supplies_template_context",
+                                metadata={
+                                    "context_name": context_name,
+                                    "source_expression": source_expression,
+                                    "line": render.line,
+                                    "template_path": template_path,
+                                    "evidence": (
+                                        "explicit_render_template_keyword"
+                                    ),
+                                },
+                            )
+                        )
+
 
 def build_dependency_graph(
     source_files: Mapping[str, str],
-    *,
     max_files: int = DEFAULT_MAX_FILES,
     max_nodes: int = DEFAULT_MAX_NODES,
     max_edges: int = DEFAULT_MAX_EDGES,
 ) -> DependencyGraph:
-    """
-    Convenience wrapper for callers that do not need a persistent builder.
-    """
+    """Public entry point retained for existing Deep Search callers."""
     return DependencyGraphBuilder(
         max_files=max_files,
         max_nodes=max_nodes,
