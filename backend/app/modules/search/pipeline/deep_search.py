@@ -4,10 +4,10 @@ app/modules/search/pipeline/deep_search.py
 
 Bounded Deep Search workflow for FIX_BUG requests.
 
-Deep Search is optional and runs only when explicitly selected.
-It acquires a read-only source snapshot, builds and explores the
-dependency graph, retrieves targeted code through the existing search
-adapter, assesses evidence, and returns a bounded terminal result.
+Deep Search runs only when explicitly selected. It acquires a read-only
+source snapshot, builds a dependency graph, explores graph targets,
+retrieves targeted code through the existing search adapter, assesses
+evidence, and returns a bounded terminal result.
 
 This module never writes repository files, creates a Qdrant client,
 uses ZIP-based repository identification, or changes normal search flow.
@@ -46,6 +46,10 @@ MAX_INVESTIGATION_ROUNDS = 3
 MAX_GRAPH_DEPTH = 3
 MAX_TARGETS = 12
 
+MAX_LOGGED_GRAPH_NODES = 100
+MAX_LOGGED_GRAPH_EDGES = 200
+MAX_LOGGED_UNRESOLVED_REFERENCES = 100
+
 STATUS_RUNNING = "running"
 STATUS_COMPLETE = "complete"
 STATUS_INCOMPLETE = "incomplete"
@@ -53,16 +57,14 @@ STATUS_UNAVAILABLE = "unavailable"
 
 INTENT_FIX_BUG = "FIX_BUG"
 
-# The workflow provider is synchronous. The stage provider can be async.
 SourceProvider = Callable[[Mapping[str, Any]], Mapping[str, str]]
 AsyncSourceProvider = Callable[
-    [Mapping[str, Any]],
-    Awaitable[Mapping[str, str]],
+    [Mapping[str, Any]], Awaitable[Mapping[str, str]]
 ]
 
 
 class DeepSearchState(TypedDict, total=False):
-    """State shared between LangGraph nodes."""
+    """State shared by Deep Search LangGraph nodes."""
 
     query: str
     intent: str
@@ -113,7 +115,6 @@ class DeepSearchState(TypedDict, total=False):
 
 
 def _safe_count(value: Any) -> int:
-    """Return a collection size without allowing diagnostic code to fail."""
     try:
         return len(value)
     except (TypeError, AttributeError):
@@ -125,27 +126,42 @@ def _safe_text(value: Any) -> str:
 
 
 def _normalize_intent(value: Any) -> str:
-    """Normalize string and Enum intent values to their canonical name."""
     if value is None:
         return ""
 
     value = getattr(value, "value", value)
     normalized = str(value).strip().upper()
 
-    # Handle Enum-like string representations such as Intent.FIX_BUG.
     if "." in normalized:
         normalized = normalized.rsplit(".", 1)[-1]
 
     return normalized
 
 
+def _normalize_items(value: Any) -> list[Any]:
+    """Normalize list-like graph/retrieval results without returning keys."""
+    if value is None:
+        return []
+
+    if isinstance(value, Mapping):
+        return list(value.values())
+
+    if isinstance(value, (list, tuple, set)):
+        return list(value)
+
+    try:
+        return list(value)
+    except (TypeError, AttributeError):
+        return []
+
+
 def _target_id(target: Any) -> str:
     for key in ("target_id", "id", "path", "file_path", "name"):
-        if isinstance(target, Mapping):
-            value = target.get(key)
-        else:
-            value = getattr(target, key, None)
-
+        value = (
+            target.get(key)
+            if isinstance(target, Mapping)
+            else getattr(target, key, None)
+        )
         if value is not None:
             return str(value)
 
@@ -172,7 +188,6 @@ def _target_list(value: Any) -> list[Any]:
 
 
 def _unique_targets(targets: list[Any]) -> list[Any]:
-    """Deduplicate targets without requiring hashable target objects."""
     result: list[Any] = []
     seen: set[str] = set()
 
@@ -183,6 +198,129 @@ def _unique_targets(targets: list[Any]) -> list[Any]:
             result.append(target)
 
     return result
+
+
+def _graph_item_details(
+    item: Any,
+    fields: tuple[str, ...],
+    fallback_id: Any = None,
+) -> dict[str, Any]:
+    details: dict[str, Any] = {}
+
+    for field in fields:
+        value = (
+            item.get(field)
+            if isinstance(item, Mapping)
+            else getattr(item, field, None)
+        )
+        if value is not None:
+            details[field] = value
+
+    if fallback_id is not None and not any(
+        details.get(key) is not None
+        for key in ("id", "node_id", "name", "source")
+    ):
+        details["id"] = fallback_id
+
+    for key, value in list(details.items()):
+        if isinstance(value, str) and len(value) > 300:
+            details[key] = value[:300] + "...[truncated]"
+
+    return details
+
+
+def _log_graph_inspection(
+    source_files: Mapping[str, str],
+    graph: Any,
+    nodes: Any,
+    edges: Any,
+    unresolved: Any,
+    graph_metadata: Mapping[str, Any],
+) -> None:
+    """Log bounded graph diagnostics without affecting graph construction."""
+    try:
+        node_items = (
+            list(nodes.items())
+            if isinstance(nodes, Mapping)
+            else [(None, item) for item in _normalize_items(nodes)]
+        )
+        edge_items = (
+            list(edges.items())
+            if isinstance(edges, Mapping)
+            else [(None, item) for item in _normalize_items(edges)]
+        )
+        unresolved_items = _normalize_items(unresolved)
+
+        logger.info(
+            "deep_search_graph_inspection_started",
+            extra={
+                "source_file_count": len(source_files),
+                "node_count": len(node_items),
+                "edge_count": len(edge_items),
+                "unresolved_reference_count": len(unresolved_items),
+                "graph_metadata": dict(graph_metadata),
+            },
+        )
+
+        for path in list(source_files)[:MAX_LOGGED_GRAPH_NODES]:
+            logger.info("deep_search_graph_source_file: %s", path)
+
+        node_fields = (
+            "id", "node_id", "kind", "type", "name",
+            "qualified_name", "path", "line", "start_line", "end_line",
+        )
+        for fallback_id, node in node_items[:MAX_LOGGED_GRAPH_NODES]:
+            logger.info(
+                "deep_search_graph_node_details: %s",
+                _graph_item_details(node, node_fields, fallback_id),
+            )
+
+        if len(node_items) > MAX_LOGGED_GRAPH_NODES:
+            logger.info(
+                "deep_search_graph_nodes_truncated: logged=%s total=%s",
+                MAX_LOGGED_GRAPH_NODES,
+                len(node_items),
+            )
+
+        edge_fields = (
+            "source", "target", "kind", "type",
+            "line", "source_line", "target_line",
+        )
+        for fallback_id, edge in edge_items[:MAX_LOGGED_GRAPH_EDGES]:
+            logger.info(
+                "deep_search_graph_edge_details: %s",
+                _graph_item_details(edge, edge_fields, fallback_id),
+            )
+
+        if len(edge_items) > MAX_LOGGED_GRAPH_EDGES:
+            logger.info(
+                "deep_search_graph_edges_truncated: logged=%s total=%s",
+                MAX_LOGGED_GRAPH_EDGES,
+                len(edge_items),
+            )
+
+        unresolved_fields = (
+            "source", "name", "kind", "path", "line", "reason", "metadata",
+        )
+        for reference in unresolved_items[
+            :MAX_LOGGED_UNRESOLVED_REFERENCES
+        ]:
+            logger.info(
+                "deep_search_graph_unresolved_reference: %s",
+                _graph_item_details(reference, unresolved_fields),
+            )
+
+        if len(unresolved_items) > MAX_LOGGED_UNRESOLVED_REFERENCES:
+            logger.info(
+                "deep_search_graph_unresolved_truncated: logged=%s total=%s",
+                MAX_LOGGED_UNRESOLVED_REFERENCES,
+                len(unresolved_items),
+            )
+
+        logger.info("deep_search_graph_inspection_completed")
+
+    except Exception:
+        logger.exception("deep_search_graph_inspection_failed")
 
 
 class DeepSearchWorkflow:
@@ -201,16 +339,13 @@ class DeepSearchWorkflow:
         max_targets: int = MAX_TARGETS,
     ) -> None:
         self.source_provider = source_provider
-
         self.max_rounds = max(
             1, min(int(max_rounds), MAX_INVESTIGATION_ROUNDS)
         )
         self.max_graph_depth = max(
             1, min(int(max_graph_depth), MAX_GRAPH_DEPTH)
         )
-        self.max_targets = max(
-            1, min(int(max_targets), MAX_TARGETS)
-        )
+        self.max_targets = max(1, min(int(max_targets), MAX_TARGETS))
 
         self.explorer = explorer or DeepSearchExplorer()
         self.retriever = retriever or DeepSearchRetriever(
@@ -220,18 +355,15 @@ class DeepSearchWorkflow:
             assessment_adapter=assessment_adapter
         )
 
+        logger.info("deep_search_langgraph_construction_started")
         self.app = self._build_graph()
 
         logger.info(
             "deep_search_workflow_initialized",
             extra={
-                "source_provider_configured": (
-                    self.source_provider is not None
-                ),
+                "source_provider_configured": self.source_provider is not None,
                 "search_adapter_configured": search_adapter is not None,
-                "assessment_adapter_configured": (
-                    assessment_adapter is not None
-                ),
+                "assessment_adapter_configured": assessment_adapter is not None,
                 "max_rounds": self.max_rounds,
                 "max_graph_depth": self.max_graph_depth,
                 "max_targets": self.max_targets,
@@ -239,10 +371,8 @@ class DeepSearchWorkflow:
         )
 
     @staticmethod
-    def _resolve_collection(
-        state: Mapping[str, Any],
-    ) -> Optional[str]:
-        """Resolve only the collection already selected by the application."""
+    def _resolve_collection(state: Mapping[str, Any]) -> Optional[str]:
+        """Resolve an already-selected collection; never select one here."""
         for key in (
             "collection_name",
             "resolved_collection",
@@ -254,7 +384,6 @@ class DeepSearchWorkflow:
                 return str(value).strip()
 
         selection = state.get("collection_selection")
-
         for key in (
             "collection_name",
             "resolved_collection",
@@ -273,21 +402,126 @@ class DeepSearchWorkflow:
 
         return None
 
+    @staticmethod
+    def _log_route(
+        route_name: str,
+        destination: str,
+        state: Mapping[str, Any],
+    ) -> None:
+        logger.info(
+            "deep_search_langgraph_route_selected",
+            extra={
+                "route_name": route_name,
+                "destination": destination,
+                "status": state.get("status"),
+                "rounds": state.get("rounds", 0),
+                "target_count": _safe_count(state.get("targets")),
+                "next_target_count": _safe_count(state.get("next_targets")),
+                "retrieved_chunk_count": _safe_count(
+                    state.get("retrieved_chunks")
+                ),
+            },
+        )
+
+    def _logged_node(
+        self,
+        node_name: str,
+        node_function: Callable[[DeepSearchState], dict[str, Any]],
+    ) -> Callable[[DeepSearchState], dict[str, Any]]:
+        """Log a node's execution and reject invalid node updates."""
+
+        def execute_node(state: DeepSearchState) -> dict[str, Any]:
+            logger.info(
+                "deep_search_langgraph_node_started",
+                extra={
+                    "node_name": node_name,
+                    "status_before": state.get("status"),
+                    "rounds": state.get("rounds", 0),
+                },
+            )
+
+            try:
+                update = node_function(state)
+                if not isinstance(update, Mapping):
+                    raise TypeError(
+                        f"Deep Search node '{node_name}' returned "
+                        f"{type(update).__name__}; expected a mapping."
+                    )
+
+                logger.info(
+                    "deep_search_langgraph_node_completed",
+                    extra={
+                        "node_name": node_name,
+                        "status_after": update.get(
+                            "status", state.get("status")
+                        ),
+                        "rounds_after": update.get(
+                            "rounds", state.get("rounds", 0)
+                        ),
+                        "target_count": _safe_count(
+                            update.get("targets", state.get("targets"))
+                        ),
+                        "next_target_count": _safe_count(
+                            update.get(
+                                "next_targets", state.get("next_targets")
+                            )
+                        ),
+                        "retrieved_chunk_count": _safe_count(
+                            update.get(
+                                "retrieved_chunks",
+                                state.get("retrieved_chunks"),
+                            )
+                        ),
+                        "diagnostic_code": update.get("diagnostic_code"),
+                    },
+                )
+                return dict(update)
+
+            except Exception:
+                logger.exception(
+                    "deep_search_langgraph_node_failed",
+                    extra={
+                        "node_name": node_name,
+                        "status": state.get("status"),
+                        "rounds": state.get("rounds", 0),
+                    },
+                )
+                raise
+
+        return execute_node
+
     def _build_graph(self):
+        """Build and compile the bounded investigation graph."""
         graph = StateGraph(DeepSearchState)
 
-        graph.add_node("validate", self._validate_input)
+        graph.add_node(
+            "validate",
+            self._logged_node("validate", self._validate_input),
+        )
         graph.add_node(
             "build_dependency_graph",
-            self._build_dependency_graph,
+            self._logged_node(
+                "build_dependency_graph", self._build_dependency_graph
+            ),
         )
-        graph.add_node("explore", self._explore)
-        graph.add_node("retrieve", self._retrieve)
-        graph.add_node("assess", self._assess)
-        graph.add_node("finalize", self._finalize)
+        graph.add_node(
+            "explore",
+            self._logged_node("explore", self._explore),
+        )
+        graph.add_node(
+            "retrieve",
+            self._logged_node("retrieve", self._retrieve),
+        )
+        graph.add_node(
+            "assess",
+            self._logged_node("assess", self._assess),
+        )
+        graph.add_node(
+            "finalize",
+            self._logged_node("finalize", self._finalize),
+        )
 
         graph.add_edge(START, "validate")
-
         graph.add_conditional_edges(
             "validate",
             self._route_after_validation,
@@ -296,95 +530,134 @@ class DeepSearchWorkflow:
                 "finalize": "finalize",
             },
         )
-
         graph.add_conditional_edges(
             "build_dependency_graph",
             self._route_after_graph_build,
-            {
-                "explore": "explore",
-                "finalize": "finalize",
-            },
+            {"explore": "explore", "finalize": "finalize"},
         )
-
         graph.add_conditional_edges(
             "explore",
             self._route_after_exploration,
-            {
-                "retrieve": "retrieve",
-                "finalize": "finalize",
-            },
+            {"retrieve": "retrieve", "finalize": "finalize"},
         )
-
         graph.add_conditional_edges(
             "retrieve",
             self._route_after_retrieval,
-            {
-                "assess": "assess",
-                "finalize": "finalize",
-            },
+            {"assess": "assess", "finalize": "finalize"},
         )
-
         graph.add_conditional_edges(
             "assess",
             self._route_after_assessment,
-            {
-                "explore": "explore",
-                "finalize": "finalize",
+            {"explore": "explore", "finalize": "finalize"},
+        )
+        graph.add_edge("finalize", END)
+
+        logger.info(
+            "deep_search_langgraph_nodes_registered",
+            extra={
+                "node_names": [
+                    "validate",
+                    "build_dependency_graph",
+                    "explore",
+                    "retrieve",
+                    "assess",
+                    "finalize",
+                ],
+                "start_node": "validate",
+                "terminal_node": "finalize",
             },
         )
 
-        graph.add_edge("finalize", END)
-        return graph.compile()
+        try:
+            compiled_app = graph.compile()
+        except Exception:
+            logger.exception("deep_search_langgraph_compile_failed")
+            raise
+
+        # Topology logging is diagnostic only and cannot invalidate compilation.
+        try:
+            graph_view = compiled_app.get_graph()
+            nodes = list(graph_view.nodes.keys())
+            edges = [
+                {"source": edge.source, "target": edge.target}
+                for edge in graph_view.edges
+            ]
+
+            logger.info(
+                "deep_search_langgraph_topology_verified",
+                extra={
+                    "compiled_type": type(compiled_app).__name__,
+                    "compiled_nodes": nodes,
+                    "compiled_edges": edges,
+                    "compiled_node_count": len(nodes),
+                    "compiled_edge_count": len(edges),
+                    "has_invoke": callable(
+                        getattr(compiled_app, "invoke", None)
+                    ),
+                },
+            )
+        except Exception:
+            logger.exception(
+                "deep_search_langgraph_structure_inspection_failed"
+            )
+
+        return compiled_app
 
     @staticmethod
     def _route_after_validation(state: DeepSearchState) -> str:
-        return (
+        destination = (
             "build_dependency_graph"
             if state.get("status") == STATUS_RUNNING
             else "finalize"
         )
+        DeepSearchWorkflow._log_route("after_validation", destination, state)
+        return destination
 
     @staticmethod
     def _route_after_graph_build(state: DeepSearchState) -> str:
-        return (
+        destination = (
             "explore"
             if state.get("status") == STATUS_RUNNING
             else "finalize"
         )
+        DeepSearchWorkflow._log_route("after_graph_build", destination, state)
+        return destination
 
     @staticmethod
     def _route_after_exploration(state: DeepSearchState) -> str:
-        return (
+        destination = (
             "retrieve"
-            if state.get("status") == STATUS_RUNNING
-            and state.get("targets")
+            if state.get("status") == STATUS_RUNNING and state.get("targets")
             else "finalize"
         )
+        DeepSearchWorkflow._log_route("after_exploration", destination, state)
+        return destination
 
     @staticmethod
     def _route_after_retrieval(state: DeepSearchState) -> str:
-        return (
+        destination = (
             "assess"
             if state.get("status") == STATUS_RUNNING
             and state.get("retrieved_chunks")
             else "finalize"
         )
+        DeepSearchWorkflow._log_route("after_retrieval", destination, state)
+        return destination
 
     @staticmethod
     def _route_after_assessment(state: DeepSearchState) -> str:
-        return (
+        destination = (
             "explore"
             if state.get("status") == STATUS_RUNNING
             and state.get("next_targets")
             and state.get("rounds", 0) < state.get("max_rounds", 1)
             else "finalize"
         )
+        DeepSearchWorkflow._log_route("after_assessment", destination, state)
+        return destination
 
     @staticmethod
-    def _input_error(
-        state: Mapping[str, Any],
-    ) -> Optional[str]:
-        """Validate inputs consistently before graph construction."""
+    def _input_error(state: Mapping[str, Any]) -> Optional[str]:
         if not _safe_text(state.get("query")):
             return "Deep Search requires a non-empty query."
 
@@ -407,7 +680,7 @@ class DeepSearchWorkflow:
         return None
 
     def run(self, initial_state: Mapping[str, Any]) -> dict[str, Any]:
-        """Run the graph synchronously and return a terminal result."""
+        """Run LangGraph synchronously and return a stable terminal result."""
         state: DeepSearchState = dict(initial_state)
         state["intent"] = _normalize_intent(state.get("intent"))
 
@@ -431,11 +704,7 @@ class DeepSearchWorkflow:
                 1, min(int(state["max_rounds"]), self.max_rounds)
             )
             state["max_graph_depth"] = max(
-                1,
-                min(
-                    int(state["max_graph_depth"]),
-                    self.max_graph_depth,
-                ),
+                1, min(int(state["max_graph_depth"]), self.max_graph_depth)
             )
             state["max_targets"] = max(
                 1, min(int(state["max_targets"]), self.max_targets)
@@ -452,33 +721,14 @@ class DeepSearchWorkflow:
             "deep_search_input_validation",
             extra={
                 "intent": state.get("intent"),
-                "deep_search_requested": state.get(
-                    "deep_search_requested"
-                ),
+                "deep_search_requested": state.get("deep_search_requested"),
                 "validation_error": validation_error,
                 "repo_name_present": bool(state.get("repo_name")),
                 "collection_name": self._resolve_collection(state),
                 "source_files_provided": isinstance(
                     state.get("source_files"), Mapping
                 ),
-                "source_provider_configured": (
-                    self.source_provider is not None
-                ),
-            },
-        )
-
-        logger.info(
-            "deep_search_workflow_started",
-            extra={
-                "repo_name": state.get("repo_name"),
-                "collection_name": self._resolve_collection(state),
-                "intent": state.get("intent"),
-                "source_files_provided": isinstance(
-                    state.get("source_files"), Mapping
-                ),
-                "max_rounds": state["max_rounds"],
-                "max_graph_depth": state["max_graph_depth"],
-                "max_targets": state["max_targets"],
+                "source_provider_configured": self.source_provider is not None,
             },
         )
 
@@ -486,63 +736,69 @@ class DeepSearchWorkflow:
             state["status"] = STATUS_UNAVAILABLE
             state["reason"] = validation_error
             state["diagnostic_code"] = "DEEP_SEARCH_INPUT_INVALID"
-
             logger.error(
                 "deep_search_input_rejected",
                 extra={
                     "diagnostic_code": state["diagnostic_code"],
                     "reason": validation_error,
-                    "intent": state.get("intent"),
-                    "repo_name": state.get("repo_name"),
-                    "collection_name": self._resolve_collection(state),
                 },
             )
             return self._terminal_result(state)
 
+        logger.info(
+            "deep_search_workflow_started",
+            extra={
+                "repo_name": state.get("repo_name"),
+                "collection_name": self._resolve_collection(state),
+                "intent": state.get("intent"),
+                "max_rounds": state["max_rounds"],
+                "max_graph_depth": state["max_graph_depth"],
+                "max_targets": state["max_targets"],
+            },
+        )
+
         try:
+            logger.info("deep_search_langgraph_execution_started")
             completed = self.app.invoke(state)
 
             if not isinstance(completed, Mapping):
-                raise TypeError(
-                    "LangGraph returned a non-mapping state."
-                )
+                raise TypeError("LangGraph returned a non-mapping state.")
 
             final_result = completed.get("final_result")
+
+            logger.info(
+                "deep_search_langgraph_execution_completed",
+                extra={
+                    "final_status": completed.get("status"),
+                    "final_round": completed.get("rounds", 0),
+                    "final_result_present": isinstance(final_result, Mapping),
+                    "diagnostic_code": completed.get("diagnostic_code"),
+                },
+            )
 
             if isinstance(final_result, Mapping):
                 return dict(final_result)
 
-            logger.error(
-                "deep_search_final_result_missing",
-                extra={
-                    "status": completed.get("status"),
-                    "reason": completed.get("reason"),
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_FINAL_RESULT_MISSING"
-                    ),
-                },
-            )
-
             failed_state = dict(completed)
-            failed_state["status"] = STATUS_UNAVAILABLE
-            failed_state["reason"] = (
-                "Deep Search finished without producing a final result."
-            )
-            failed_state["diagnostic_code"] = (
-                "DEEP_SEARCH_FINAL_RESULT_MISSING"
+            failed_state.update(
+                {
+                    "status": STATUS_UNAVAILABLE,
+                    "reason": (
+                        "Deep Search finished without producing a final result."
+                    ),
+                    "diagnostic_code": "DEEP_SEARCH_FINAL_RESULT_MISSING",
+                }
             )
             return self._terminal_result(failed_state)
 
         except Exception:
             logger.exception(
-                "deep_search_workflow_failed",
+                "deep_search_langgraph_execution_failed",
                 extra={
                     "repo_name": state.get("repo_name"),
                     "collection_name": self._resolve_collection(state),
-                    "rounds": state.get("rounds", 0),
                 },
             )
-
             state["status"] = STATUS_UNAVAILABLE
             state["reason"] = (
                 "Deep Search workflow execution failed. "
@@ -552,18 +808,15 @@ class DeepSearchWorkflow:
             return self._terminal_result(state)
 
     def _validate_input(
-        self,
-        state: DeepSearchState,
+        self, state: DeepSearchState
     ) -> dict[str, Any]:
         reason = self._input_error(state)
-
         if reason:
             logger.error(
                 "deep_search_validation_failed",
                 extra={
                     "diagnostic_code": "DEEP_SEARCH_INPUT_INVALID",
                     "reason": reason,
-                    "intent": _normalize_intent(state.get("intent")),
                 },
             )
             return {
@@ -575,37 +828,29 @@ class DeepSearchWorkflow:
         return {"status": STATUS_RUNNING}
 
     def _build_dependency_graph(
-        self,
-        state: DeepSearchState,
+        self, state: DeepSearchState
     ) -> dict[str, Any]:
-        """Build the graph from the source snapshot supplied by the stage."""
+        """Build the dependency graph from validated source text."""
         logger.info(
             "deep_search_graph_build_started",
             extra={
                 "repo_name": state.get("repo_name"),
                 "collection_name": self._resolve_collection(state),
-                "source_files_provided": isinstance(
-                    state.get("source_files"), Mapping
-                ),
             },
         )
 
         source_files = state.get("source_files")
 
-        # This workflow is synchronous. Asynchronous source acquisition
-        # belongs in DeepSearchStage.execute(), before app.invoke().
         if source_files is None and self.source_provider is not None:
             try:
                 source_files = self.source_provider(dict(state))
-
                 if inspect.isawaitable(source_files):
                     close = getattr(source_files, "close", None)
                     if callable(close):
                         close()
                     raise TypeError(
-                        "DeepSearchWorkflow requires a synchronous "
-                        "source_provider. Await async providers in "
-                        "DeepSearchStage.execute()."
+                        "DeepSearchWorkflow requires a synchronous source "
+                        "provider. Await async providers in DeepSearchStage."
                     )
             except Exception:
                 logger.exception("deep_search_source_acquisition_failed")
@@ -618,21 +863,11 @@ class DeepSearchWorkflow:
                 }
 
         if source_files is None:
-            logger.error(
-                "deep_search_source_provider_missing",
-                extra={
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_SOURCE_PROVIDER_MISSING"
-                    ),
-                    "repo_name": state.get("repo_name"),
-                    "collection_name": self._resolve_collection(state),
-                },
-            )
             return {
                 "status": STATUS_UNAVAILABLE,
                 "reason": (
-                    "No source files were supplied and no source "
-                    "provider is configured for Deep Search."
+                    "No source files were supplied and no source provider "
+                    "is configured for Deep Search."
                 ),
                 "diagnostic_code": "DEEP_SEARCH_SOURCE_PROVIDER_MISSING",
             }
@@ -640,9 +875,7 @@ class DeepSearchWorkflow:
         if not isinstance(source_files, Mapping) or not source_files:
             return {
                 "status": STATUS_UNAVAILABLE,
-                "reason": (
-                    "Source acquisition returned no usable source files."
-                ),
+                "reason": "Source acquisition returned no usable source files.",
                 "diagnostic_code": "DEEP_SEARCH_SOURCE_FILES_EMPTY",
             }
 
@@ -652,9 +885,7 @@ class DeepSearchWorkflow:
             if not isinstance(path, str) or not path.strip():
                 return {
                     "status": STATUS_UNAVAILABLE,
-                    "reason": (
-                        "Source snapshot contains an invalid file path."
-                    ),
+                    "reason": "Source snapshot contains an invalid file path.",
                     "diagnostic_code": "DEEP_SEARCH_SOURCE_PATH_INVALID",
                 }
 
@@ -663,30 +894,27 @@ class DeepSearchWorkflow:
 
             if (
                 normalized_path.startswith("/")
-                or (
-                    len(normalized_path) > 1
-                    and normalized_path[1] == ":"
-                )
-                or any(part == ".." for part in parts)
-                or any(part in ("", ".") for part in parts)
+                or (len(normalized_path) > 1 and normalized_path[1] == ":")
+                or any(part in ("", ".", "..") for part in parts)
             ):
                 return {
                     "status": STATUS_UNAVAILABLE,
-                    "reason": (
-                        "Source snapshot contains an unsafe file path."
-                    ),
+                    "reason": "Source snapshot contains an unsafe file path.",
                     "diagnostic_code": "DEEP_SEARCH_SOURCE_PATH_UNSAFE",
                 }
 
             if not isinstance(source, str):
                 return {
                     "status": STATUS_UNAVAILABLE,
-                    "reason": (
-                        "Source snapshot contains non-text file content."
-                    ),
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_SOURCE_CONTENT_INVALID"
-                    ),
+                    "reason": "Source snapshot contains non-text file content.",
+                    "diagnostic_code": "DEEP_SEARCH_SOURCE_CONTENT_INVALID",
+                }
+
+            if normalized_path in validated_files:
+                return {
+                    "status": STATUS_UNAVAILABLE,
+                    "reason:": "Source snapshot contains duplicate normalized paths.",
+                    "diagnostic_code": "DEEP_SEARCH_SOURCE_PATH_DUPLICATE",
                 }
 
             validated_files[normalized_path] = source
@@ -708,8 +936,9 @@ class DeepSearchWorkflow:
             "unresolved_references",
             getattr(graph, "unresolved", []),
         )
-        metadata = getattr(graph, "metadata", {})
+        unresolved_items = _normalize_items(unresolved)
 
+        metadata = getattr(graph, "metadata", {})
         if not isinstance(metadata, Mapping):
             metadata = {}
 
@@ -719,7 +948,17 @@ class DeepSearchWorkflow:
                 "node_count": _safe_count(nodes),
                 "edge_count": _safe_count(edges),
                 "source_file_count": len(validated_files),
+                "unresolved_reference_count": len(unresolved_items),
             }
+        )
+
+        _log_graph_inspection(
+            source_files=validated_files,
+            graph=graph,
+            nodes=nodes,
+            edges=edges,
+            unresolved=unresolved_items,
+            graph_metadata=graph_metadata,
         )
 
         logger.info(
@@ -728,8 +967,8 @@ class DeepSearchWorkflow:
                 "node_count": _safe_count(nodes),
                 "edge_count": _safe_count(edges),
                 "source_file_count": len(validated_files),
-                "unresolved_reference_count": _safe_count(unresolved),
-                "max_graph_depth": state["max_graph_depth"],
+                "unresolved_reference_count": len(unresolved_items),
+                "max_graph_depth": state.get("max_graph_depth"),
             },
         )
 
@@ -737,28 +976,24 @@ class DeepSearchWorkflow:
             return {
                 "status": STATUS_INCOMPLETE,
                 "reason": (
-                    "The source snapshot was acquired, but the "
-                    "dependency graph contains no nodes."
+                    "The source snapshot was acquired, but the dependency "
+                    "graph contains no nodes."
                 ),
                 "diagnostic_code": "DEEP_SEARCH_GRAPH_EMPTY",
                 "graph_metadata": graph_metadata,
-                "unresolved_references": list(unresolved or []),
+                "unresolved_references": unresolved_items,
             }
 
         return {
             "status": STATUS_RUNNING,
             "dependency_graph": graph,
             "graph_metadata": graph_metadata,
-            "unresolved_references": list(unresolved or []),
+            "unresolved_references": unresolved_items,
         }
 
-    def _explore(
-        self,
-        state: DeepSearchState,
-    ) -> dict[str, Any]:
-        """Explore graph targets within the configured bounds."""
+    def _explore(self, state: DeepSearchState) -> dict[str, Any]:
+        """Explore relevant graph targets within the configured limits."""
         graph = state.get("dependency_graph")
-
         if graph is None:
             return {
                 "status": STATUS_UNAVAILABLE,
@@ -802,25 +1037,16 @@ class DeepSearchWorkflow:
         )
 
         if not targets:
-            logger.warning(
-                "deep_search_no_targets",
-                extra={
-                    "round": state.get("rounds", 0),
-                    "reason": reason,
-                },
-            )
             return {
                 "status": STATUS_INCOMPLETE,
                 "targets": [],
                 "next_targets": [],
-                "reason": reason
-                or "No relevant graph targets were identified.",
+                "reason": reason or "No relevant graph targets were identified.",
                 "diagnostic_code": "DEEP_SEARCH_NO_TARGETS",
             }
 
         seen = list(state.get("seen_target_ids", []))
         seen_set = set(seen)
-
         for target in targets:
             identifier = _target_id(target)
             if identifier not in seen_set:
@@ -844,13 +1070,9 @@ class DeepSearchWorkflow:
             "seen_target_ids": seen,
         }
 
-    def _retrieve(
-        self,
-        state: DeepSearchState,
-    ) -> dict[str, Any]:
-        """Retrieve graph-selected targets through the existing adapter."""
+    def _retrieve(self, state: DeepSearchState) -> dict[str, Any]:
+        """Retrieve graph-selected code using the existing retriever."""
         targets = state.get("targets", [])
-
         if not targets:
             return {
                 "status": STATUS_INCOMPLETE,
@@ -881,12 +1103,8 @@ class DeepSearchWorkflow:
             return {
                 "status": STATUS_UNAVAILABLE,
                 "retrieval_status": "INVALID_RESULT",
-                "reason": (
-                    "The retrieval adapter returned an invalid result."
-                ),
-                "diagnostic_code": (
-                    "DEEP_SEARCH_RETRIEVAL_RESULT_INVALID"
-                ),
+                "reason": "The retrieval adapter returned an invalid result.",
+                "diagnostic_code": "DEEP_SEARCH_RETRIEVAL_RESULT_INVALID",
             }
 
         retrieval_status = result.get("status")
@@ -914,12 +1132,10 @@ class DeepSearchWorkflow:
                 "retrieved_chunks": chunks,
                 "missing_targets": missing,
                 "reason": (
-                    "Targeted retrieval did not report success; "
-                    "the evidence cannot be treated as complete."
+                    "Targeted retrieval did not report success; the evidence "
+                    "cannot be treated as complete."
                 ),
-                "diagnostic_code": (
-                    "DEEP_SEARCH_RETRIEVAL_INCOMPLETE"
-                ),
+                "diagnostic_code": "DEEP_SEARCH_RETRIEVAL_INCOMPLETE",
             }
 
         if not chunks:
@@ -960,18 +1176,10 @@ class DeepSearchWorkflow:
                     or getattr(chunk, "file_path", "")
                 )
                 content = str(
-                    getattr(
-                        chunk,
-                        "content",
-                        getattr(chunk, "code", ""),
-                    )
+                    getattr(chunk, "content", getattr(chunk, "code", ""))
                 )
                 line = str(
-                    getattr(
-                        chunk,
-                        "line_start",
-                        getattr(chunk, "start_line", ""),
-                    )
+                    getattr(chunk, "line_start", getattr(chunk, "start_line", ""))
                 )
 
             key = (path, content, line)
@@ -998,29 +1206,27 @@ class DeepSearchWorkflow:
             "retrieval_query": result.get("retrieval_query"),
         }
 
-    def _assess(
-        self,
-        state: DeepSearchState,
-    ) -> dict[str, Any]:
-        """Assess retrieved evidence and schedule bounded follow-up work."""
+    def _assess(self, state: DeepSearchState) -> dict[str, Any]:
+        """Assess evidence and schedule bounded follow-up investigation."""
         round_number = int(state.get("rounds", 0)) + 1
         max_rounds = int(state.get("max_rounds", self.max_rounds))
 
+        assessor_state = {
+            "query": state.get("query"),
+            "intent": _normalize_intent(
+                state.get("intent", INTENT_FIX_BUG)
+            ),
+            "targets": state.get("targets", []),
+            "retrieved_chunks": state.get("retrieved_chunks", []),
+            "dependency_graph": state.get("dependency_graph"),
+            "unresolved_references": state.get("unresolved_references", []),
+            "rounds": round_number,
+            "max_rounds": max_rounds,
+        }
+
         try:
-            result = self.assessor.assess(
-                query=state["query"],
-                intent=_normalize_intent(
-                    state.get("intent", INTENT_FIX_BUG)
-                ),
-                targets=state.get("targets", []),
-                retrieved_chunks=state.get("retrieved_chunks", []),
-                dependency_graph=state.get("dependency_graph"),
-                unresolved_references=state.get(
-                    "unresolved_references", []
-                ),
-                rounds=round_number,
-                max_rounds=max_rounds,
-            )
+            # The assessor's established interface accepts one state mapping.
+            result = self.assessor.assess(assessor_state)
         except Exception:
             logger.exception(
                 "deep_search_assessment_failed",
@@ -1040,40 +1246,28 @@ class DeepSearchWorkflow:
                 "rounds": round_number,
                 "assessment_status": "INVALID_RESULT",
                 "reason": "The assessor returned an invalid result.",
-                "diagnostic_code": (
-                    "DEEP_SEARCH_ASSESSMENT_RESULT_INVALID"
-                ),
+                "diagnostic_code": "DEEP_SEARCH_ASSESSMENT_RESULT_INVALID",
             }
 
         assessment = dict(result)
-        assessment_status = assessment.get("status")
+        assessment_status = str(assessment.get("status", "")).strip().lower()
         diagnosis = assessment.get("diagnosis")
         evidence = assessment.get("evidence", [])
-
         if not isinstance(evidence, list):
             evidence = []
 
         if assessment_status == STATUS_RUNNING:
             if round_number >= max_rounds:
-                logger.warning(
-                    "deep_search_round_limit_reached",
-                    extra={
-                        "round": round_number,
-                        "max_rounds": max_rounds,
-                    },
-                )
                 return {
                     "status": STATUS_INCOMPLETE,
                     "rounds": round_number,
                     "assessment": assessment,
                     "assessment_status": "round_limit_reached",
                     "reason": (
-                        "The investigation reached its configured round "
-                        "limit before evidence was sufficient."
+                        "The investigation reached its configured round limit "
+                        "before evidence was sufficient."
                     ),
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_ROUND_LIMIT_REACHED"
-                    ),
+                    "diagnostic_code": "DEEP_SEARCH_ROUND_LIMIT_REACHED",
                 }
 
             follow_up = _unique_targets(
@@ -1093,15 +1287,12 @@ class DeepSearchWorkflow:
                         "Assessment requested further investigation but "
                         "provided no follow-up targets."
                     ),
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_FOLLOW_UP_TARGETS_MISSING"
-                    ),
+                    "diagnostic_code": "DEEP_SEARCH_FOLLOW_UP_TARGETS_MISSING",
                 }
 
             seen = set(state.get("seen_target_ids", []))
             new_targets = [
-                target
-                for target in follow_up
+                target for target in follow_up
                 if _target_id(target) not in seen
             ]
 
@@ -1111,12 +1302,8 @@ class DeepSearchWorkflow:
                     "rounds": round_number,
                     "assessment": assessment,
                     "assessment_status": "no_new_follow_up_targets",
-                    "reason": (
-                        "All follow-up targets had already been examined."
-                    ),
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_FOLLOW_UP_TARGETS_REPEATED"
-                    ),
+                    "reason": "All follow-up targets had already been examined.",
+                    "diagnostic_code": "DEEP_SEARCH_FOLLOW_UP_TARGETS_REPEATED",
                 }
 
             logger.info(
@@ -1143,9 +1330,7 @@ class DeepSearchWorkflow:
                     "rounds": round_number,
                     "assessment": assessment,
                     "assessment_status": "invalid_complete_result",
-                    "reason": (
-                        "Assessment reported completion without a diagnosis."
-                    ),
+                    "reason": "Assessment reported completion without a diagnosis.",
                     "diagnostic_code": (
                         "DEEP_SEARCH_COMPLETION_WITHOUT_DIAGNOSIS"
                     ),
@@ -1161,9 +1346,7 @@ class DeepSearchWorkflow:
                         "Assessment reported completion without supporting "
                         "evidence."
                     ),
-                    "diagnostic_code": (
-                        "DEEP_SEARCH_COMPLETION_WITHOUT_EVIDENCE"
-                    ),
+                    "diagnostic_code": "DEEP_SEARCH_COMPLETION_WITHOUT_EVIDENCE",
                 }
 
             logger.info(
@@ -1192,32 +1375,23 @@ class DeepSearchWorkflow:
             if assessment_status == STATUS_INCOMPLETE
             else STATUS_UNAVAILABLE
         )
-
         return {
             "status": normalized,
             "rounds": round_number,
             "assessment": assessment,
-            "assessment_status": assessment_status,
+            "assessment_status": assessment_status or "missing_status",
             "reason": (
                 assessment.get("reason")
                 or "Assessment could not establish a supported diagnosis."
             ),
-            "diagnostic_code": (
-                "DEEP_SEARCH_ASSESSMENT_NOT_COMPLETE"
-            ),
+            "diagnostic_code": "DEEP_SEARCH_ASSESSMENT_NOT_COMPLETE",
         }
 
-    def _finalize(
-        self,
-        state: DeepSearchState,
-    ) -> dict[str, Any]:
-        """Create the stable result consumed by the search service."""
+    def _finalize(self, state: DeepSearchState) -> dict[str, Any]:
+        """Build the stable result consumed by the search service."""
         status = state.get("status", STATUS_UNAVAILABLE)
-
         if status not in {
-            STATUS_COMPLETE,
-            STATUS_INCOMPLETE,
-            STATUS_UNAVAILABLE,
+            STATUS_COMPLETE, STATUS_INCOMPLETE, STATUS_UNAVAILABLE
         }:
             status = STATUS_UNAVAILABLE
 
@@ -1226,18 +1400,12 @@ class DeepSearchWorkflow:
             assessment = {}
 
         diagnosis = state.get("diagnosis") or assessment.get("diagnosis")
-        evidence = (
-            state.get("evidence")
-            or assessment.get("evidence")
-            or []
-        )
+        evidence = state.get("evidence") or assessment.get("evidence") or []
         if not isinstance(evidence, list):
             evidence = []
 
         if status == STATUS_COMPLETE and (
-            not isinstance(diagnosis, str)
-            or not diagnosis.strip()
-            or not evidence
+            not isinstance(diagnosis, str) or not diagnosis.strip() or not evidence
         ):
             status = STATUS_INCOMPLETE
 
@@ -1252,15 +1420,9 @@ class DeepSearchWorkflow:
             ),
             "repo_name": state.get("repo_name"),
             "collection_name": self._resolve_collection(state),
-            "diagnosis": (
-                diagnosis if status == STATUS_COMPLETE else None
-            ),
-            "confidence": (
-                confidence if status == STATUS_COMPLETE else None
-            ),
-            "evidence": (
-                evidence if status == STATUS_COMPLETE else []
-            ),
+            "diagnosis": diagnosis if status == STATUS_COMPLETE else None,
+            "confidence": confidence if status == STATUS_COMPLETE else None,
+            "evidence": evidence if status == STATUS_COMPLETE else [],
             "retrieved_chunks": state.get("retrieved_chunks", []),
             "searched_targets": state.get("seen_target_ids", []),
             "missing_targets": state.get("missing_targets", []),
@@ -1277,8 +1439,12 @@ class DeepSearchWorkflow:
                 "status": status,
                 "diagnosis_present": bool(result["diagnosis"]),
                 "evidence_count": len(result["evidence"]),
-                "retrieved_chunk_count": len(result["retrieved_chunks"]),
-                "searched_target_count": len(result["searched_targets"]),
+                "retrieved_chunk_count": _safe_count(
+                    result["retrieved_chunks"]
+                ),
+                "searched_target_count": _safe_count(
+                    result["searched_targets"]
+                ),
                 "rounds": result["rounds"],
                 "diagnostic_code": result["diagnostic_code"],
             },
@@ -1287,10 +1453,9 @@ class DeepSearchWorkflow:
         return {"final_result": result, "status": status}
 
     def _terminal_result(
-        self,
-        state: Mapping[str, Any],
+        self, state: Mapping[str, Any]
     ) -> dict[str, Any]:
-        """Return a safe result for failures before graph finalization."""
+        """Return a safe result when execution fails before finalization."""
         return {
             "status": state.get("status", STATUS_UNAVAILABLE),
             "intent": _normalize_intent(
@@ -1334,13 +1499,9 @@ class DeepSearchStage:
         self.hybrid_search = hybrid_search
 
         resolved_search_adapter = (
-            search_adapter
-            if search_adapter is not None
-            else hybrid_search
+            search_adapter if search_adapter is not None else hybrid_search
         )
 
-        # The stage owns asynchronous source acquisition. The workflow
-        # receives source_files in its state and remains synchronous.
         self.workflow = workflow or DeepSearchWorkflow(
             source_provider=None,
             search_adapter=resolved_search_adapter,
@@ -1360,18 +1521,12 @@ class DeepSearchStage:
             "deep_search_stage_initialized",
             extra={
                 "workflow_injected": workflow is not None,
-                "source_provider_configured": (
-                    self.source_provider is not None
-                ),
+                "source_provider_configured": self.source_provider is not None,
                 "source_provider_async": inspect.iscoroutinefunction(
                     self.source_provider
                 ),
-                "search_adapter_configured": (
-                    resolved_search_adapter is not None
-                ),
-                "assessment_adapter_configured": (
-                    assessment_adapter is not None
-                ),
+                "search_adapter_configured": resolved_search_adapter is not None,
+                "assessment_adapter_configured": assessment_adapter is not None,
                 "max_rounds": self.workflow.max_rounds,
                 "max_graph_depth": self.workflow.max_graph_depth,
                 "max_targets": self.workflow.max_targets,
@@ -1379,10 +1534,7 @@ class DeepSearchStage:
         )
 
     @staticmethod
-    def _context_value(
-        context: Any,
-        *names: str,
-    ) -> Any:
+    def _context_value(context: Any, *names: str) -> Any:
         if isinstance(context, Mapping):
             for name in names:
                 value = context.get(name)
@@ -1398,11 +1550,7 @@ class DeepSearchStage:
         return None
 
     @staticmethod
-    def _set_context_value(
-        context: Any,
-        name: str,
-        value: Any,
-    ) -> None:
+    def _set_context_value(context: Any, name: str, value: Any) -> None:
         if isinstance(context, dict):
             context[name] = value
             return
@@ -1415,28 +1563,18 @@ class DeepSearchStage:
             ) from exc
 
     async def execute(self, context: Any) -> Any:
-        """
-        Acquire source asynchronously and run the synchronous workflow
-        without blocking the event loop.
-
-        Unselected requests continue through the normal search flow.
-        """
-        raw_intent = self._context_value(context, "intent")
-        intent = _normalize_intent(raw_intent)
-
-        parameters = self._context_value(
-            context,
-            "intent_parameters",
+        """Acquire source and run Deep Search without blocking the event loop."""
+        intent = _normalize_intent(
+            self._context_value(context, "intent")
         )
+
+        parameters = self._context_value(context, "intent_parameters")
         if not isinstance(parameters, Mapping):
             parameters = {}
 
         requested = (
             parameters.get("deep_search_requested") is True
-            or self._context_value(
-                context,
-                "deep_search_requested",
-            ) is True
+            or self._context_value(context, "deep_search_requested") is True
         )
 
         if intent != INTENT_FIX_BUG or not requested:
@@ -1450,7 +1588,6 @@ class DeepSearchStage:
             return context
 
         repo_name = self._context_value(context, "repo_name")
-
         collection_name = self._context_value(
             context,
             "qdrant_collection",
@@ -1458,17 +1595,12 @@ class DeepSearchStage:
             "resolved_collection",
             "selected_collection",
         )
-
         collection_selection = self._context_value(
-            context,
-            "collection_selection",
+            context, "collection_selection"
         )
 
         query = self._context_value(
-            context,
-            "query",
-            "search_query",
-            "user_query",
+            context, "query", "search_query", "user_query"
         )
         if not query:
             query = parameters.get("query")
@@ -1485,8 +1617,7 @@ class DeepSearchStage:
             "collection_selection": collection_selection,
             "source_type": self._context_value(context, "source_type"),
             "source_location": self._context_value(
-                context,
-                "source_location",
+                context, "source_location"
             ),
             "rounds": 0,
             "max_rounds": self.workflow.max_rounds,
@@ -1506,39 +1637,24 @@ class DeepSearchStage:
                 "deep_search_requested": requested,
                 "repo_name": repo_name,
                 "collection_name": collection_name,
-                "source_files_provided": isinstance(
-                    source_files, Mapping
-                ),
-                "source_provider_configured": (
-                    self.source_provider is not None
-                ),
+                "source_files_provided": isinstance(source_files, Mapping),
+                "source_provider_configured": self.source_provider is not None,
             },
         )
 
-        result: dict[str, Any]
-
         try:
-            # Acquire a snapshot only when one has not already been supplied.
             if not isinstance(source_files, Mapping) or not source_files:
                 provider = self.source_provider
-
                 if provider is None:
                     raise DeepSearchSourceError(
-                        "No source files were supplied and no source "
-                        "provider is configured."
+                        "No source files were supplied and no source provider "
+                        "is configured."
                     )
 
                 if inspect.iscoroutinefunction(provider):
                     acquired = await provider(dict(state))
                 else:
-                    # Do not block the application's event loop for
-                    # custom synchronous providers.
-                    acquired = await asyncio.to_thread(
-                        provider,
-                        dict(state),
-                    )
-
-                    # Handle a synchronous wrapper returning an awaitable.
+                    acquired = await asyncio.to_thread(provider, dict(state))
                     if inspect.isawaitable(acquired):
                         acquired = await acquired
 
@@ -1548,7 +1664,6 @@ class DeepSearchStage:
                     )
 
                 state["source_files"] = acquired
-
                 logger.info(
                     "deep_search_source_acquisition_completed",
                     extra={
@@ -1559,20 +1674,32 @@ class DeepSearchStage:
                     },
                 )
 
-            # Source is ready before the synchronous LangGraph workflow
-            # runs in a worker thread. No async Qdrant operation occurs
-            # inside that worker thread.
-            result_value = await asyncio.to_thread(
-                self.workflow.run,
-                state,
+            logger.info(
+                "deep_search_langgraph_stage_invocation_started",
+                extra={
+                    "request_id": request_id,
+                    "repo_name": repo_name,
+                    "collection_name": collection_name,
+                },
             )
 
+            result_value = await asyncio.to_thread(self.workflow.run, state)
             if not isinstance(result_value, Mapping):
                 raise TypeError(
                     "Deep Search workflow returned a non-mapping result."
                 )
 
             result = dict(result_value)
+            logger.info(
+                "deep_search_langgraph_stage_invocation_completed",
+                extra={
+                    "request_id": request_id,
+                    "status": result.get("status"),
+                    "diagnostic_code": result.get("diagnostic_code"),
+                    "rounds": result.get("rounds", 0),
+                    "diagnosis_present": bool(result.get("diagnosis")),
+                },
+            )
 
         except DeepSearchSourceError as exc:
             logger.warning(
@@ -1584,7 +1711,6 @@ class DeepSearchStage:
                     "error": str(exc),
                 },
             )
-
             result = {
                 "status": STATUS_UNAVAILABLE,
                 "intent": INTENT_FIX_BUG,
@@ -1598,9 +1724,7 @@ class DeepSearchStage:
                 "missing_targets": [],
                 "rounds": 0,
                 "reason": str(exc),
-                "diagnostic_code": (
-                    "DEEP_SEARCH_SOURCE_ACQUISITION_FAILED"
-                ),
+                "diagnostic_code": "DEEP_SEARCH_SOURCE_ACQUISITION_FAILED",
             }
 
         except Exception:
@@ -1612,7 +1736,6 @@ class DeepSearchStage:
                     "collection_name": collection_name,
                 },
             )
-
             result = {
                 "status": STATUS_UNAVAILABLE,
                 "intent": INTENT_FIX_BUG,
@@ -1626,24 +1749,14 @@ class DeepSearchStage:
                 "missing_targets": [],
                 "rounds": 0,
                 "reason": (
-                    "Deep Search stage execution failed. "
-                    "Inspect the server traceback using the request ID."
+                    "Deep Search stage execution failed. Inspect the server "
+                    "traceback using the request ID."
                 ),
                 "diagnostic_code": "DEEP_SEARCH_STAGE_EXCEPTION",
             }
 
-        self._set_context_value(
-            context,
-            "deep_search_result",
-            result,
-        )
-
-        # Preserve the existing Deep Search early-exit contract.
-        self._set_context_value(
-            context,
-            "early_exit",
-            "DEEP_SEARCH_COMPLETE",
-        )
+        self._set_context_value(context, "deep_search_result", result)
+        self._set_context_value(context, "early_exit", "DEEP_SEARCH_COMPLETE")
 
         logger.info(
             "deep_search_stage_execution_completed",
