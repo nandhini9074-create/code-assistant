@@ -483,6 +483,8 @@ class ResponseGenerationStage:
 
                 ambiguous_candidates=[],
 
+                root_cause_analysis=getattr(context, "deep_search_result", None),
+
             )
 
             return
@@ -910,6 +912,8 @@ class ResponseGenerationStage:
             early_exit=None,
 
             ambiguous_candidates=[],
+
+            root_cause_analysis=getattr(context, "deep_search_result", None),
 
         )
 

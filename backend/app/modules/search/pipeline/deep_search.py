@@ -23,6 +23,9 @@ from typing import Any, Callable, Optional, TypedDict
 
 from langgraph.graph import END, START, StateGraph
 
+from app.modules.search.domain.search_domain import (
+    RetrievedChunk,
+)
 from app.modules.search.pipeline.dependency_graph import (
     build_dependency_graph,
 )
@@ -1757,6 +1760,91 @@ class DeepSearchStage:
 
         self._set_context_value(context, "deep_search_result", result)
         self._set_context_value(context, "early_exit", "DEEP_SEARCH_COMPLETE")
+
+        raw_chunks = result.get("retrieved_chunks") or []
+        existing_chunks = list(
+            self._context_value(context, "retrieved_chunks") or []
+        )
+        existing_hashes = {
+            getattr(c, "chunk_hash", "")
+            or f"{getattr(c, 'file_path', '')}:{getattr(c, 'content', '')[:50]}"
+            for c in existing_chunks
+        }
+        converted_chunks: list[RetrievedChunk] = list(existing_chunks)
+
+        for c in raw_chunks:
+            if isinstance(c, RetrievedChunk):
+                h = c.chunk_hash or f"{c.file_path}:{c.content[:50]}"
+                if h not in existing_hashes:
+                    existing_hashes.add(h)
+                    converted_chunks.append(c)
+            elif isinstance(c, Mapping):
+                fp = str(
+                    c.get("file_path") or c.get("path") or ""
+                ).replace("\\", "/")
+                content = str(
+                    c.get("content") or c.get("code") or c.get("text") or ""
+                )
+                score = float(c.get("score") or 0.0)
+                meta = dict(c.get("metadata") or {})
+                if "file_path" not in meta and fp:
+                    meta["file_path"] = fp
+                line_start = (
+                    c.get("line_start")
+                    or c.get("start_line")
+                    or meta.get("start_line")
+                )
+                line_end = (
+                    c.get("line_end")
+                    or c.get("end_line")
+                    or meta.get("end_line")
+                )
+                if line_start is not None and "start_line" not in meta:
+                    meta["start_line"] = line_start
+                if line_end is not None and "end_line" not in meta:
+                    meta["end_line"] = line_end
+                h = str(c.get("chunk_hash") or f"{fp}:{line_start}-{line_end}")
+                if h not in existing_hashes:
+                    existing_hashes.add(h)
+                    converted_chunks.append(
+                        RetrievedChunk(
+                            chunk_hash=h,
+                            file_path=fp,
+                            content=content,
+                            score=score,
+                            metadata=meta,
+                        )
+                    )
+
+        # If no chunks but evidence quotes were found, convert evidence to chunks
+        if not converted_chunks and result.get("evidence"):
+            for ev in result["evidence"]:
+                if isinstance(ev, Mapping) and ev.get("quote"):
+                    fp = str(ev.get("path") or "").replace("\\", "/")
+                    content = str(ev.get("quote") or "")
+                    line_start = ev.get("line_start")
+                    line_end = ev.get("line_end")
+                    meta = {
+                        "file_path": fp,
+                        "start_line": line_start,
+                        "end_line": line_end,
+                        "evidence_claim": ev.get("claim"),
+                    }
+                    h = f"{fp}:{line_start}-{line_end}:{content[:30]}"
+                    if h not in existing_hashes:
+                        existing_hashes.add(h)
+                        converted_chunks.append(
+                            RetrievedChunk(
+                                chunk_hash=h,
+                                file_path=fp,
+                                content=content,
+                                score=1.0,
+                                metadata=meta,
+                            )
+                        )
+
+        if converted_chunks:
+            self._set_context_value(context, "retrieved_chunks", converted_chunks)
 
         logger.info(
             "deep_search_stage_execution_completed",

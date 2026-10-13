@@ -153,6 +153,17 @@ class FixBugAnalyzer(BaseAnalyzer):
                 f"{contract_fact_str}\n\n{repository_context}"
             )
 
+        deep_search_result = getattr(context, "deep_search_result", None)
+        if isinstance(deep_search_result, dict):
+            diagnosis = deep_search_result.get("diagnosis")
+            if diagnosis and isinstance(diagnosis, str) and diagnosis.strip():
+                ds_str = (
+                    f"[DEEP SEARCH INVESTIGATION DIAGNOSIS]:\n"
+                    f"{diagnosis.strip()}"
+                )
+                if ds_str not in repository_context:
+                    repository_context = f"{ds_str}\n\n{repository_context}"
+
         user_prompt = FIX_BUG_USER_PROMPT.format(
             context=repository_context,
             query=query_text,
