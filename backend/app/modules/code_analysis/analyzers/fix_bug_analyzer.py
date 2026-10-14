@@ -16,6 +16,8 @@ Deep Search orchestration belongs to the search pipeline, not this analyzer.
 
 from __future__ import annotations
 
+import re
+
 from app.core.logging import get_logger
 
 from app.modules.code_analysis.analyzers.base_analyzer import BaseAnalyzer
@@ -309,7 +311,7 @@ class FixBugAnalyzer(BaseAnalyzer):
                         "but the available contract evidence indicates "
                         "a field-mapping mismatch or wrong field reference. "
                         "Correct the verified caller/schema mapping instead "
-                        "of adding or modifying a model field."
+                        "of modifying the database model or adding a model field."
                     )
 
                     analysis["evidence_summary"] = (
@@ -514,6 +516,34 @@ def _has_concrete_evidence(
         logger.warning(
             "fix_bug_patch_target_not_in_retrieved_evidence",
             target_path=target_path,
+        )
+        return False
+
+    # Evidence summary must reference the target file, symbol, or relevant query terms
+    evidence_lower = evidence_summary.lower()
+    has_file_ref = (
+        target_path in evidence_lower
+        or target_path.rsplit("/", 1)[-1].rsplit(".", 1)[0] in evidence_lower
+    )
+    has_symbol_ref = any(
+        str(chunk.metadata.get(key) or "").strip().lower() in evidence_lower
+        for chunk in matching_chunks
+        for key in ("function_name", "class_name", "symbol")
+        if str(chunk.metadata.get(key) or "").strip()
+    )
+    query_terms = {
+        t.lower()
+        for t in re.findall(r"[A-Za-z0-9_]+", getattr(context, "query", "") or "")
+    } - {
+        "fix", "bug", "the", "a", "an", "in", "on", "at", "to", "for",
+        "with", "error", "issue", "problem", "please", "wrong", "broken",
+    }
+    has_query_ref = any(t in evidence_lower for t in query_terms if len(t) > 2)
+
+    if not (has_file_ref or has_symbol_ref or has_query_ref):
+        logger.warning(
+            "fix_bug_evidence_summary_lacks_concrete_reference",
+            evidence_summary=evidence_summary,
         )
         return False
 

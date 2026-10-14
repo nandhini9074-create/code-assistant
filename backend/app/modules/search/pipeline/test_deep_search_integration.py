@@ -1,4 +1,4 @@
-﻿"""
+"""
 app/modules/search/pipeline/test_deep_search_integration.py
 
 Integration tests for the complete Deep Search workflow in the FIX_BUG
@@ -720,7 +720,7 @@ class TestDeepSearchStageAdapter:
         async def run():
             await stage.execute(ctx)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         assert ctx.early_exit == "DEEP_SEARCH_COMPLETE"
         assert isinstance(ctx.deep_search_result, dict)
@@ -737,7 +737,7 @@ class TestDeepSearchStageAdapter:
         async def run():
             await stage.execute(ctx)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         # early_exit must not be set to DEEP_SEARCH_COMPLETE.
         assert ctx.early_exit != "DEEP_SEARCH_COMPLETE"
@@ -750,7 +750,7 @@ class TestDeepSearchStageAdapter:
         async def run():
             await stage.execute(ctx)
 
-        asyncio.get_event_loop().run_until_complete(run())
+        asyncio.run(run())
 
         assert ctx.early_exit != "DEEP_SEARCH_COMPLETE"
         assert ctx.deep_search_result is None
