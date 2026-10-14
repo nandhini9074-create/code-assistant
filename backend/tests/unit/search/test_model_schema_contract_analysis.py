@@ -359,3 +359,115 @@ async def test_full_pipeline_flow_action_and_triage_integration():
     assert context.triage_result is not None
     assert context.triage_result["issue_summary"] == "Fix missing phone_number on Lead schema"
     assert context.triage_result["is_safe_to_apply"] is True
+
+
+def test_typescript_compiler_diagnostic_not_applicable():
+    """
+    Compiler diagnostics like TS2564 strictPropertyInitialization should NOT
+    be treated as database-model-to-schema contract mismatches.
+    """
+    chunk = _chunk(
+        "dto_1",
+        "src/enrollment/dto/enrol-card.dto.ts",
+        "export class EnrollCardDto {\n  customerId: number;\n}\n",
+        "EnrollCardDto",
+    )
+    query = (
+        "Property 'customerId' has no initializer and is not definitely assigned "
+        "in the constructor.ts(2564) (property) EnrollCardDto.customerId: number"
+    )
+    context = SearchContext(
+        query=query,
+        intent=IntentType.FIX_BUG,
+        retrieved_chunks=[chunk],
+    )
+
+    analyzer = ModelSchemaContractAnalyzer()
+    result = analyzer.analyze(context)
+
+    assert result.is_applicable is False
+    assert result.field_confirmed_absent is False
+
+
+def test_inspect_model_definitions_multi_chunk_typescript_dto():
+    """
+    When AST chunking breaks a TypeScript class header and its decorated properties
+    into separate chunks from the same file, inspect_model_definitions reconstructs
+    and extracts the class and all its fields.
+    """
+    from app.modules.search.pipeline.model_schema_contract_analysis import (
+        inspect_model_definitions,
+    )
+
+    chunk_header = RetrievedChunk(
+        chunk_hash="c_head",
+        file_path="src/enrollment/dto/enrol-card.dto.ts",
+        content="export class EnrollCardDto {",
+        score=0.9,
+        metadata={"start_line": 49, "end_line": 49},
+    )
+    chunk_prop1 = RetrievedChunk(
+        chunk_hash="c_p1",
+        file_path="src/enrollment/dto/enrol-card.dto.ts",
+        content="@IsNotEmpty()\n@IsNumber()\ncustomerId: number;",
+        score=0.88,
+        metadata={"start_line": 50, "end_line": 52},
+    )
+    chunk_prop2 = RetrievedChunk(
+        chunk_hash="c_p2",
+        file_path="src/enrollment/dto/enrol-card.dto.ts",
+        content="@IsNotEmpty()\n@IsString()\ncardNumber: string;",
+        score=0.85,
+        metadata={"start_line": 53, "end_line": 55},
+    )
+
+    models = inspect_model_definitions(
+        [chunk_header, chunk_prop1, chunk_prop2],
+        target_class="EnrollCardDto",
+    )
+
+    assert len(models) == 1
+    model = models[0]
+    assert model.class_name == "EnrollCardDto"
+    assert "customerId" in model.fields
+    assert model.fields["customerId"].field_type == "number"
+    assert "cardNumber" in model.fields
+    assert model.fields["cardNumber"].field_type == "string"
+
+
+def test_typescript_definite_assignment_assertion():
+    """
+    Verify TypeScript properties with definite assignment assertion '!'
+    or optional modifier '?' are parsed correctly.
+    """
+    from app.modules.search.pipeline.model_schema_contract_analysis import (
+        inspect_model_definitions,
+    )
+
+    code = """
+export class UnenrollCardItemDto {
+    @IsNotEmpty()
+    @IsString()
+    mimojoCardId!: string;
+
+    @IsOptional()
+    reason?: string;
+}
+"""
+    chunk = RetrievedChunk(
+        chunk_hash="c_unenroll",
+        file_path="src/enrollment/dto/unenroll-card.dto.ts",
+        content=code,
+        score=0.9,
+        metadata={"start_line": 1, "end_line": 10},
+    )
+
+    models = inspect_model_definitions([chunk], target_class="UnenrollCardItemDto")
+
+    assert len(models) == 1
+    m = models[0]
+    assert "mimojoCardId" in m.fields
+    assert m.fields["mimojoCardId"].field_type == "string"
+    assert "reason" in m.fields
+    assert m.fields["reason"].field_type == "string"
+

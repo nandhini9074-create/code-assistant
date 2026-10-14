@@ -285,43 +285,63 @@ def _parse_ts_js_class_or_interface(
     """Parse TypeScript / JavaScript classes, interfaces, and type declarations."""
     models: list[ModelDefinition] = []
 
+    # If code has unclosed braces (e.g. chunk was truncated), balance them for block matching
+    net_open = code.count("{") - code.count("}")
+    normalized_code = code + ("\n}" * net_open) if net_open > 0 else code
+
     pattern = re.compile(
         r"(?:export\s+)?(?:interface|class|type)\s+([A-Za-z_][A-Za-z0-9_]*)"
         r"(?:\s+extends\s+[^{]+|\s+implements\s+[^{]+|\s*=\s*)?\s*\{([^}]*)\}",
         re.MULTILINE | re.DOTALL,
     )
 
-    for match in pattern.finditer(code):
-        class_name = match.group(1)
-        body = match.group(2)
+    matches = list(pattern.finditer(normalized_code))
+    parsed_items: list[tuple[str, str]] = []
+
+    if matches:
+        parsed_items = [(m.group(1), m.group(2)) for m in matches]
+    else:
+        # Check for open class/interface declaration (e.g. `export class Foo` without closed braces)
+        open_header_match = re.search(
+            r"(?:export\s+)?(?:interface|class)\s+([A-Za-z_][A-Za-z0-9_]*)",
+            code,
+        )
+        if open_header_match:
+            c_name = open_header_match.group(1)
+            rest = code[open_header_match.end():]
+            parsed_items = [(c_name, rest)]
+
+    for class_name, body in parsed_items:
         fields_dict: dict[str, ModelField] = {}
         methods_list: list[str] = []
 
         for line in body.splitlines():
             line_str = line.strip()
-            if not line_str or line_str.startswith("//") or line_str.startswith("/*"):
+            if not line_str or line_str.startswith("//") or line_str.startswith("/*") or line_str.startswith("*") or line_str.startswith("@"):
                 continue
 
-            # Property: `name: string;`, `phone?: string;`, `id: number,`
+            # Property: `customerId: number;`, `public readonly phone?: string;`, `id!: number`
             prop_match = re.match(
-                r"^([A-Za-z_][A-Za-z0-9_]*)\s*\??\s*:\s*([^;,]+)",
+                r"^(?:(?:public|private|protected|readonly|static)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*[!?]?\s*:\s*([^;,]+)",
                 line_str,
             )
             if prop_match:
                 fname = prop_match.group(1)
                 ftype = prop_match.group(2).strip()
-                fields_dict[fname] = ModelField(name=fname, field_type=ftype)
-                continue
+                if fname not in ("constructor", "return", "get", "set", "function", "export", "import"):
+                    fields_dict[fname] = ModelField(name=fname, field_type=ftype)
+                    continue
 
             # Class property assignment: `name = 'test';`
             assign_match = re.match(
-                r"^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*",
+                r"^(?:(?:public|private|protected|readonly|static)\s+)*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*",
                 line_str,
             )
             if assign_match:
                 fname = assign_match.group(1)
-                fields_dict[fname] = ModelField(name=fname)
-                continue
+                if fname not in ("constructor", "return", "export", "import"):
+                    fields_dict[fname] = ModelField(name=fname)
+                    continue
 
             # Method or getter: `get fullName()`, `login()`
             getter_match = re.match(
@@ -360,26 +380,52 @@ def inspect_model_definitions(
     """Inspect retrieved chunks to extract concrete model/class definitions."""
     definitions: list[ModelDefinition] = []
 
+    # Group chunks by file_path to handle split / AST-chunked classes
+    chunks_by_file: dict[str, list[RetrievedChunk]] = {}
     for chunk in chunks:
-        file_path = chunk.file_path or ""
-        content = chunk.content or ""
+        fp = chunk.file_path or ""
+        if fp not in chunks_by_file:
+            chunks_by_file[fp] = []
+        chunks_by_file[fp].append(chunk)
+
+    for file_path, file_chunks in chunks_by_file.items():
         fp_lower = file_path.lower()
 
+        # Sort chunks by start_line if available
+        sorted_chunks = sorted(
+            file_chunks,
+            key=lambda c: (
+                c.metadata.get("start_line")
+                if isinstance(c.metadata, dict) and isinstance(c.metadata.get("start_line"), int)
+                else 0
+            ),
+        )
+
+        # Combined content for all chunks in this file
+        combined_content = "\n\n".join(c.content for c in sorted_chunks if c.content)
+
         # Parse Python files or python-like snippets
-        if fp_lower.endswith((".py", ".pyi")) or "class " in content or "def " in content:
-            found = _parse_python_class_ast(content, file_path)
+        if fp_lower.endswith((".py", ".pyi")) or "class " in combined_content or "def " in combined_content:
+            found = _parse_python_class_ast(combined_content, file_path)
             for m in found:
                 if not target_class or m.class_name.lower() == target_class.lower():
                     definitions.append(m)
 
         # Parse TS/JS files
-        if fp_lower.endswith((".ts", ".tsx", ".js", ".jsx")) or "interface " in content:
-            found = _parse_ts_js_class_or_interface(content, file_path)
+        if fp_lower.endswith((".ts", ".tsx", ".js", ".jsx")) or "interface " in combined_content:
+            found = _parse_ts_js_class_or_interface(combined_content, file_path)
             for m in found:
                 if not target_class or m.class_name.lower() == target_class.lower():
                     definitions.append(m)
 
-    return definitions
+    # De-duplicate definitions by (class_name.lower(), normalized file_path), keeping the definition with most fields
+    deduped: dict[tuple[str, str], ModelDefinition] = {}
+    for d in definitions:
+        key = (d.class_name.lower(), d.file_path.replace("\\", "/").lower())
+        if key not in deduped or len(d.fields) > len(deduped[key].fields):
+            deduped[key] = d
+
+    return list(deduped.values())
 
 
 # ---------------------------------------------------------------------------
@@ -451,6 +497,32 @@ def inspect_schema_references(
 # Query & Code Signal Extraction
 # ---------------------------------------------------------------------------
 
+def is_compiler_or_syntax_error(query: str) -> bool:
+    """
+    Check if query is a compiler, linter, or typecheck diagnostic
+    (e.g., TS2564 strict property initialization, syntax error, etc.)
+    rather than a database model-to-schema contract mismatch.
+    """
+    patterns = [
+        r"ts\(\d+\)",
+        r"error\s+ts\d+",
+        r"has no initializer",
+        r"not definitely assigned",
+        r"cannot find name",
+        r"is not assignable to",
+        r"implicitly has an 'any' type",
+        r"syntaxerror",
+        r"referenceerror",
+        r"compilation\s+error",
+        r"cannot find module",
+        r"parsing error",
+        r"unexpected token",
+        r"cannot read propert(?:y|ies) of (?:undefined|null)",
+    ]
+    query_lower = query.lower()
+    return any(re.search(pat, query_lower) for pat in patterns)
+
+
 def extract_suspicious_field_and_class(
     query: str,
     chunks: list[RetrievedChunk],
@@ -459,6 +531,9 @@ def extract_suspicious_field_and_class(
     Extract the candidate entity/class name and suspicious field name
     from the bug query and retrieved code context.
     """
+    if is_compiler_or_syntax_error(query):
+        return None, None
+
     target_class: str | None = None
     suspicious_field: str | None = None
 
@@ -517,6 +592,10 @@ def extract_suspicious_field_and_class(
         "fix", "the", "a", "an", "in", "on", "at", "to", "for", "with",
         "error", "bug", "issue", "fail", "failure", "broken", "model",
         "schema", "dto", "class", "field", "property", "attribute",
+        "has", "no", "is", "not", "and", "or", "of", "initializer",
+        "definitely", "assigned", "constructor", "ts", "type", "types",
+        "number", "string", "boolean", "any", "void", "undefined", "null",
+        "export", "import", "interface", "function",
     }
     candidate_field_tokens = [
         t for t in tokens
@@ -637,6 +716,18 @@ class ModelSchemaContractAnalyzer:
 
         chunks = context.retrieved_chunks or []
         query = context.query or ""
+
+        # Step 0: Ignore compiler / linter / typecheck diagnostics
+        if is_compiler_or_syntax_error(query):
+            return ContractAnalysisResult(
+                is_applicable=False,
+                issue_type=ContractIssueType.INSUFFICIENT_EVIDENCE,
+                target_class=None,
+                suspicious_field=None,
+                model_definition=None,
+                field_confirmed_absent=False,
+                evidence_summary="Query represents a compiler or syntax diagnostic, not a model-schema contract mismatch.",
+            )
 
         # Step 1: Identify suspicious field and object/class
         target_class, suspicious_field = extract_suspicious_field_and_class(query, chunks)

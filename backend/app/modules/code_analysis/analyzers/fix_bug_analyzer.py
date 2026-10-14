@@ -15,6 +15,8 @@ Deep Search orchestration belongs to the search pipeline, not this analyzer.
 
 from __future__ import annotations
 
+import re
+
 from app.core.logging import get_logger
 
 from app.modules.code_analysis.analyzers.base_analyzer import BaseAnalyzer
