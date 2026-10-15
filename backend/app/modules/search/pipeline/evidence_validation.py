@@ -71,6 +71,18 @@ class EvidenceValidationStage:
             self._apply_unavailable_fallback(context, analysis)
             return
 
+        if isinstance(analysis.get("vulnerability_scan_report"), dict):
+            context.validated = True
+            context.validation_status = "scanner_report"
+            context.validation_errors = []
+            context.validation_retries = 0
+            logger.info(
+                "vulnerability_scan_report_accepted",
+                repo_id=context.repo_id,
+                findings=analysis.get("vulnerability_count", 0),
+            )
+            return
+
         retry_count = 0
 
         while True:

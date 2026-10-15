@@ -87,6 +87,21 @@ class ActionAnalysisStage:
         analysis = context.analysis_result
         intent = context.intent
 
+        if isinstance(analysis.get("vulnerability_scan_report"), dict):
+            context.code_change = None
+            context.action_analysis = {
+                "action_status": "SCAN_COMPLETED",
+                "action_available": False,
+                "action_type": "SECURITY_ASSESSMENT",
+                "proposed_change": "No repository files were modified.",
+                "code_change": None,
+                "affected_target": {"file_path": None},
+                "rationale": "Findings are reported with scanner evidence and remediation guidance.",
+                "risk_level": "unknown",
+                "is_applied": False,
+            }
+            return
+
         # RETRIEVE does not require change/action analysis.
         if intent == IntentType.RETRIEVE:
             context.action_analysis = None

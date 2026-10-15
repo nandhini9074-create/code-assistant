@@ -139,7 +139,9 @@ def get_code_analysis_service(
 ):
     from app.modules.code_analysis.analyzers.add_feature_analyzer import AddFeatureAnalyzer
     from app.modules.code_analysis.analyzers.fix_bug_analyzer import FixBugAnalyzer
-    from app.modules.code_analysis.analyzers.fix_vulnerability_analyzer import FixVulnerabilityAnalyzer
+    from app.modules.code_analysis.analyzers.multi_language_vulnerability_analyzer import (
+        MultiLanguageVulnerabilityAnalyzer,
+    )
     from app.modules.code_analysis.analyzers.optimize_analyzer import OptimizeAnalyzer
     from app.modules.code_analysis.analyzers.refactor_analyzer import RefactorAnalyzer
     from app.modules.code_analysis.service.code_analysis_service import CodeAnalysisService
@@ -150,7 +152,7 @@ def get_code_analysis_service(
     return CodeAnalysisService(
         add_feature_analyzer=AddFeatureAnalyzer(llm_service),
         fix_bug_analyzer=FixBugAnalyzer(llm_service),
-        fix_vulnerability_analyzer=FixVulnerabilityAnalyzer(),
+        fix_vulnerability_analyzer=MultiLanguageVulnerabilityAnalyzer(),
         optimize_analyzer=OptimizeAnalyzer(llm_service),
         refactor_analyzer=RefactorAnalyzer(llm_service),
         evidence_validator=EvidenceValidator(),
@@ -239,8 +241,8 @@ def get_search_service(
 
     # ---------------------------------------------------------------
     # Step 8: Code analysis
-    #   FIX_VULNERABILITY is handled by FixVulnerabilityAnalyzer
-    #   (deterministic, no LLM) registered in CodeAnalysisService.
+    #   FIX_VULNERABILITY is handled by MultiLanguageVulnerabilityAnalyzer
+    #   registered in CodeAnalysisService.
     # ---------------------------------------------------------------
     code_analysis_stage = CodeAnalysisStage(
         code_analysis_service

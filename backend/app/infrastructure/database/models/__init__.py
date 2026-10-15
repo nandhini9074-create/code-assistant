@@ -12,6 +12,10 @@ from app.infrastructure.database.models.file_hash import FileHash
 from app.infrastructure.database.models.ingestion_job import IngestionJob
 from app.infrastructure.database.models.repository import Repository
 from app.infrastructure.database.models.webhook_event import WebhookEvent
+from app.infrastructure.database.models.vulnerability_registry import (
+    VulnerabilityScannerCatalog,
+    VulnerabilityEcosystemRegistry,
+)
 
 __all__ = [
     "Repository",
@@ -19,4 +23,7 @@ __all__ = [
     "FileHash",
     "ChunkRegistry",
     "WebhookEvent",
+    "VulnerabilityScannerCatalog",
+    "VulnerabilityEcosystemRegistry",
 ]
+

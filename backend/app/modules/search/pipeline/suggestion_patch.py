@@ -34,6 +34,18 @@ class SuggestionPatchStage:
             )
             return
 
+        if isinstance(
+            (context.analysis_result or {}).get("vulnerability_scan_report"),
+            dict,
+        ):
+            context.suggested_patch = None
+            context.patch_validation = {
+                "status": "not_run",
+                "message": "The security scan reports findings; it does not generate or apply repository changes.",
+                "repository_modified": False,
+            }
+            return
+
         if (
             context.intent in (None, IntentType.RETRIEVE)
             or getattr(context, "ambiguous", False)

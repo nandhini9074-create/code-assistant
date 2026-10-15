@@ -15,8 +15,8 @@ from app.modules.code_analysis.analyzers.add_feature_analyzer import (
 from app.modules.code_analysis.analyzers.fix_bug_analyzer import (
     FixBugAnalyzer,
 )
-from app.modules.code_analysis.analyzers.fix_vulnerability_analyzer import (
-    FixVulnerabilityAnalyzer,
+from app.modules.code_analysis.analyzers.multi_language_vulnerability_analyzer import (
+    MultiLanguageVulnerabilityAnalyzer,
 )
 from app.modules.code_analysis.analyzers.optimize_analyzer import (
     OptimizeAnalyzer,
@@ -46,7 +46,7 @@ class CodeAnalysisService:
         self,
         add_feature_analyzer: AddFeatureAnalyzer,
         fix_bug_analyzer: FixBugAnalyzer,
-        fix_vulnerability_analyzer: FixVulnerabilityAnalyzer,
+        fix_vulnerability_analyzer: MultiLanguageVulnerabilityAnalyzer,
         optimize_analyzer: OptimizeAnalyzer,
         refactor_analyzer: RefactorAnalyzer,
         evidence_validator: EvidenceValidator,

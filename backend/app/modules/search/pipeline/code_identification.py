@@ -75,6 +75,12 @@ class CodeIdentificationStage:
             return
 
         if not context.retrieved_chunks:
+            if context.intent == IntentType.FIX_VULNERABILITY:
+                context.primary_chunk = None
+                context.target_symbol = None
+                context.identified_elements = []
+                return
+
             context.early_exit = "EARLY_EXIT_C"
             context.early_exit_message = (
                 "Could not identify specific code elements because "

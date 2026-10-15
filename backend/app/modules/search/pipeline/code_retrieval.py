@@ -60,6 +60,15 @@ class CodeRetrievalStage:
             )
             return
 
+        if context.intent == IntentType.FIX_VULNERABILITY:
+            context.retrieved_chunks = []
+            logger.info(
+                "vulnerability_scan_source_selected",
+                repo_name=context.repo_name,
+                collection=context.qdrant_collection,
+            )
+            return
+
         if limit <= 0:
             raise ValueError(
                 "Code retrieval limit must be greater than zero."

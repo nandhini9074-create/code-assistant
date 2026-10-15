@@ -434,12 +434,20 @@ class ResponseGenerationStage:
         """
         Format the final structured response for FIX_VULNERABILITY intent.
 
-        All vulnerability data comes from context.analysis_result, which is
-        populated by FixVulnerabilityAnalyzer (deterministic, no LLM).
+        Vulnerability data comes from the configured repository scanner report.
         """
         import difflib
 
         analysis = context.analysis_result or {}
+        scan_report = analysis.get("vulnerability_scan_report")
+        if isinstance(scan_report, dict):
+            return self._build_multi_language_vulnerability_response(
+                context=context,
+                intent_str=intent_str,
+                repo_info=repo_info,
+                report=scan_report,
+            )
+
         audit_status = analysis.get("analysis_status")
         confidence = analysis.get("confidence", "low")
 
@@ -448,12 +456,18 @@ class ResponseGenerationStage:
         # ------------------------------------------------------------------
         if audit_status == "UNAVAILABLE":
             err = analysis.get("error") or "npm audit could not be completed."
+            is_multi_language = analysis.get("scanner") == "multi_language"
+            unavailable_title = (
+                "The multi-language security scan could not be completed."
+                if is_multi_language
+                else "The npm dependency audit could not be completed."
+            )
             formatted = (
                 f"Query\n\n{context.query}\n\n"
                 f"Fix Vulnerability\nConfidence: low\n\n"
-                f"Target\n\npackage.json\n\n"
+                f"Target\n\n{context.repo_name or 'repository'}\n\n"
                 f"Verification\n\n"
-                f"The npm dependency audit could not be completed.\n\n"
+                f"{unavailable_title}\n\n"
                 f"Error: {err}\n\n"
                 f"Suggested Code\n\n"
                 f"No code change was generated because the vulnerability status "
@@ -462,10 +476,10 @@ class ResponseGenerationStage:
             return SearchResponse(
                 intent=intent_str,
                 repository=repo_info,
-                target={"file_path": "package.json", "symbol": None},
+                target={"file_path": None, "symbol": None},
                 requirement=context.query,
                 current_behavior=None,
-                suggestion="The npm dependency audit could not be completed. No remediation was generated.",
+                suggestion=f"{unavailable_title} No remediation was generated.",
                 proposed_change=None,
                 code_change=None,
                 suggested_code=None,
@@ -672,6 +686,103 @@ class ResponseGenerationStage:
             },
             formatted_output=formatted,
             confidence=confidence,
+            early_exit=None,
+            ambiguous_candidates=[],
+        )
+
+    def _build_multi_language_vulnerability_response(
+        self,
+        context: SearchContext,
+        intent_str: str,
+        repo_info: dict,
+        report: dict[str, Any],
+    ) -> SearchResponse:
+        findings = report.get("findings") or []
+        coverage = report.get("coverage") or []
+        severity_counts = report.get("severity_counts") or {}
+        status = str(report.get("overall_status") or "UNKNOWN")
+        total_findings = int(report.get("total_findings") or len(findings))
+
+        lines = [
+            f"Security Scan: {status}",
+            f"Projects scanned: {report.get('total_projects', 0)}",
+            f"Findings: {total_findings}",
+        ]
+        if severity_counts:
+            lines.append(
+                "Severity: "
+                + ", ".join(
+                    f"{severity}: {count}"
+                    for severity, count in sorted(severity_counts.items())
+                )
+            )
+
+        lines.extend(["", "Scan coverage"])
+        for item in coverage:
+            lines.append(
+                "- {project} | {ecosystem} | {scan_type}: {status}{reason}".format(
+                    project=item.get("project_path", "."),
+                    ecosystem=item.get("ecosystem", "unknown"),
+                    scan_type=item.get("scan_type", "unknown"),
+                    status=item.get("status", "unknown"),
+                    reason=(f" ({item['reason']})" if item.get("reason") else ""),
+                )
+            )
+
+        lines.extend(["", "Findings"])
+        if not findings:
+            lines.append("No vulnerabilities were reported by the completed scans.")
+        else:
+            for finding in findings[:50]:
+                location = finding.get("affected_file") or finding.get("package_name") or "repository"
+                if finding.get("line_number"):
+                    location = f"{location}:{finding['line_number']}"
+                lines.append(
+                    "- [{severity}] {title} ({ecosystem}, {location})".format(
+                        severity=str(finding.get("severity", "unknown")).upper(),
+                        title=finding.get("title", "Untitled finding"),
+                        ecosystem=finding.get("ecosystem", "unknown"),
+                        location=location,
+                    )
+                )
+                if finding.get("evidence"):
+                    lines.append(f"  Evidence: {finding['evidence']}")
+                if finding.get("remediation"):
+                    lines.append(f"  Remediation: {finding['remediation']}")
+            if len(findings) > 50:
+                lines.append(
+                    f"- {len(findings) - 50} additional findings are included in the structured report."
+                )
+
+        lines.extend(["", "No repository files were modified."])
+        summary = (
+            f"Security scan status: {status}. "
+            f"{total_findings} finding(s) across "
+            f"{report.get('total_projects', 0)} project(s)."
+        )
+        return SearchResponse(
+            intent=intent_str,
+            repository=repo_info,
+            target={"file_path": None, "symbol": None},
+            requirement=context.query,
+            current_behavior=summary,
+            suggestion=(
+                "Review the findings and remediation guidance."
+                if findings
+                else "No vulnerabilities were reported by the completed scans."
+            ),
+            proposed_change="No repository files were modified.",
+            code_change=None,
+            suggested_code=None,
+            suggested_patch=None,
+            patch_validation={
+                "status": "not_run",
+                "message": "The security scan did not generate or apply a patch.",
+                "repository_modified": False,
+            },
+            vulnerability_report=report,
+            formatted_output="\n".join(lines),
+            confidence="medium",
             early_exit=None,
             ambiguous_candidates=[],
         )

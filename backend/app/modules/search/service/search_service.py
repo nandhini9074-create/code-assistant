@@ -11,7 +11,7 @@ Pipeline:
  5. Code Retrieval
  6. Code Identification
  7. Context Building
- 8. Code Analysis  (FIX_VULNERABILITY uses FixVulnerabilityAnalyzer)
+ 8. Code Analysis  (FIX_VULNERABILITY uses the repository scanner)
  9. Evidence Validation
 10. Action Analysis
 11. Suggestion Patch
@@ -132,9 +132,9 @@ class SearchService:
         # CollectionSelectionStage is responsible for mapping
         # repo_name -> Qdrant collection.
         #
-        # FIX_VULNERABILITY is handled by FixVulnerabilityAnalyzer
-        # registered inside CodeAnalysisService — no extra pipeline
-        # stages are needed.
+        # FIX_VULNERABILITY is handled by the multi-language scanner
+        # registered inside CodeAnalysisService. It consumes the
+        # collection selected earlier in this pipeline.
         # ---------------------------------------------------------
 
         self.stages = [
