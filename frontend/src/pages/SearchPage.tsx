@@ -4,6 +4,7 @@ import Typography from '@mui/material/Typography';
 import Button from '@mui/material/Button';
 import ButtonGroup from '@mui/material/ButtonGroup';
 import TextField from '@mui/material/TextField';
+import MenuItem from '@mui/material/MenuItem';
 import InputAdornment from '@mui/material/InputAdornment';
 import Chip from '@mui/material/Chip';
 import CircularProgress from '@mui/material/CircularProgress';
@@ -14,9 +15,8 @@ import CardContent from '@mui/material/CardContent';
 import SearchIcon from '@mui/icons-material/Search';
 import AccountTreeIcon from '@mui/icons-material/AccountTree';
 import FolderZipIcon from '@mui/icons-material/FolderZip';
-import ShieldIcon from '@mui/icons-material/Shield';
 import { searchApi } from '../api/client';
-import type { SearchRequest, SearchResponse, SourceType, SearchHistoryItem } from '../types';
+import type { SearchIntent, SearchRequest, SearchResponse, SourceType, SearchHistoryItem } from '../types';
 import { useToast } from '../context/ToastContext';
 import SearchResult from '../components/SearchResult';
 import PipelineLoader, { PIPELINE_STAGES } from '../components/PipelineLoader';
@@ -29,10 +29,18 @@ const EXAMPLE_QUERIES = [
   'Where is error handling implemented?',
 ];
 
+const SEARCH_INTENTS: { value: SearchIntent; label: string }[] = [
+  { value: 'RETRIEVE', label: 'Search / explain' },
+  { value: 'ADD_FEATURE', label: 'Add feature' },
+  { value: 'FIX_BUG', label: 'Fix bug' },
+  { value: 'FIX_VULNERABILITY', label: 'Fix vulnerability' },
+];
+
 const SearchPage: React.FC = () => {
   const { addToast } = useToast();
 
   const [query, setQuery] = useState('');
+  const [intent, setIntent] = useState<SearchIntent | ''>('');
   const [sourceType, setSourceType] = useState<SourceType>('git');
   const [location, setLocation] = useState('');
   const [loading, setLoading] = useState(false);
@@ -59,11 +67,13 @@ const SearchPage: React.FC = () => {
 
   const handleSearch = useCallback(async (searchQuery = query) => {
     if (!searchQuery.trim()) return addToast('warning', 'Query required', 'Please enter a search query.');
+    if (!intent) return addToast('warning', 'Feature required', 'Please select a feature before submitting.');
     if (!location.trim()) return addToast('warning', 'Source required', 'Please enter a repository URL or ZIP location.');
 
     const request: SearchRequest = {
       source: { type: sourceType, location: location.trim() },
       query: searchQuery.trim(),
+      intent,
     };
 
     clearTimers();
@@ -106,7 +116,7 @@ const SearchPage: React.FC = () => {
       clearTimers();
       setLoading(false);
     }
-  }, [query, sourceType, location, addToast, clearTimers]);
+  }, [query, intent, sourceType, location, addToast, clearTimers]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -138,7 +148,7 @@ const SearchPage: React.FC = () => {
           Search your codebase
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: 2.5 }}>
-          Ask questions in natural language and let CodeLens locate, analyze, and explain the relevant implementation.
+          Ask questions in natural language and let RepoLens locate, analyze, and explain the relevant implementation.
         </Typography>
 
         <ButtonGroup
@@ -183,7 +193,23 @@ const SearchPage: React.FC = () => {
           sx={{ mb: 1.5 }}
         />
 
-        <Box sx={{ display: 'flex', gap: 1, flexDirection: { xs: 'column', md: 'row' } }}>
+        <Box sx={{ display: 'flex', gap: 1, flexDirection: { xs: 'column', md: 'row' }, mb: 1 }}>
+          <TextField
+            id="search-intent"
+            select
+            required
+            label="Feature"
+            value={intent}
+            onChange={(event) => setIntent(event.target.value as SearchIntent | '')}
+            disabled={loading}
+            size="small"
+            sx={{ minWidth: { xs: '100%', md: 220 } }}
+          >
+            <MenuItem value="" disabled>Select a feature</MenuItem>
+            {SEARCH_INTENTS.map((option) => (
+              <MenuItem key={option.value} value={option.value}>{option.label}</MenuItem>
+            ))}
+          </TextField>
           <TextField
             id="search-query"
             fullWidth
@@ -192,7 +218,7 @@ const SearchPage: React.FC = () => {
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={handleKeyDown}
             aria-label="Search query"
-            disabled={loading}
+            disabled={loading || !intent}
             size="small"
             slotProps={{
               input: {
@@ -214,18 +240,6 @@ const SearchPage: React.FC = () => {
             sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 56 }, px: 2, fontWeight: 700, fontSize: '1.1rem' }}
           >
             {loading ? <CircularProgress size={16} color="inherit" /> : '->'}
-          </Button>
-          <Button
-            id="vulnerability-check-submit"
-            variant="outlined"
-            onClick={() => handleSearch('Run vulnerability check')}
-            disabled={loading}
-            title="Check project vulnerabilities"
-            aria-label="Vulnerability check"
-            startIcon={<ShieldIcon />}
-            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 175 } }}
-          >
-            Vulnerability Check
           </Button>
         </Box>
 
@@ -334,7 +348,7 @@ const SearchPage: React.FC = () => {
                 Ready to explore
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ maxWidth: 440 }}>
-                Enter a repository URL and a natural-language question to get started. CodeLens will retrieve relevant code and provide AI-powered analysis.
+                Enter a repository URL and a natural-language question to get started. RepoLens will retrieve relevant code and provide AI-powered analysis.
               </Typography>
             </Box>
           </Box>

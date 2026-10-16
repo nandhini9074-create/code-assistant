@@ -32,15 +32,15 @@ const navSections: { label: string; items: NavItemDef[] }[] = [
   {
     label: 'Explore',
     items: [
-      { to: '/',       icon: <SearchIcon fontSize="small" />,      label: 'Search',       id: 'nav-search' },
+      { to: '/', icon: <SearchIcon fontSize="small" />, label: 'Search', id: 'nav-search' },
     ],
   },
   {
     label: 'Manage',
     items: [
       { to: '/repositories', icon: <AccountTreeIcon fontSize="small" />, label: 'Repositories', id: 'nav-repositories' },
-      { to: '/upload',       icon: <UploadFileIcon fontSize="small" />,  label: 'Upload ZIP',   id: 'nav-upload' },
-      { to: '/jobs',         icon: <WorkHistoryIcon fontSize="small" />, label: 'Jobs',         id: 'nav-jobs' },
+      { to: '/upload', icon: <UploadFileIcon fontSize="small" />, label: 'Upload ZIP', id: 'nav-upload' },
+      { to: '/jobs', icon: <WorkHistoryIcon fontSize="small" />, label: 'Jobs', id: 'nav-jobs' },
     ],
   },
   {
@@ -96,7 +96,7 @@ const Sidebar: React.FC<Props> = ({ width }) => {
         </Box>
         <Box>
           <Typography variant="subtitle1" sx={{ fontWeight: 700, lineHeight: 1.2 }}>
-            CodeLens
+            RepoLens
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.2 }}>
             AI Code Intelligence

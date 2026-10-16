@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from app.core.enums import IntentType
 from app.shared.schemas.base import BaseSchema
 
 
@@ -39,6 +40,7 @@ class SearchRequest(BaseSchema):
 
     source: SearchSource
     query: str = Field(..., min_length=1, max_length=1000)
+    intent: IntentType
 
 
 class QueryUnderstandingResponse(BaseSchema):

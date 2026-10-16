@@ -242,7 +242,7 @@ class CodeAnalysisService:
         )
 
         system_prompt = (
-            "You are CodeLens, an expert software developer and "
+            "You are Repolens, an expert software developer and "
             "codebase analyzer.\n"
             "Your task is to answer the user query based ONLY on the "
             "provided retrieved repository context.\n\n"

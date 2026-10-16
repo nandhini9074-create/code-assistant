@@ -22,6 +22,7 @@ Pipeline:
 
 from app.core.exceptions import RetrievalError
 from app.core.logging import get_logger
+from app.core.enums import IntentType
 
 from app.modules.search.domain.search_domain import (
     SearchContext,
@@ -159,6 +160,7 @@ class SearchService:
         source_type: str,
         source_location: str,
         query: str,
+        intent: IntentType | str,
     ) -> SearchResult:
 
         # ---------------------------------------------------------
@@ -174,10 +176,15 @@ class SearchService:
         #
         # ---------------------------------------------------------
 
+        requested_intent = (
+            intent if isinstance(intent, IntentType) else IntentType(intent)
+        )
+
         context = SearchContext(
             source_type=source_type,
             source_location=source_location,
             query=query,
+            requested_intent=requested_intent,
         )
 
         logger.info(

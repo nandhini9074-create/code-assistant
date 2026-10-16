@@ -40,6 +40,7 @@ async def search_repository(
         source_type=request.source.type,
         source_location=request.source.location,
         query=request.query,
+        intent=request.intent,
     )
 
     if not result.success:

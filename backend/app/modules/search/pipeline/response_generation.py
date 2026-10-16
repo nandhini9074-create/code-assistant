@@ -59,7 +59,11 @@ class ResponseGenerationStage:
         )
 
         return SearchResponse(
-            intent=(context.intent.value if context.intent else "unknown"),
+            intent=(
+                getattr(context.intent, "value", context.intent)
+                if context.intent
+                else "unknown"
+            ),
             repository={
                 "owner": context.repo_owner,
                 "name": context.repo_name,
@@ -91,7 +95,7 @@ class ResponseGenerationStage:
         """Build and store the final compact SearchResponse."""
 
         intent_str = (
-            context.intent.value
+            getattr(context.intent, "value", context.intent)
             if context.intent
             else "unknown"
         )

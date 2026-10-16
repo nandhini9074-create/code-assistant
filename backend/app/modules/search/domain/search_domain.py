@@ -54,6 +54,8 @@ class SearchContext:
 
     intent: IntentType | None = None
 
+    requested_intent: IntentType | None = None
+
     intent_parameters: dict[str, Any] = field(
         default_factory=dict
     )

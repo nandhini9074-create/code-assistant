@@ -69,6 +69,28 @@ class IntentClassificationStage:
                 "Cannot classify intent for an empty query."
             )
 
+        if context.requested_intent is not None:
+            context.intent = context.requested_intent
+            context.intent_parameters = {}
+            try:
+                result = await self.llm_service.classify_intent(query)
+                if result is not None and isinstance(result.parameters, dict):
+                    context.intent_parameters = result.parameters
+            except Exception as exc:
+                logger.warning(
+                    "intent_parameter_extraction_failed_for_requested_intent",
+                    repo_id=context.repo_id,
+                    error=str(exc),
+                )
+
+            logger.info(
+                "intent_classification_using_requested_intent",
+                repo_id=context.repo_id,
+                intent=context.intent.value,
+                parameter_keys=list(context.intent_parameters.keys()),
+            )
+            return
+
         logger.info(
             "intent_classification_starting",
             repo_id=context.repo_id,

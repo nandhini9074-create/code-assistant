@@ -33,6 +33,13 @@ export interface CreateRepositoryRequest {
 // ── Search ────────────────────────────────────────────────────────────────────
 
 export type SourceType = 'git' | 'zip';
+export type SearchIntent =
+  | 'RETRIEVE'
+  | 'ADD_FEATURE'
+  | 'FIX_BUG'
+  | 'OPTIMIZE'
+  | 'REFACTOR'
+  | 'FIX_VULNERABILITY';
 
 export interface SearchSource {
   type: SourceType;
@@ -42,6 +49,7 @@ export interface SearchSource {
 export interface SearchRequest {
   source: SearchSource;
   query: string;
+  intent: SearchIntent;
 }
 
 export interface AmbiguousCandidate {
