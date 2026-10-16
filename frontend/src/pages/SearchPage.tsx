@@ -210,21 +210,22 @@ const SearchPage: React.FC = () => {
             onClick={() => handleSearch()}
             disabled={loading}
             aria-label="Run search"
-            startIcon={loading ? <CircularProgress size={16} color="inherit" /> : <SearchIcon />}
-            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 146 } }}
+            title="Search"
+            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 56 }, px: 2, fontWeight: 700, fontSize: '1.1rem' }}
           >
-            {loading ? 'Searching…' : 'Search'}
+            {loading ? <CircularProgress size={16} color="inherit" /> : '->'}
           </Button>
           <Button
-            id="npm-audit-submit"
+            id="vulnerability-check-submit"
             variant="outlined"
-            onClick={() => handleSearch('Run npm audit')}
+            onClick={() => handleSearch('Run vulnerability check')}
             disabled={loading}
-            title="Audit project dependencies"
+            title="Check project vulnerabilities"
+            aria-label="Vulnerability check"
             startIcon={<ShieldIcon />}
-            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 148 } }}
+            sx={{ whiteSpace: 'nowrap', minWidth: { xs: '100%', md: 175 } }}
           >
-            NPM Audit
+            Vulnerability Check
           </Button>
         </Box>
 
