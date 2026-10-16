@@ -14,6 +14,8 @@ import re
 from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.embedding.service.embedding_service import (
+
+    
     generate_embeddings,
 )
 from app.modules.search.domain.search_domain import RetrievedChunk, SearchContext
@@ -335,28 +337,38 @@ class CodeRetrievalStage:
         and package-lock.json are targeted and retained in retrieved_chunks.
         All unrelated files (e.g. backend source code) are excluded.
         """
+        _KNOWN_MANIFEST_NAMES = {
+            "package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+            "requirements.txt", "requirements.in", "pyproject.toml", "pipfile", "pipfile.lock", "poetry.lock",
+            "cargo.toml", "cargo.lock",
+            "pom.xml", "build.gradle", "build.gradle.kts",
+            "go.mod", "go.sum",
+            "gemfile", "gemfile.lock",
+            "composer.json", "composer.lock",
+        }
+
         def _is_package_file(file_path: str) -> bool:
             clean = (file_path or "").replace("\\", "/").lower()
-            return clean.endswith("package.json") or clean.endswith("package-lock.json")
+            base = clean.rpartition("/")[2]
+            return (
+                base in _KNOWN_MANIFEST_NAMES
+                or (base.startswith("requirements") and base.endswith((".txt", ".in")))
+                or base.endswith(".lock")
+            )
 
-        # 1. Filter existing retrieved chunks to keep only package.json and package-lock.json
+        # 1. Filter existing retrieved chunks to keep dependency manifests and lockfiles
         filtered_chunks: list[RetrievedChunk] = [
             c for c in context.retrieved_chunks
             if _is_package_file(getattr(c, "file_path", ""))
         ]
 
-        # 2. If package.json or package-lock.json was missed by vector search,
-        # actively scroll Qdrant to find all package.json and package-lock.json points
-        has_pkg_json = any(
-            (getattr(c, "file_path", "") or "").replace("\\", "/").lower().endswith("package.json")
-            for c in filtered_chunks
-        )
-        has_lock = any(
-            (getattr(c, "file_path", "") or "").replace("\\", "/").lower().endswith("package-lock.json")
+        # 2. If manifests were missed by vector search, scroll Qdrant to find points
+        has_manifest_file = any(
+            _is_package_file(getattr(c, "file_path", ""))
             for c in filtered_chunks
         )
 
-        if (not has_pkg_json or not has_lock) and context.qdrant_collection:
+        if not has_manifest_file and context.qdrant_collection:
             try:
                 from app.infrastructure.qdrant.client import get_qdrant_client
                 client = get_qdrant_client()

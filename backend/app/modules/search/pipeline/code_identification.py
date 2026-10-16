@@ -89,13 +89,31 @@ class CodeIdentificationStage:
             return
 
         # -------------------------------------------------------------
-        # FIX_VULNERABILITY: package.json is always the target.
-        # Only package.json and package-lock.json are targeted.
+        # FIX_VULNERABILITY: Manifest/lockfile target resolution
         # -------------------------------------------------------------
         if context.intent == IntentType.FIX_VULNERABILITY:
+            _KNOWN_MANIFEST_NAMES = {
+                "package.json", "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml",
+                "requirements.txt", "requirements.in", "pyproject.toml", "pipfile", "pipfile.lock", "poetry.lock",
+                "cargo.toml", "cargo.lock",
+                "pom.xml", "build.gradle", "build.gradle.kts",
+                "go.mod", "go.sum",
+                "gemfile", "gemfile.lock",
+                "composer.json", "composer.lock",
+            }
+
+            def _is_manifest_path(fp: str) -> bool:
+                clean = (fp or "").replace("\\", "/").lower()
+                base = clean.rpartition("/")[2]
+                return (
+                    base in _KNOWN_MANIFEST_NAMES
+                    or (base.startswith("requirements") and base.endswith((".txt", ".in")))
+                    or base.endswith(".lock")
+                )
+
             pkg_chunks = [
                 c for c in context.retrieved_chunks
-                if (getattr(c, "file_path", "") or "").replace("\\", "/").lower().endswith("package.json")
+                if _is_manifest_path(getattr(c, "file_path", ""))
             ]
             if pkg_chunks:
                 context.primary_chunk = pkg_chunks[0]
@@ -103,10 +121,11 @@ class CodeIdentificationStage:
                 context.primary_chunk = context.retrieved_chunks[0]
 
             target_fp = getattr(context.primary_chunk, "file_path", "package.json") if context.primary_chunk else "package.json"
+            clean_name = target_fp.replace("\\", "/").rpartition("/")[2] or "package.json"
             context.target_file = target_fp
             context.target_symbol = None
             context.identified_elements = [{
-                "name": "package.json",
+                "name": clean_name,
                 "type": "file",
                 "file_path": target_fp,
             }]
