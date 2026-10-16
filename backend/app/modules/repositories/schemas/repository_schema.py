@@ -3,6 +3,9 @@ app/modules/repositories/schemas/repository_schema.py
 Schemas for repository module.
 """
 
+from datetime import datetime
+from typing import Any
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import RepositoryStatus
@@ -35,6 +38,10 @@ class RepositoryResponse(BaseSchema):
     qdrant_collection: str
     webhook_configured: bool = False
     webhook_error: str | None = None  # Safe human-readable message only — never contains PAT or secret
+    vulnerability_scan_status: str | None = None
+    vulnerability_scan_commit_sha: str | None = None
+    vulnerability_scan_result: dict[str, Any] | None = None
+    vulnerability_scan_at: datetime | None = None
     
     model_config = ConfigDict(from_attributes=True)
 

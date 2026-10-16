@@ -1,4 +1,36 @@
-// ── Repository ────────────────────────────────────────────────────────────────
+export interface VulnerabilityFinding {
+  finding_id?: string;
+  title: string;
+  severity: string;
+  ecosystem?: string;
+  package_name?: string | null;
+  installed_version?: string | null;
+  fixed_version?: string | null;
+  affected_file?: string;
+  line_number?: number | null;
+  evidence?: string;
+  description?: string;
+  remediation?: string;
+  scan_type?: string;
+}
+
+export interface TargetCoverage {
+  target_id: string;
+  ecosystem: string;
+  scan_type: string;
+  status: string;
+  findings_count: number;
+}
+
+export interface VulnerabilityScanReport {
+  overall_status: string;
+  total_findings: number;
+  total_projects?: number;
+  severity_counts: Record<string, number>;
+  category_counts?: Record<string, number>;
+  findings: VulnerabilityFinding[];
+  coverage?: TargetCoverage[];
+}
 
 export interface Repository {
   id: string;
@@ -11,6 +43,10 @@ export interface Repository {
   qdrant_collection: string;
   webhook_configured: boolean;
   webhook_error: string | null;
+  vulnerability_scan_status?: string | null;
+  vulnerability_scan_commit_sha?: string | null;
+  vulnerability_scan_result?: VulnerabilityScanReport | null;
+  vulnerability_scan_at?: string | null;
 }
 
 export type RepositoryStatus =

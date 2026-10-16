@@ -20,12 +20,14 @@ import RefreshIcon from '@mui/icons-material/Refresh';
 import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import WorkHistoryIcon from '@mui/icons-material/WorkHistory';
 import CircleIcon from '@mui/icons-material/Circle';
+import ShieldIcon from '@mui/icons-material/Shield';
 
 interface Props {
   repo: Repository;
   onDelete: (id: string) => void;
   onReindex: (id: string) => void;
   onViewJobs: (id: string) => void;
+  onOpenSecurity?: (repo: Repository) => void;
 }
 
 const statusConfig: Record<string, { label: string; color: 'success' | 'warning' | 'error' | 'info' | 'default' }> = {
@@ -36,8 +38,29 @@ const statusConfig: Record<string, { label: string; color: 'success' | 'warning'
   stale:    { label: 'Stale',    color: 'warning' },
 };
 
-const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs }) => {
+const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs, onOpenSecurity }) => {
   const sc = statusConfig[repo.status] ?? { label: repo.status, color: 'default' };
+
+  const scanStatus = repo.vulnerability_scan_status;
+  const findingsCount = repo.vulnerability_scan_result?.total_findings ?? (repo.vulnerability_scan_result?.findings?.length ?? 0);
+
+  const getSecurityDisplay = () => {
+    if (!scanStatus || scanStatus === 'NOT_RUN') {
+      return { label: 'Not scanned', color: 'default' as const };
+    }
+    if (scanStatus === 'SCANNING') {
+      return { label: 'Scanning…', color: 'info' as const };
+    }
+    if (scanStatus === 'FAILED') {
+      return { label: 'Scan failed', color: 'error' as const };
+    }
+    if (findingsCount === 0) {
+      return { label: 'Clean (0 findings)', color: 'success' as const };
+    }
+    return { label: `${findingsCount} findings`, color: 'warning' as const };
+  };
+
+  const sec = getSecurityDisplay();
 
   return (
     <Card
@@ -123,6 +146,25 @@ const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs
                 </Box>
               </TableCell>
             </TableRow>
+            <TableRow>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <ShieldIcon sx={{ fontSize: 13, color: 'primary.main' }} />
+                  <Typography variant="caption" color="text.secondary">Security</Typography>
+                </Box>
+              </TableCell>
+              <TableCell align="right">
+                <Chip
+                  id={`repo-security-status-${repo.id}`}
+                  label={sec.label}
+                  color={sec.color}
+                  size="small"
+                  variant={sec.color === 'default' ? 'outlined' : 'filled'}
+                  onClick={onOpenSecurity ? () => onOpenSecurity(repo) : undefined}
+                  sx={{ height: 20, fontSize: 10, fontWeight: 700, cursor: onOpenSecurity ? 'pointer' : 'default' }}
+                />
+              </TableCell>
+            </TableRow>
           </TableBody>
         </Table>
       </CardContent>
@@ -130,6 +172,22 @@ const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs
       <Divider />
 
       <CardActions sx={{ px: 1.5, py: 1, gap: 0.5 }}>
+        {onOpenSecurity && (
+          <Button
+            id={`repo-security-${repo.id}`}
+            size="small"
+            startIcon={<ShieldIcon />}
+            onClick={() => onOpenSecurity(repo)}
+            aria-label={`Security scan details for ${repo.name}`}
+            sx={{
+              color: findingsCount > 0 ? 'warning.main' : 'text.secondary',
+              '&:hover': { color: 'warning.light' },
+            }}
+          >
+            Security {findingsCount > 0 ? `(${findingsCount})` : ''}
+          </Button>
+        )}
+
         <Button
           id={`repo-github-${repo.id}`}
           component="a"

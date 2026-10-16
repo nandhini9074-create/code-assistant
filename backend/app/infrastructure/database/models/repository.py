@@ -5,10 +5,11 @@ ORM model for registered GitHub repositories.
 PostgreSQL source of truth for repository identity, status, and indexing state.
 """
 
-from typing import TYPE_CHECKING
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
 import uuid
 
-from sqlalchemy import Boolean, Index, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, Index, Integer, JSON, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -45,6 +46,12 @@ class Repository(Base, TimestampMixin):
     last_indexed_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
     github_webhook_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     github_repo_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    # Vulnerability Scan State
+    vulnerability_scan_status: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    vulnerability_scan_commit_sha: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    vulnerability_scan_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    vulnerability_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     # Relationships
     ingestion_jobs: Mapped[list["IngestionJob"]] = relationship(  # noqa: F821

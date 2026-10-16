@@ -66,9 +66,9 @@ class CheckpointUpdateStage:
             commit_sha=context.commit_sha,
         )
 
-        # ── Write commit SHA back to the repo record ───────────────────────────
-        # This is what switches status from "pending" → "active" and populates
-        # current_commit_sha in the API response.
+        # ── Write commit SHA back to the repo record and trigger vulnerability scan ──
+        # This switches status from "pending" → "active" and triggers the security scan
+        # whenever a repository is newly ingested or its indexed commit has changed.
         if (
             self.repo_repo is not None
             and context.repo_id
@@ -76,6 +76,9 @@ class CheckpointUpdateStage:
             and final_status in (JobStatus.COMPLETED, JobStatus.PARTIAL)
         ):
             try:
+                repo = await self.repo_repo.get_by_id(context.repo_id)
+                previous_scanned_sha = getattr(repo, "vulnerability_scan_commit_sha", None) if repo else None
+
                 await self.repo_repo.update_commit_sha(context.repo_id, context.commit_sha)
                 logger.info(
                     "repo_commit_sha_updated",
@@ -83,6 +86,37 @@ class CheckpointUpdateStage:
                     commit_sha=context.commit_sha,
                     status=final_status.value,
                 )
+
+                # New or changed commit SHA detection:
+                # - Newly ingested repository (previous_scanned_sha is None)
+                # - Existing repository whose code was re-indexed with a different commit SHA
+                is_new_or_changed = (
+                    previous_scanned_sha is None
+                    or context.commit_sha != previous_scanned_sha
+                )
+
+                if is_new_or_changed:
+                    logger.info(
+                        "auto_triggering_vulnerability_scan",
+                        repo_id=context.repo_id,
+                        commit_sha=context.commit_sha,
+                        previous_scanned_sha=previous_scanned_sha,
+                    )
+                    from app.modules.code_analysis.vulnerability.scanner_service import (
+                        run_repository_vulnerability_scan,
+                    )
+                    await run_repository_vulnerability_scan(
+                        repo_id=str(context.repo_id),
+                        commit_sha=context.commit_sha,
+                        qdrant_collection=repo.qdrant_collection if repo else None,
+                    )
+                else:
+                    logger.info(
+                        "skipping_vulnerability_scan_commit_unchanged",
+                        repo_id=context.repo_id,
+                        commit_sha=context.commit_sha,
+                        previous_scanned_sha=previous_scanned_sha,
+                    )
             except Exception as exc:
                 logger.error(
                     "repo_commit_sha_update_failed",

@@ -106,6 +106,32 @@ class RepositoryRepository:
         await self.session.commit()
         return cast(CursorResult[None], result).rowcount > 0
 
+    async def update_vulnerability_scan_result(
+        self,
+        repo_id: RepoId | str,
+        status: str,
+        commit_sha: str | None,
+        result: dict | None,
+        scanned_at: datetime | None = None,
+    ) -> bool:
+        """Update repository vulnerability scan state."""
+        import uuid
+        from datetime import datetime, timezone
+        uid = uuid.UUID(repo_id) if isinstance(repo_id, str) else repo_id
+        stmt = (
+            update(Repository)
+            .where(Repository.id == uid)
+            .values(
+                vulnerability_scan_status=status,
+                vulnerability_scan_commit_sha=commit_sha,
+                vulnerability_scan_result=result,
+                vulnerability_scan_at=scanned_at or datetime.now(timezone.utc),
+            )
+        )
+        res = await self.session.execute(stmt)
+        await self.session.commit()
+        return cast(CursorResult[None], res).rowcount > 0
+
     async def delete(self, repo_id: RepoId | str) -> bool:
         """Delete a repository."""
         import uuid

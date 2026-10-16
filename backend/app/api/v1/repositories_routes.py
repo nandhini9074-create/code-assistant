@@ -98,6 +98,54 @@ async def delete_repository(
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@router.get("/{repo_id}/vulnerability-report")
+async def get_repository_vulnerability_report(
+    repo_id: str,
+    service: RepositoryService = Depends(get_repository_service),
+) -> dict:
+    """Get the latest vulnerability scan status and report for a repository."""
+    try:
+        repo = await service.get_repository(repo_id)
+    except RepositoryNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    return {
+        "repo_id": str(repo.id),
+        "status": repo.vulnerability_scan_status or "NOT_RUN",
+        "commit_sha": repo.vulnerability_scan_commit_sha,
+        "scanned_at": repo.vulnerability_scan_at.isoformat() if repo.vulnerability_scan_at else None,
+        "report": repo.vulnerability_scan_result,
+    }
+
+
+@router.post("/{repo_id}/scan-vulnerabilities")
+async def trigger_repository_vulnerability_scan_endpoint(
+    repo_id: str,
+    service: RepositoryService = Depends(get_repository_service),
+) -> dict:
+    """Manually trigger a multi-language vulnerability scan for a repository."""
+    try:
+        repo = await service.get_repository(repo_id)
+    except RepositoryNotFoundError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc))
+
+    from app.modules.code_analysis.vulnerability.scanner_service import (
+        run_repository_vulnerability_scan,
+    )
+    commit_sha = repo.last_indexed_commit_sha or "manual"
+    report = await run_repository_vulnerability_scan(
+        repo_id=str(repo.id),
+        commit_sha=commit_sha,
+        qdrant_collection=repo.qdrant_collection,
+    )
+    return {
+        "status": "COMPLETED" if report else "FAILED",
+        "message": "Vulnerability scan completed",
+        "commit_sha": commit_sha,
+        "report": report,
+    }
+
+
 @router.post("/zip", response_model=IngestionJobResponse, status_code=status.HTTP_202_ACCEPTED)
 async def upload_zip(
     file: UploadFile = File(...),

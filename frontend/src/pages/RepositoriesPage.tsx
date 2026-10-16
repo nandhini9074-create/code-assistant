@@ -21,6 +21,7 @@ import { repositoryApi, ingestionApi } from '../api/client';
 import type { Repository, CreateRepositoryRequest } from '../types';
 import { useToast } from '../context/ToastContext';
 import RepositoryCard from '../components/RepositoryCard';
+import VulnerabilityReportDialog from '../components/VulnerabilityReportDialog';
 import { useNavigate } from 'react-router-dom';
 
 const RepositoriesPage: React.FC = () => {
@@ -33,6 +34,7 @@ const RepositoriesPage: React.FC = () => {
   const [form, setForm] = useState<CreateRepositoryRequest>({ repo_url: '', branch: 'main', pat_token: '' });
   const [submitting, setSubmitting] = useState(false);
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [selectedSecurityRepo, setSelectedSecurityRepo] = useState<Repository | null>(null);
 
   const loadRepos = useCallback(async () => {
     setLoading(true);
@@ -138,6 +140,14 @@ const RepositoriesPage: React.FC = () => {
           <Box component="span" sx={{ px: 1.5, py: 0.5, borderRadius: 999, bgcolor: 'rgba(36,168,134,0.12)', color: 'success.light', border: '1px solid rgba(36,168,134,0.2)', fontSize: 12, fontWeight: 700 }}>
             Healthy {repos.filter((repo) => repo.status === 'indexed').length}
           </Box>
+          <Box component="span" sx={{ px: 1.5, py: 0.5, borderRadius: 999, bgcolor: 'rgba(23,162,184,0.12)', color: 'info.light', border: '1px solid rgba(23,162,184,0.2)', fontSize: 12, fontWeight: 700 }}>
+            Security Scanned {repos.filter((repo) => repo.vulnerability_scan_status && repo.vulnerability_scan_status !== 'NOT_RUN').length}
+          </Box>
+          {repos.some((r) => (r.vulnerability_scan_result?.total_findings || 0) > 0) && (
+            <Box component="span" sx={{ px: 1.5, py: 0.5, borderRadius: 999, bgcolor: 'rgba(255,170,0,0.12)', color: 'warning.light', border: '1px solid rgba(255,170,0,0.2)', fontSize: 12, fontWeight: 700 }}>
+              Findings {repos.reduce((acc, r) => acc + (r.vulnerability_scan_result?.total_findings || 0), 0)}
+            </Box>
+          )}
         </Box>
       )}
 
@@ -241,6 +251,7 @@ const RepositoriesPage: React.FC = () => {
                 onDelete={(id) => setDeleteConfirmId(id)}
                 onReindex={handleReindex}
                 onViewJobs={handleViewJobs}
+                onOpenSecurity={(r) => setSelectedSecurityRepo(r)}
               />
             </Grid>
           ))}
@@ -263,6 +274,18 @@ const RepositoriesPage: React.FC = () => {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <VulnerabilityReportDialog
+        open={!!selectedSecurityRepo}
+        repo={selectedSecurityRepo}
+        onClose={() => setSelectedSecurityRepo(null)}
+        onRefreshRepo={() => {
+          loadRepos();
+          if (selectedSecurityRepo) {
+            repositoryApi.get(selectedSecurityRepo.id).then((fresh) => setSelectedSecurityRepo(fresh)).catch(() => {});
+          }
+        }}
+      />
     </Box>
   );
 };

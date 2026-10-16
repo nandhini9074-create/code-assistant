@@ -52,6 +52,23 @@ export const repositoryApi = {
       })
       .then((r) => r.data);
   },
+
+  getVulnerabilityReport: (id: string): Promise<{
+    repo_id: string;
+    status: string;
+    commit_sha: string | null;
+    scanned_at: string | null;
+    report: any;
+  }> =>
+    api.get(`/repositories/${id}/vulnerability-report`).then((r) => r.data),
+
+  scanVulnerabilities: (id: string): Promise<{
+    status: string;
+    message: string;
+    commit_sha: string;
+    report: any;
+  }> =>
+    api.post(`/repositories/${id}/scan-vulnerabilities`).then((r) => r.data),
 };
 
 // ── Search ────────────────────────────────────────────────────────────────────
