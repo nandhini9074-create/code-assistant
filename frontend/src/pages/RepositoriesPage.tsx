@@ -93,7 +93,6 @@ const RepositoriesPage: React.FC = () => {
     }
   };
 
-  const handleViewJobs = (id: string) => navigate(`/jobs?repo=${id}`);
 
   const repoToDelete = repos.find((r) => r.id === deleteConfirmId);
 
@@ -250,7 +249,6 @@ const RepositoriesPage: React.FC = () => {
                 repo={repo}
                 onDelete={(id) => setDeleteConfirmId(id)}
                 onReindex={handleReindex}
-                onViewJobs={handleViewJobs}
                 onOpenSecurity={(r) => setSelectedSecurityRepo(r)}
               />
             </Grid>
@@ -282,7 +280,7 @@ const RepositoriesPage: React.FC = () => {
         onRefreshRepo={() => {
           loadRepos();
           if (selectedSecurityRepo) {
-            repositoryApi.get(selectedSecurityRepo.id).then((fresh) => setSelectedSecurityRepo(fresh)).catch(() => {});
+            repositoryApi.get(selectedSecurityRepo.id).then((fresh) => setSelectedSecurityRepo(fresh)).catch(() => { });
           }
         }}
       />

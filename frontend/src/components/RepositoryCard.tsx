@@ -26,19 +26,18 @@ interface Props {
   repo: Repository;
   onDelete: (id: string) => void;
   onReindex: (id: string) => void;
-  onViewJobs: (id: string) => void;
   onOpenSecurity?: (repo: Repository) => void;
 }
 
 const statusConfig: Record<string, { label: string; color: 'success' | 'warning' | 'error' | 'info' | 'default' }> = {
-  indexed:  { label: 'Indexed',  color: 'success' },
-  pending:  { label: 'Pending',  color: 'warning' },
+  indexed: { label: 'Indexed', color: 'success' },
+  pending: { label: 'Pending', color: 'warning' },
   indexing: { label: 'Indexing', color: 'info' },
-  error:    { label: 'Error',    color: 'error' },
-  stale:    { label: 'Stale',    color: 'warning' },
+  error: { label: 'Error', color: 'error' },
+  stale: { label: 'Stale', color: 'warning' },
 };
 
-const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs, onOpenSecurity }) => {
+const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onOpenSecurity }) => {
   const sc = statusConfig[repo.status] ?? { label: repo.status, color: 'default' };
 
   const scanStatus = repo.vulnerability_scan_status;
@@ -200,17 +199,6 @@ const RepositoryCard: React.FC<Props> = ({ repo, onDelete, onReindex, onViewJobs
           sx={{ color: 'text.secondary', '&:hover': { color: 'primary.main' } }}
         >
           GitHub
-        </Button>
-
-        <Button
-          id={`repo-jobs-${repo.id}`}
-          size="small"
-          startIcon={<WorkHistoryIcon />}
-          onClick={() => onViewJobs(repo.id)}
-          aria-label={`View jobs for ${repo.name}`}
-          sx={{ color: 'text.secondary', '&:hover': { color: 'secondary.main' } }}
-        >
-          Jobs
         </Button>
 
         <Button
