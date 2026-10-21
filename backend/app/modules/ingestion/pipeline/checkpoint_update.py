@@ -3,7 +3,7 @@ app/modules/ingestion/pipeline/checkpoint_update.py
 Pipeline stage: Checkpoint update.
 """
 
-from app.core.enums import JobStatus
+from app.core.enums import JobStatus, TriggerSource
 from app.core.logging import get_logger
 from app.modules.ingestion.domain.ingestion_domain import IngestionContext
 from app.modules.ingestion.repository.ingestion_job_repo import IngestionJobRepository
@@ -69,37 +69,71 @@ class CheckpointUpdateStage:
         # ── Write commit SHA back to the repo record and trigger vulnerability scan ──
         # This switches status from "pending" → "active" and triggers the security scan
         # whenever a repository is newly ingested or its indexed commit has changed.
+        is_zip = (
+            context.source == TriggerSource.ZIP_UPLOAD
+            or getattr(context.source, "value", None) == TriggerSource.ZIP_UPLOAD.value
+            or str(context.source) == "zip_upload"
+            or getattr(context, "extracted_zip_path", None) is not None
+        )
+        is_webhook = (
+            context.source == TriggerSource.WEBHOOK
+            or getattr(context.source, "value", None) == TriggerSource.WEBHOOK.value
+            or str(context.source) == "webhook"
+        )
+
         if (
             self.repo_repo is not None
             and context.repo_id
-            and context.commit_sha
+            and (context.commit_sha or is_zip)
             and final_status in (JobStatus.COMPLETED, JobStatus.PARTIAL)
         ):
             try:
                 repo = await self.repo_repo.get_by_id(context.repo_id)
                 previous_scanned_sha = getattr(repo, "vulnerability_scan_commit_sha", None) if repo else None
+                previous_indexed_sha = getattr(repo, "last_indexed_commit_sha", None) if repo else None
 
-                await self.repo_repo.update_commit_sha(context.repo_id, context.commit_sha)
+                effective_commit_sha = context.commit_sha or previous_indexed_sha or f"zip_{str(context.repo_id)[:8]}"
+
+                await self.repo_repo.update_commit_sha(context.repo_id, effective_commit_sha)
                 logger.info(
                     "repo_commit_sha_updated",
                     repo_id=context.repo_id,
-                    commit_sha=context.commit_sha,
+                    commit_sha=effective_commit_sha,
                     status=final_status.value,
                 )
 
-                # New or changed commit SHA detection:
-                # - Newly ingested repository (previous_scanned_sha is None)
-                # - Existing repository whose code was re-indexed with a different commit SHA
-                is_new_or_changed = (
-                    previous_scanned_sha is None
-                    or context.commit_sha != previous_scanned_sha
-                )
+                # Determine whether to trigger the scan:
+                # - For ZIP uploads: trigger scan on successful completion even when
+                #   last_indexed_commit_sha is None (initial upload) or if commit SHA is new/changed.
+                # - For GitHub webhooks: scan only when a valid new commit SHA differs from the previous SHA.
+                # - For other sources (e.g. initial GitHub ingestion): trigger if new or changed commit SHA.
+                if is_zip:
+                    is_new_or_changed = (
+                        previous_indexed_sha is None
+                        or previous_scanned_sha is None
+                        or effective_commit_sha != previous_scanned_sha
+                    )
+                elif is_webhook:
+                    previous_sha = (
+                        previous_scanned_sha
+                        if previous_scanned_sha is not None
+                        else previous_indexed_sha
+                    )
+                    is_new_or_changed = bool(
+                        context.commit_sha
+                        and (previous_sha is None or context.commit_sha != previous_sha)
+                    )
+                else:
+                    is_new_or_changed = (
+                        previous_scanned_sha is None
+                        or context.commit_sha != previous_scanned_sha
+                    )
 
                 if is_new_or_changed:
                     logger.info(
                         "auto_triggering_vulnerability_scan",
                         repo_id=context.repo_id,
-                        commit_sha=context.commit_sha,
+                        commit_sha=effective_commit_sha,
                         previous_scanned_sha=previous_scanned_sha,
                     )
                     from app.modules.code_analysis.vulnerability.scanner_service import (
@@ -107,14 +141,14 @@ class CheckpointUpdateStage:
                     )
                     await run_repository_vulnerability_scan(
                         repo_id=str(context.repo_id),
-                        commit_sha=context.commit_sha,
+                        commit_sha=effective_commit_sha,
                         qdrant_collection=repo.qdrant_collection if repo else None,
                     )
                 else:
                     logger.info(
                         "skipping_vulnerability_scan_commit_unchanged",
                         repo_id=context.repo_id,
-                        commit_sha=context.commit_sha,
+                        commit_sha=effective_commit_sha,
                         previous_scanned_sha=previous_scanned_sha,
                     )
             except Exception as exc:

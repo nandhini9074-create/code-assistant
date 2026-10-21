@@ -101,7 +101,7 @@ def get_ingestion_service(
         EmbeddingGenerationStage(),
         VectorUpsertStage(repo_repo, chunk_repo),
         DeletedChunkCleanupStage(repo_repo, file_repo, chunk_repo),
-        CheckpointUpdateStage(job_repo, event_repo),
+        CheckpointUpdateStage(job_repo, event_repo, repo_repo),
     )
 
 
