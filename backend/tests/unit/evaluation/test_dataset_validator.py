@@ -148,20 +148,7 @@ def test_validation_result_raise_for_status():
     assert exc_info.value.validation_result == result
 
 
-def test_validator_on_evaluation_dataset_instance():
-    """Verify DatasetValidator.validate works on an instantiated EvaluationDataset object."""
-    item = EvaluationItem(
-        query_id="q-ok",
-        query="query text",
-        expected_intent=IntentType.OPTIMIZE,
-        expected_chunks=["chunk_perf_01"],
-    )
-    dataset = EvaluationDataset(items=[item])
 
-    validator = DatasetValidator()
-    result = validator.validate(dataset)
-    assert result.is_valid is True
-    assert result.intent_distribution["OPTIMIZE"] == 1
 
 
 def test_validator_passes_on_chunks_without_chunk_id():

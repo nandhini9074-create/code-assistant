@@ -62,7 +62,6 @@ def test_loader_load_jsonl_format(tmp_path: Path):
     jsonl_path = tmp_path / "dataset.jsonl"
     lines = [
         json.dumps({"query_id": "ql-1", "query": "Search files", "expected_intent": "RETRIEVE"}),
-        json.dumps({"query_id": "ql-2", "query": "Refactor router", "expected_intent": "REFACTOR"}),
     ]
     jsonl_path.write_text("\n".join(lines), encoding="utf-8")
 

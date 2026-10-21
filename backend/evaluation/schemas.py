@@ -92,7 +92,7 @@ class EvaluationItem(BaseModel):
     query: str = Field(..., description="The natural language or code search query text.")
     expected_intent: IntentType = Field(
         ...,
-        description="The ground-truth intent type: RETRIEVE, ADD_FEATURE, FIX_BUG, OPTIMIZE, REFACTOR, FIX_VULNERABILITY.",
+        description="The ground-truth intent type: RETRIEVE, ADD_FEATURE, FIX_BUG, FIX_VULNERABILITY.",
     )
     repository: Optional[str] = Field(
         default=None,

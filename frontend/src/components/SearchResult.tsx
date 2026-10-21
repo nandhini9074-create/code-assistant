@@ -31,8 +31,6 @@ interface Props {
 const intentLabel: Record<string, string> = {
   EXPLAIN: 'Explain',
   FIX_BUG: 'Fix Bug',
-  OPTIMIZE: 'Optimize',
-  REFACTOR: 'Refactor',
   FIND_USAGE: 'Find Usage',
   FIND_FUNCTION: 'Find Function',
   FIND_CLASS: 'Find Class',

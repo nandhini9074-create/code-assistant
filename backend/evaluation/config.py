@@ -17,8 +17,6 @@ SUPPORTED_INTENTS: Set[IntentType] = {
     IntentType.RETRIEVE,
     IntentType.ADD_FEATURE,
     IntentType.FIX_BUG,
-    IntentType.OPTIMIZE,
-    IntentType.REFACTOR,
     IntentType.FIX_VULNERABILITY,
 }
 

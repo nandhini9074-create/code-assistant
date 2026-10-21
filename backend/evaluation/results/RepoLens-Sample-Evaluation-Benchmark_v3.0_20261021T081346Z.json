@@ -155,15 +155,6 @@
           "skipped": false
         },
         {
-          "query_id": "eval-q05",
-          "query": "Refactor checkpoint update stage to decouple repository status persistence",
-          "expected_intent": "REFACTOR",
-          "predicted_intent": "REFACTOR",
-          "correct": true,
-          "error": null,
-          "skipped": false
-        },
-        {
           "query_id": "eval-q06",
           "query": "Fix the package.json security vulnerability in dependencies",
           "expected_intent": "FIX_VULNERABILITY",

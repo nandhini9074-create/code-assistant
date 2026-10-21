@@ -190,8 +190,6 @@ def _determine_action_type(
     action_types = {
         IntentType.ADD_FEATURE: "FEATURE_IMPLEMENTATION",
         IntentType.FIX_BUG: "BUG_REMEDIATION",
-        IntentType.OPTIMIZE: "PERFORMANCE_OPTIMIZATION",
-        IntentType.REFACTOR: "CODE_REFACTORING",
         IntentType.FIX_VULNERABILITY: "DEPENDENCY_REMEDIATION",
     }
 

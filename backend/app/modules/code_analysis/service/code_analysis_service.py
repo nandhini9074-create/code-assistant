@@ -18,12 +18,6 @@ from app.modules.code_analysis.analyzers.fix_bug_analyzer import (
 from app.modules.code_analysis.analyzers.multi_language_vulnerability_analyzer import (
     MultiLanguageVulnerabilityAnalyzer,
 )
-from app.modules.code_analysis.analyzers.optimize_analyzer import (
-    OptimizeAnalyzer,
-)
-from app.modules.code_analysis.analyzers.refactor_analyzer import (
-    RefactorAnalyzer,
-)
 from app.modules.code_analysis.domain.analysis_domain import ValidationResult
 from app.modules.code_analysis.validators.code_existence_validator import (
     CodeExistenceValidator,
@@ -47,8 +41,6 @@ class CodeAnalysisService:
         add_feature_analyzer: AddFeatureAnalyzer,
         fix_bug_analyzer: FixBugAnalyzer,
         fix_vulnerability_analyzer: MultiLanguageVulnerabilityAnalyzer,
-        optimize_analyzer: OptimizeAnalyzer,
-        refactor_analyzer: RefactorAnalyzer,
         evidence_validator: EvidenceValidator,
         code_existence_validator: CodeExistenceValidator,
         suggestion_validator: SuggestionValidator,
@@ -58,8 +50,6 @@ class CodeAnalysisService:
             IntentType.ADD_FEATURE: add_feature_analyzer,
             IntentType.FIX_BUG: fix_bug_analyzer,
             IntentType.FIX_VULNERABILITY: fix_vulnerability_analyzer,
-            IntentType.OPTIMIZE: optimize_analyzer,
-            IntentType.REFACTOR: refactor_analyzer,
         }
 
         self.evidence_validator = evidence_validator
@@ -78,7 +68,7 @@ class CodeAnalysisService:
         RETRIEVE:
             Explain the retrieved code only.
 
-        FIX_BUG / ADD_FEATURE / OPTIMIZE / REFACTOR:
+        FIX_BUG / ADD_FEATURE:
             Delegate to the corresponding intent-specific analyzer.
 
         If LLM-based analysis fails, the error is propagated to

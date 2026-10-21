@@ -87,8 +87,6 @@ def test_relevant_chunk_rejects_negative_or_non_numeric_grade():
         ("RETRIEVE", IntentType.RETRIEVE),
         ("ADD_FEATURE", IntentType.ADD_FEATURE),
         ("FIX_BUG", IntentType.FIX_BUG),
-        ("OPTIMIZE", IntentType.OPTIMIZE),
-        ("REFACTOR", IntentType.REFACTOR),
         ("FIX_VULNERABILITY", IntentType.FIX_VULNERABILITY),
         ("retrieve", IntentType.RETRIEVE),
         ("fix_vulnerability", IntentType.FIX_VULNERABILITY),

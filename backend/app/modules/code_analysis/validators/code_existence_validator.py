@@ -39,18 +39,5 @@ class CodeExistenceValidator:
                 if tokens and not any(t in all_chunk_text for t in tokens):
                     errors.append(f"Problematic code '{problematic[:60]}' not found in retrieved chunks")
 
-        # Check expensive_ops / bottleneck (for OPTIMIZE)
-        expensive = analysis.get("expensive_ops")
-        if expensive and isinstance(expensive, str) and len(expensive.strip()) > 2:
-            exp_lower = expensive.strip().lower()
-            if exp_lower not in all_chunk_text:
-                tokens = [t for t in exp_lower.replace("(", " ").replace(")", " ").replace(".", " ").split() if len(t) > 3]
-                if tokens and not any(t in all_chunk_text for t in tokens):
-                    errors.append(f"Referenced operation '{expensive[:60]}' not found in retrieved chunks")
-
-        is_valid = len(errors) == 0
-        return ValidationResult(
-            is_valid=is_valid,
-            status="passed" if is_valid else "failed",
-            errors=errors,
-        )
+        
+        

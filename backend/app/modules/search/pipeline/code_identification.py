@@ -1439,12 +1439,6 @@ def _fallback_identification(
         "issue",
         "error",
         "debug",
-        "optimize",
-        "optimise",
-        "optimization",
-        "optimisation",
-        "refactor",
-        "refactoring",
     }
 
     identifiers = [

@@ -9,7 +9,7 @@ implementation plan for the requested change.
 
 This stage does NOT modify repository files.
 
-For FIX_BUG / ADD_FEATURE / OPTIMIZE / REFACTOR requests, the plan may
+For FIX_BUG / ADD_FEATURE , the plan may
 also carry an exact code_change specification containing:
 
     file_path
@@ -136,8 +136,6 @@ def _determine_change_type(intent: IntentType | None) -> str:
     mapping = {
         IntentType.ADD_FEATURE: "FEATURE_IMPLEMENTATION",
         IntentType.FIX_BUG: "BUG_REMEDIATION",
-        IntentType.OPTIMIZE: "PERFORMANCE_OPTIMIZATION",
-        IntentType.REFACTOR: "CODE_REFACTORING",
     }
 
     return mapping.get(intent, "CODE_MODIFICATION")
@@ -351,18 +349,6 @@ def _build_validation_steps(
         base_steps.insert(
             1,
             "Verify the fix addresses the observed failure scenario or bug trigger.",
-        )
-
-    elif context.intent == IntentType.OPTIMIZE:
-        base_steps.insert(
-            1,
-            "Benchmark the optimized path and confirm the performance gain does not change semantics.",
-        )
-
-    elif context.intent == IntentType.REFACTOR:
-        base_steps.insert(
-            1,
-            "Check that the refactor preserves existing behavior and public interfaces.",
         )
 
     return base_steps

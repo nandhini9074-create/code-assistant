@@ -26,7 +26,7 @@
 
 Modern codebases are too large to grep, too complex to manually review, and too dynamic for static documentation to stay current. RepoLens bridges that gap by:
 
-- **Understanding intent** — it knows whether you want to *find*, *fix*, *build*, *refactor*, or *secure* code.
+- **Understanding intent** — it knows whether you want to *find*, *fix*.
 - **Searching semantically** — exact keyword matches miss synonyms and related concepts; vector search does not.
 - **Generating grounded answers** — every response is anchored to real code chunks retrieved from your repo, not hallucinated.
 - **Running offline** — bring your own GitHub repo or upload a ZIP; no external code indexing service required.
@@ -39,11 +39,11 @@ Modern codebases are too large to grep, too complex to manually review, and too 
 | Feature | Description |
 |---|---|
 | **Semantic Code Search** | Hybrid dense + sparse vector search over code chunks stored in Qdrant |
-| **Intent Classification** | Automatically classifies queries into 6 intents: `RETRIEVE`, `ADD_FEATURE`, `FIX_BUG`, `OPTIMIZE`, `REFACTOR`, `FIX_VULNERABILITY` |
+| **Intent Classification** | Automatically classifies queries into 6 intents: `RETRIEVE`, `ADD_FEATURE`, `FIX_BUG`, 'FIX_VULNERABILITY` |
 | **GitHub Integration** | Index any public or private GitHub repository via URL; auto-update via webhooks on push |
 | **ZIP Upload** | Upload a local repository as a ZIP archive for offline or private repo analysis |
 | **Vulnerability Scanning** | Dedicated pipeline stage for security analysis with LLM-assisted remediation suggestions |
-| **Code Change Suggestions** | For `ADD_FEATURE`, `FIX_BUG`, `OPTIMIZE`, and `REFACTOR` queries, generates diff-style patches grounded in retrieved code |
+| **Code Change Suggestions** | For `ADD_FEATURE`, `FIX_BUG`, 
 | **Evidence Validation** | Validates retrieved chunks against the query before synthesis to prevent hallucination |
 | **Background Job Processing** | Ingestion runs as async Celery tasks; job status is trackable through the UI |
 | **Evaluation Framework** | Offline evaluation of retrieval (Precision@K, Recall@K, MRR, nDCG@K) and intent classification (accuracy, F1, confusion matrix) |
@@ -53,62 +53,9 @@ Modern codebases are too large to grep, too complex to manually review, and too 
 
 ## 🏗 Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     React Frontend (Vite + TypeScript)           │
-│  ┌──────────────┐ ┌──────────────┐ ┌────────────┐ ┌──────────┐ │
-│  │  Search Page │ │ Repositories │ │ Upload ZIP │ │ Jobs     │ │
-│  └──────┬───────┘ └──────┬───────┘ └─────┬──────┘ └────┬─────┘ │
-└─────────┼────────────────┼───────────────┼─────────────┼───────┘
-          │   HTTP / REST  │               │             │
-          ▼                ▼               ▼             ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    FastAPI Backend  :8000                         │
-│                                                                  │
-│  /api/v1/search          /api/v1/repositories                   │
-│  /api/v1/ingestion       /api/v1/jobs                           │
-│  /api/v1/webhooks/github /api/v1/health                         │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │               Search Pipeline (stages)                    │   │
-│  │  RequestValidation → QueryPreprocessing                   │   │
-│  │    → IntentClassification → CollectionSelection           │   │
-│  │    → RepositoryIdentification → CodeRetrieval             │   │
-│  │    → EvidenceValidation → ContextBuilder                  │   │
-│  │    → CodeIdentification → ActionAnalysis                  │   │
-│  │    → ChangePlanning → SuggestionPatch                     │   │
-│  │    → SuggestionValidation → RemediationVerification       │   │
-│  │    → ResponseGeneration                                   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                  │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │               Ingestion Pipeline (stages)                 │   │
-│  │  RequestValidation → RepositoryFetch                      │   │
-│  │    → FileFilter → FileHashCheck                           │   │
-│  │    → ContentFetch → ASTChunking                           │   │
-│  │    → MetadataEnrichment → ChunkDeduplication              │   │
-│  │    → EmbeddingGeneration → VectorUpsert                   │   │
-│  │    → DeletedChunkCleanup → CheckpointUpdate               │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└────────────────────┬──────────────────────────────┬─────────────┘
-                     │                              │
-          ┌──────────▼──────────┐        ┌──────────▼──────────┐
-          │   Celery Workers    │        │   Infrastructure     │
-          │  (async ingestion   │        │                      │
-          │   & vuln scanning)  │        │  PostgreSQL :5432    │
-          └──────────┬──────────┘        │  (repo metadata,     │
-                     │                   │   job records)       │
-          ┌──────────▼──────────┐        │                      │
-          │  Redis :6379         │        │  Qdrant :6333        │
-          │  (Celery broker +   │        │  (vector store for   │
-          │   result backend +  │        │   code chunk         │
-          │   response cache)   │        │   embeddings)        │
-          └─────────────────────┘        └─────────────────────┘
-                                                    ▲
-                                         Jina AI Embeddings
-                                         (jina-embeddings-v3)
-                                         Qwen LLM (qwen-plus)
-```
+![RepoLens system architecture](backend/docs/architecture.svg)
+
+The diagram shows the major components and how repository ingestion, search, and vulnerability analysis use the API, workers, databases, and AI integrations.
 
 ### Data Flow
 
@@ -117,7 +64,7 @@ User Query
     │
     ▼
 Intent Classification  ────► RETRIEVE / FIX_BUG / ADD_FEATURE
-    │                         OPTIMIZE / REFACTOR / FIX_VULNERABILITY
+    │                          FIX_VULNERABILITY
     ▼
 Code Retrieval  (Qdrant hybrid search)
     │
@@ -130,8 +77,6 @@ Context Builder  (assemble prompt context)
     ├── RETRIEVE          → Response Generation (direct answer)
     ├── FIX_BUG           → Code Analysis → Patch → Remediation Verification
     ├── ADD_FEATURE       → Change Planning → Patch → Suggestion Validation
-    ├── OPTIMIZE          → Action Analysis → Patch
-    ├── REFACTOR          → Action Analysis → Patch
     └── FIX_VULNERABILITY → Vulnerability Orchestration → Remediation Verification
     │
     ▼

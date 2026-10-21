@@ -337,25 +337,6 @@ class IntentClassificationStage:
                 r"\bbroken\b",
                 r"\bnot working\b",
             ),
-            IntentType.OPTIMIZE: (
-                r"\boptimize\b",
-                r"\boptimise\b",
-                r"\boptimization\b",
-                r"\boptimisation\b",
-                r"\bimprove performance\b",
-                r"\bspeed up\b",
-                r"\bfaster\b",
-                r"\bperformance\b",
-            ),
-            IntentType.REFACTOR: (
-                r"\brefactor\b",
-                r"\brefactoring\b",
-                r"\brestructure\b",
-                r"\bclean up\b",
-                r"\bcleanup\b",
-                r"\breorganize\b",
-                r"\breorganise\b",
-            ),
         }
 
         matched_intents: list[IntentType] = []

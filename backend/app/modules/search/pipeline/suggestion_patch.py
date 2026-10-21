@@ -434,21 +434,6 @@ class SuggestionPatchStage:
                 "Run the relevant unit or integration tests.",
                 "Verify backward compatibility with existing flows.",
             ]
-
-        if intent == IntentType.OPTIMIZE:
-            return [
-                "Benchmark the affected code before and after the change.",
-                "Verify the optimization preserves existing behavior.",
-                "Run the relevant smoke tests.",
-            ]
-
-        if intent == IntentType.REFACTOR:
-            return [
-                "Run the existing tests before and after the refactoring.",
-                "Confirm public interfaces remain unchanged.",
-                "Check for regressions in the affected code path.",
-            ]
-
         if intent == IntentType.FIX_VULNERABILITY:
             return [
                 "Run npm audit to verify the vulnerability is resolved.",

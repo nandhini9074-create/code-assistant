@@ -75,50 +75,6 @@
       }
     },
     {
-      "query_id": "eval-q04",
-      "query": "Optimize hybrid search Qdrant scoring to reduce vector retrieval latency",
-      "expected_intent": "OPTIMIZE",
-      "repository": "repolens-backend",
-      "collection_name": "repo_local_repolens",
-      "expected_chunks": [
-        {
-          "chunk_id": "chunk_hybrid_search_05",
-          "relevance_grade": 4.0,
-          "file_path": "backend/app/modules/search/retrieval/hybrid_search.py",
-          "symbol_name": "HybridSearch"
-        },
-        {
-          "chunk_id": "chunk_dense_search_07",
-          "relevance_grade": 2.0,
-          "file_path": "backend/app/modules/search/retrieval/dense_search.py",
-          "symbol_name": "DenseSearch"
-        }
-      ],
-      "metadata": {
-        "difficulty": "hard",
-        "category": "performance"
-      }
-    },
-    {
-      "query_id": "eval-q05",
-      "query": "Refactor checkpoint update stage to decouple repository status persistence",
-      "expected_intent": "REFACTOR",
-      "repository": "repolens-backend",
-      "collection_name": "repo_local_repolens",
-      "expected_chunks": [
-        {
-          "chunk_id": "chunk_checkpoint_stage_01",
-          "relevance_grade": 4.0,
-          "file_path": "backend/app/modules/ingestion/pipeline/checkpoint_update.py",
-          "symbol_name": "CheckpointUpdateStage"
-        }
-      ],
-      "metadata": {
-        "difficulty": "medium",
-        "category": "refactoring"
-      }
-    },
-    {
       "query_id": "eval-q06",
       "query": "Fix the package.json security vulnerability in dependencies",
       "expected_intent": "FIX_VULNERABILITY",

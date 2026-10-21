@@ -133,26 +133,4 @@ class SuggestionValidator:
                     if verification.code_change:
                         analysis["code_change"] = verification.code_change
 
-        # 3. OPTIMIZE proposed_optimization
-        if "proposed_optimization" in analysis:
-            opt = analysis.get("proposed_optimization")
-            if not opt or not isinstance(opt, str) or not opt.strip():
-                errors.append(
-                    "OPTIMIZE analysis missing proposed_optimization"
-                )
-
-        # 4. REFACTOR safe_refactoring_plan
-        if "safe_refactoring_plan" in analysis:
-            plan = analysis.get("safe_refactoring_plan")
-            if not plan or not isinstance(plan, str) or not plan.strip():
-                errors.append(
-                    "REFACTOR analysis missing safe_refactoring_plan"
-                )
-
-        is_valid = len(errors) == 0
-
-        return ValidationResult(
-            is_valid=is_valid,
-            status="passed" if is_valid else "failed",
-            errors=errors,
-        )
+       

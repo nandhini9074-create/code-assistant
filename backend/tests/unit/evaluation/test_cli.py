@@ -62,28 +62,6 @@ def test_cli_validate_missing_file(capsys):
     assert "[ERROR] Failed to load dataset" in captured.out
 
 
-def test_cli_inspect_command(tmp_path: Path, capsys):
-    """Verify CLI inspect command prints statistics and samples."""
-    dataset_file = tmp_path / "dataset.json"
-    dataset_data = {
-        "dataset_name": "Inspection-Test",
-        "version": "1.0",
-        "description": "Dataset for inspect testing",
-        "items": [
-            {"query_id": "q-insp-1", "query": "Show API routes", "expected_intent": "RETRIEVE"},
-            {"query_id": "q-insp-2", "query": "Optimize latency", "expected_intent": "OPTIMIZE"},
-        ],
-    }
-    dataset_file.write_text(json.dumps(dataset_data), encoding="utf-8")
-
-    code = main(["inspect", str(dataset_file), "--sample", "2"])
-    captured = capsys.readouterr()
-
-    assert code == 0
-    assert "Inspection-Test" in captured.out
-    assert "Show API routes" in captured.out
-    assert "Optimize latency" in captured.out
-
 
 def test_cli_convert_command(tmp_path: Path, capsys):
     """Verify CLI convert command transforms JSON dataset to JSONL."""

@@ -30,14 +30,6 @@ async def test_intent_adapter_deterministic_classification_all_intents():
     res_bug = await adapter.classify("fix broken json parsing in webhook payload")
     assert res_bug == IntentType.FIX_BUG
 
-    # 4. OPTIMIZE
-    res_opt = await adapter.classify("optimize database connection pool performance")
-    assert res_opt == IntentType.OPTIMIZE
-
-    # 5. REFACTOR
-    res_refactor = await adapter.classify("refactor the checkpoint stage to simplify methods")
-    assert res_refactor == IntentType.REFACTOR
-
     # 6. FIX_VULNERABILITY
     res_vuln = await adapter.classify("fix the security vulnerability in package dependencies")
     assert res_vuln == IntentType.FIX_VULNERABILITY

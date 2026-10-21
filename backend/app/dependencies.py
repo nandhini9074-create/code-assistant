@@ -142,8 +142,6 @@ def get_code_analysis_service(
     from app.modules.code_analysis.analyzers.multi_language_vulnerability_analyzer import (
         MultiLanguageVulnerabilityAnalyzer,
     )
-    from app.modules.code_analysis.analyzers.optimize_analyzer import OptimizeAnalyzer
-    from app.modules.code_analysis.analyzers.refactor_analyzer import RefactorAnalyzer
     from app.modules.code_analysis.service.code_analysis_service import CodeAnalysisService
     from app.modules.code_analysis.validators.code_existence_validator import CodeExistenceValidator
     from app.modules.code_analysis.validators.evidence_validator import EvidenceValidator
@@ -153,8 +151,6 @@ def get_code_analysis_service(
         add_feature_analyzer=AddFeatureAnalyzer(llm_service),
         fix_bug_analyzer=FixBugAnalyzer(llm_service),
         fix_vulnerability_analyzer=MultiLanguageVulnerabilityAnalyzer(),
-        optimize_analyzer=OptimizeAnalyzer(llm_service),
-        refactor_analyzer=RefactorAnalyzer(llm_service),
         evidence_validator=EvidenceValidator(),
         code_existence_validator=CodeExistenceValidator(),
         suggestion_validator=SuggestionValidator(),

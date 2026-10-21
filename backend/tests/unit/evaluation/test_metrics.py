@@ -206,18 +206,18 @@ class TestAggregateMetrics:
 
 class TestIntentAccuracy:
     def test_perfect_accuracy(self):
-        pred = ["RETRIEVE", "FIX_BUG", "OPTIMIZE"]
-        truth = ["RETRIEVE", "FIX_BUG", "OPTIMIZE"]
+        pred = ["RETRIEVE", "FIX_BUG", ]
+        truth = ["RETRIEVE", "FIX_BUG", ]
         assert intent_accuracy(pred, truth) == pytest.approx(1.0)
 
     def test_zero_accuracy(self):
-        pred = ["ADD_FEATURE", "REFACTOR"]
+        pred = ["ADD_FEATURE"]
         truth = ["RETRIEVE", "FIX_BUG"]
         assert intent_accuracy(pred, truth) == pytest.approx(0.0)
 
     def test_partial_accuracy(self):
-        pred = ["RETRIEVE", "FIX_BUG", "OPTIMIZE"]
-        truth = ["RETRIEVE", "OPTIMIZE", "OPTIMIZE"]
+        pred = ["RETRIEVE", "FIX_BUG"]
+        truth = ["RETRIEVE", "FIX_BUG"]
         # 2 correct: idx0 and idx2
         assert intent_accuracy(pred, truth) == pytest.approx(2 / 3)
 

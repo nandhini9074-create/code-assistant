@@ -25,8 +25,6 @@ SUPPORTED INTENTS:
 - RETRIEVE: find, locate, search, show, explain, understand, or describe existing code without modifying it.
 - ADD_FEATURE: add, create, implement, or introduce new functionality.
 - FIX_BUG: diagnose or fix an existing bug, error, failure, or incorrect behavior.
-- OPTIMIZE: improve performance, efficiency, latency, resource usage, or scalability.
-- REFACTOR: restructure or clean up existing code without changing its intended behavior.
 - FIX_VULNERABILITY: identify, audit, or fix dependency, package, or security vulnerabilities (e.g. package.json).
 
 CLASSIFICATION:
@@ -35,8 +33,6 @@ CLASSIFICATION:
 3. "Find/show/where/which/how does/explain existing code" -> RETRIEVE.
 4. "Add/create/implement new functionality" -> ADD_FEATURE.
 5. "Fix/resolve/diagnose an existing problem" -> FIX_BUG.
-6. "Make/improve performance or efficiency" -> OPTIMIZE.
-7. "Restructure/clean up/reorganize without changing behavior" -> REFACTOR.
 8. "Fix vulnerability / package.json vulnerability / audit / dependency vulnerability" -> FIX_VULNERABILITY.
 9. If multiple activities are mentioned, choose the main requested outcome.
 10. Missing parameters MUST NOT change the intent.
@@ -49,8 +45,6 @@ Allowed parameter keys:
 RETRIEVE: target, file_path, function_name
 ADD_FEATURE: feature, target, requirements
 FIX_BUG: error, symptom, file_path, function_name
-OPTIMIZE: target, performance_issue, constraint
-REFACTOR: target, reason, scope
 FIX_VULNERABILITY: target, file_path, package_name
 
 Rules:

@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="930" viewBox="0 0 1280 930" role="img" aria-labelledby="title description">
+  <title id="title">RepoLens system architecture</title>
+  <desc id="description">React frontend and GitHub or ZIP sources connect to a FastAPI backend. Search, ingestion, and vulnerability analysis pipelines use Qdrant, PostgreSQL, Redis and Celery, Jina embeddings, and an LLM provider.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+    <style>
+      text { font-family: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; fill: #172033; }
+      .title { font-size: 30px; font-weight: 700; }
+      .section { font-size: 17px; font-weight: 700; letter-spacing: .7px; fill: #475569; }
+      .node-title { font-size: 19px; font-weight: 700; }
+      .node-copy { font-size: 14px; fill: #475569; }
+      .small { font-size: 13px; fill: #475569; }
+      .card { stroke-width: 2; rx: 16; }
+      .edge { fill: none; stroke: #64748b; stroke-width: 2.5; marker-end: url(#arrow); }
+    </style>
+  </defs>
+
+  <rect width="1280" height="930" fill="#f8fafc"/>
+  <text x="640" y="45" text-anchor="middle" class="title">RepoLens Architecture</text>
+
+  <text x="40" y="88" class="section">INPUTS &amp; CLIENT</text>
+  <rect x="40" y="105" width="300" height="105" class="card" fill="#fff7ed" stroke="#fdba74"/>
+  <text x="190" y="142" text-anchor="middle" class="node-title">Repository Sources</text>
+  <text x="190" y="171" text-anchor="middle" class="node-copy">GitHub repositories · ZIP uploads</text>
+  <text x="190" y="192" text-anchor="middle" class="small">Push events arrive through webhooks</text>
+
+  <rect x="475" y="105" width="300" height="105" class="card" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="625" y="142" text-anchor="middle" class="node-title">React Web App</text>
+  <text x="625" y="171" text-anchor="middle" class="node-copy">Search · repositories · upload · jobs</text>
+  <text x="625" y="192" text-anchor="middle" class="small">Vite · TypeScript</text>
+
+  <path d="M190 210 V245 H460 V275" class="edge"/>
+  <path d="M625 210 V275" class="edge"/>
+
+  <text x="40" y="265" class="section">APPLICATION API</text>
+  <rect x="160" y="280" width="960" height="105" class="card" fill="#eef2ff" stroke="#a5b4fc"/>
+  <text x="640" y="319" text-anchor="middle" class="node-title">FastAPI Backend · REST API</text>
+  <text x="640" y="348" text-anchor="middle" class="node-copy">Repositories · ingestion · search · jobs · health · GitHub webhooks</text>
+  <text x="640" y="370" text-anchor="middle" class="small">Routes under /api/v1</text>
+
+  <path d="M640 385 V415 H215 V450" class="edge"/>
+  <path d="M640 385 V450" class="edge"/>
+  <path d="M640 415 H1065 V450" class="edge"/>
+
+  <text x="40" y="440" class="section">PROCESSING PIPELINES</text>
+  <rect x="40" y="455" width="350" height="145" class="card" fill="#ecfdf5" stroke="#6ee7b7"/>
+  <text x="215" y="492" text-anchor="middle" class="node-title">Ingestion Pipeline</text>
+  <text x="215" y="521" text-anchor="middle" class="node-copy">Fetch → filter → AST chunk</text>
+  <text x="215" y="544" text-anchor="middle" class="node-copy">Embed → index → checkpoint</text>
+  <text x="215" y="575" text-anchor="middle" class="small">ZIP uploads and GitHub updates</text>
+
+  <rect x="465" y="455" width="350" height="145" class="card" fill="#eff6ff" stroke="#93c5fd"/>
+  <text x="640" y="492" text-anchor="middle" class="node-title">Search &amp; Code Analysis</text>
+  <text x="640" y="521" text-anchor="middle" class="node-copy">Classify intent → retrieve code</text>
+  <text x="640" y="544" text-anchor="middle" class="node-copy">Validate evidence → generate response</text>
+  <text x="640" y="575" text-anchor="middle" class="small">Change suggestions and fixes</text>
+
+  <rect x="890" y="455" width="350" height="145" class="card" fill="#fdf2f8" stroke="#f9a8d4"/>
+  <text x="1065" y="492" text-anchor="middle" class="node-title">Vulnerability Analysis</text>
+  <text x="1065" y="521" text-anchor="middle" class="node-copy">Reconstruct indexed source</text>
+  <text x="1065" y="544" text-anchor="middle" class="node-copy">Discover targets → run scanners</text>
+  <text x="1065" y="575" text-anchor="middle" class="small">Persist scan status and findings</text>
+
+  <path d="M215 600 V650" class="edge"/>
+  <path d="M640 600 V650" class="edge"/>
+  <path d="M1065 600 V650" class="edge"/>
+
+  <text x="40" y="640" class="section">DATA &amp; SUPPORTING SERVICES</text>
+  <rect x="40" y="665" width="350" height="125" class="card" fill="#f1f5f9" stroke="#cbd5e1"/>
+  <text x="215" y="704" text-anchor="middle" class="node-title">Redis + Celery Workers</text>
+  <text x="215" y="733" text-anchor="middle" class="node-copy">Queued ingestion and webhook jobs</text>
+  <text x="215" y="759" text-anchor="middle" class="small">ZIP ingestion also has a direct API path</text>
+
+  <rect x="465" y="665" width="350" height="125" class="card" fill="#fefce8" stroke="#fde047"/>
+  <text x="640" y="704" text-anchor="middle" class="node-title">PostgreSQL</text>
+  <text x="640" y="733" text-anchor="middle" class="node-copy">Repositories · jobs · scan reports</text>
+  <text x="640" y="759" text-anchor="middle" class="small">Application metadata and state</text>
+
+  <rect x="890" y="665" width="350" height="125" class="card" fill="#ecfeff" stroke="#67e8f9"/>
+  <text x="1065" y="704" text-anchor="middle" class="node-title">Qdrant</text>
+  <text x="1065" y="733" text-anchor="middle" class="node-copy">Per-repository code vectors</text>
+  <text x="1065" y="759" text-anchor="middle" class="small">Semantic and hybrid retrieval</text>
+
+  <rect x="220" y="835" width="840" height="65" class="card" fill="#fff" stroke="#cbd5e1"/>
+  <text x="640" y="863" text-anchor="middle" class="node-title">External Integrations Used by the Pipelines</text>
+  <text x="640" y="886" text-anchor="middle" class="node-copy">Jina embeddings · Ollama or Groq LLM · configured vulnerability scanner tools</text>
+</svg>
