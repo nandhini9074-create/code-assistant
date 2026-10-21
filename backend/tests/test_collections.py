@@ -1,12 +1,17 @@
-from qdrant_client import QdrantClient
-import os
-from dotenv import load_dotenv
+def main() -> None:
+    from qdrant_client import QdrantClient
+    import os
+    from dotenv import load_dotenv
 
-load_dotenv()
+    load_dotenv()
 
-client = QdrantClient(
-    url=os.getenv("QDRANT_URL"),
-    api_key=os.getenv("QDRANT_API_KEY")
-)
+    client = QdrantClient(
+        url=os.getenv("QDRANT_URL"),
+        api_key=os.getenv("QDRANT_API_KEY")
+    )
 
-print(client.get_collections())
+    print(client.get_collections())
+
+
+if __name__ == "__main__":
+    main()

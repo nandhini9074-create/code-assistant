@@ -1,0 +1,182 @@
+{
+  "schema_version": "3.0",
+  "outcome": "SUCCESS",
+  "generated_at": "20261021T072828Z",
+  "evaluation": {
+    "dataset_name": "RepoLens-Sample-Evaluation-Benchmark",
+    "evaluated_at": "2026-10-21T07:28:28.235941+00:00",
+    "retrieval": null,
+    "intent": {
+      "dataset_name": "RepoLens-Sample-Evaluation-Benchmark",
+      "evaluated_at": "2026-10-21T07:28:28.235941+00:00",
+      "total_queries": 6,
+      "evaluated_queries": 6,
+      "skipped_queries": 0,
+      "failed_queries": 0,
+      "accuracy": 0.8333333333333334,
+      "per_class_metrics": {
+        "ADD_FEATURE": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 1.0
+        },
+        "FIX_BUG": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 1.0
+        },
+        "FIX_VULNERABILITY": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 1.0
+        },
+        "OPTIMIZE": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 1.0
+        },
+        "REFACTOR": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 1.0
+        },
+        "RETRIEVE": {
+          "precision": 1.0,
+          "recall": 1.0,
+          "f1": 1.0,
+          "support": 1.0
+        }
+      },
+      "confusion_matrix": {
+        "ADD_FEATURE": {
+          "ADD_FEATURE": 1,
+          "FIX_BUG": 0,
+          "FIX_VULNERABILITY": 0,
+          "OPTIMIZE": 0,
+          "REFACTOR": 0,
+          "RETRIEVE": 0,
+          "__none__": 0
+        },
+        "FIX_BUG": {
+          "ADD_FEATURE": 0,
+          "FIX_BUG": 1,
+          "FIX_VULNERABILITY": 0,
+          "OPTIMIZE": 0,
+          "REFACTOR": 0,
+          "RETRIEVE": 0,
+          "__none__": 0
+        },
+        "FIX_VULNERABILITY": {
+          "ADD_FEATURE": 0,
+          "FIX_BUG": 0,
+          "FIX_VULNERABILITY": 1,
+          "OPTIMIZE": 0,
+          "REFACTOR": 0,
+          "RETRIEVE": 0,
+          "__none__": 0
+        },
+        "OPTIMIZE": {
+          "ADD_FEATURE": 0,
+          "FIX_BUG": 0,
+          "FIX_VULNERABILITY": 0,
+          "OPTIMIZE": 0,
+          "REFACTOR": 0,
+          "RETRIEVE": 0,
+          "__none__": 1
+        },
+        "REFACTOR": {
+          "ADD_FEATURE": 0,
+          "FIX_BUG": 0,
+          "FIX_VULNERABILITY": 0,
+          "OPTIMIZE": 0,
+          "REFACTOR": 1,
+          "RETRIEVE": 0,
+          "__none__": 0
+        },
+        "RETRIEVE": {
+          "ADD_FEATURE": 0,
+          "FIX_BUG": 0,
+          "FIX_VULNERABILITY": 0,
+          "OPTIMIZE": 0,
+          "REFACTOR": 0,
+          "RETRIEVE": 1,
+          "__none__": 0
+        },
+        "__none__": {
+          "ADD_FEATURE": 0,
+          "FIX_BUG": 0,
+          "FIX_VULNERABILITY": 0,
+          "OPTIMIZE": 0,
+          "REFACTOR": 0,
+          "RETRIEVE": 0,
+          "__none__": 0
+        }
+      },
+      "per_query": [
+        {
+          "query_id": "eval-q01",
+          "query": "Where is the authentication middleware implemented?",
+          "expected_intent": "RETRIEVE",
+          "predicted_intent": "RETRIEVE",
+          "correct": true,
+          "error": null,
+          "skipped": false
+        },
+        {
+          "query_id": "eval-q02",
+          "query": "Add support for Redis token bucket rate limiting on API endpoints",
+          "expected_intent": "ADD_FEATURE",
+          "predicted_intent": "ADD_FEATURE",
+          "correct": true,
+          "error": null,
+          "skipped": false
+        },
+        {
+          "query_id": "eval-q03",
+          "query": "Fix null pointer error when parsing webhook delivery header",
+          "expected_intent": "FIX_BUG",
+          "predicted_intent": "FIX_BUG",
+          "correct": true,
+          "error": null,
+          "skipped": false
+        },
+        {
+          "query_id": "eval-q04",
+          "query": "Optimize hybrid search Qdrant scoring to reduce vector retrieval latency",
+          "expected_intent": "OPTIMIZE",
+          "predicted_intent": null,
+          "correct": false,
+          "error": null,
+          "skipped": false
+        },
+        {
+          "query_id": "eval-q05",
+          "query": "Refactor checkpoint update stage to decouple repository status persistence",
+          "expected_intent": "REFACTOR",
+          "predicted_intent": "REFACTOR",
+          "correct": true,
+          "error": null,
+          "skipped": false
+        },
+        {
+          "query_id": "eval-q06",
+          "query": "Fix the package.json security vulnerability in dependencies",
+          "expected_intent": "FIX_VULNERABILITY",
+          "predicted_intent": "FIX_VULNERABILITY",
+          "correct": true,
+          "error": null,
+          "skipped": false
+        }
+      ]
+    }
+  },
+  "metadata": {
+    "dataset_path": "evaluation\\datasets\\sample_evaluation_dataset.json",
+    "k": 5
+  }
+}
