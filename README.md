@@ -49,7 +49,7 @@ Modern codebases are too large to grep, too complex to manually review, and too 
 
 ## 🏗 Architecture
 
-![RepoLens system architecture](backend/docs/architecture.svg)
+![RepoLens system architecture](backend/docs/architecture.png)
 
 The diagram shows the major components and how repository ingestion, search, and vulnerability analysis use the API, workers, databases, and AI integrations.
 
