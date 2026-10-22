@@ -16,6 +16,7 @@ inventing validation results.
 
 from __future__ import annotations
 
+from app.core.enums import IntentType
 from app.core.logging import get_logger
 from app.modules.code_analysis.service.code_analysis_service import (
     CodeAnalysisService,
@@ -80,6 +81,17 @@ class EvidenceValidationStage:
                 "vulnerability_scan_report_accepted",
                 repo_id=context.repo_id,
                 findings=analysis.get("vulnerability_count", 0),
+            )
+            return
+
+        if context.intent == IntentType.RETRIEVE:
+            context.validated = True
+            context.validation_status = "passed"
+            context.validation_errors = []
+            context.validation_retries = 0
+            logger.info(
+                "retrieve_analysis_accepted",
+                repo_id=context.repo_id,
             )
             return
 

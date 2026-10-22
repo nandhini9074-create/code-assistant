@@ -39,5 +39,9 @@ class CodeExistenceValidator:
                 if tokens and not any(t in all_chunk_text for t in tokens):
                     errors.append(f"Problematic code '{problematic[:60]}' not found in retrieved chunks")
 
-        
-        
+        is_valid = len(errors) == 0
+        return ValidationResult(
+            is_valid=is_valid,
+            status="passed" if is_valid else "failed",
+            errors=errors,
+        )

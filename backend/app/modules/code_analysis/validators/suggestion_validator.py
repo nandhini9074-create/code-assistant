@@ -10,9 +10,6 @@ from typing import Any
 
 from app.modules.code_analysis.domain.analysis_domain import ValidationResult
 from app.modules.search.domain.search_domain import RetrievedChunk
-from app.modules.search.pipeline.code_change_verifier import (
-    verify_and_locate_code_change,
-)
 
 
 class SuggestionValidator:
@@ -121,6 +118,10 @@ class SuggestionValidator:
             if not isinstance(code_change, dict):
                 errors.append("Exact code change must be an object or null")
             else:
+                from app.modules.search.pipeline.code_change_verifier import (
+                    verify_and_locate_code_change,
+                )
+
                 target_symbol = analysis.get("symbol")
                 verification = verify_and_locate_code_change(
                     code_change=code_change,
@@ -133,4 +134,9 @@ class SuggestionValidator:
                     if verification.code_change:
                         analysis["code_change"] = verification.code_change
 
-       
+        is_valid = len(errors) == 0
+        return ValidationResult(
+            is_valid=is_valid,
+            status="passed" if is_valid else "failed",
+            errors=errors,
+        )

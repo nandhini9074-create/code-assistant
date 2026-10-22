@@ -311,7 +311,7 @@ class ResponseGenerationStage:
             # RETRIEVE intent
             # -----------------------------------------------------
             if suggestion is None:
-                suggestion = context.analysis_result.get("answer")
+                suggestion = context.analysis_result.get("answer") or context.analysis_result.get("suggestion")
 
         # ---------------------------------------------------------
         # NORMALIZE VALUES
@@ -320,7 +320,8 @@ class ResponseGenerationStage:
             suggestion = suggestion or (
                 "Cannot be determined from the available evidence."
             )
-            proposed_change = proposed_change or suggestion
+            if context.intent != IntentType.RETRIEVE:
+                proposed_change = proposed_change or suggestion
             suggested_code = None
 
         suggestion = self._normalize_suggestion(
@@ -329,11 +330,11 @@ class ResponseGenerationStage:
 
         proposed_change = self._normalize_suggestion(
             proposed_change
-        )
+        ) if context.intent != IntentType.RETRIEVE else None
 
         suggested_code = self._normalize_code(
             suggested_code
-        )
+        ) if context.intent != IntentType.RETRIEVE else None
 
         # ---------------------------------------------------------
         # BUILD FINAL RESPONSE
@@ -358,6 +359,9 @@ class ResponseGenerationStage:
         if is_ambig or is_retrieve:
             code_change = None
             suggested_patch = None
+            if is_retrieve:
+                proposed_change = None
+                suggested_code = None
         elif isinstance(code_change, dict):
             if "start_line" not in code_change:
                 verification = verify_and_locate_code_change(
